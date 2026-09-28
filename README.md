@@ -1,0 +1,186 @@
+# OpenCode IDEA Panel
+
+[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)]()
+[![IntelliJ Platform](https://img.shields.io/badge/IntelliJ%20Platform-2026.2.3-orange.svg)]()
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.3.20-purple.svg)]()
+[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)]()
+
+IntelliJ IDEA 插件，在 IDE 内集成 [OpenCode](https://opencode.ai/) AI 编程助手，提供原生 Tool Window 界面，支持流式对话、代码块渲染、权限确认、上下文注入等完整功能。
+
+---
+
+## ✨ 功能特性
+
+| 功能 | 说明 |
+|------|------|
+| **原生 Tool Window** | 右侧边栏面板，纯 Swing 实现，零额外依赖，启动极快 |
+| **流式对话** | 75ms 批量刷新，首 token < 100ms，Markdown 实时渲染 |
+| **代码块高亮** | `EditorTextField` 真实编辑器组件，语法高亮与主编辑器一致 |
+| **思考过程** | 可折叠面板展示 AI 推理过程，流式期间自动展开 |
+| **权限确认** | 内联卡片非模态交互：允许一次 / 始终允许 / 拒绝 |
+| **上下文注入** | 当前文件、选中代码、光标位置、显式添加文件一键注入 |
+| **会话管理** | 左侧会话列表，支持创建、切换、删除、重命名 |
+| **本地 Server 管理** | 自动启动/复用 `opencode serve`，健康检查、优雅终止 |
+
+---
+
+## 🏗 架构设计
+
+### 模块划分
+
+```
+opencode-idea-panel/
+├── opencode-shared/      # 跨模块契约：DTO、RPC 接口、事件模型、序列化器
+├── opencode-frontend/    # UI 层：Tool Window、Swing 组件、ViewModel、状态管理
+└── opencode-backend/     # 业务层：Server 进程管理、REST/SSE 客户端、消息状态、上下文收集
+```
+
+### 数据流向
+
+```
+用户输入 → Frontend ViewModel → Backend REST Client → OpenCode Server
+                                                    │
+                    SSE 事件流 ←───────────────────┘
+                            ↓
+              Backend 事件处理 → Frontend StateFlow → UI 渲染
+                            ↑
+              REST 对账 (GET /session/{id}/message) ──┘
+```
+
+---
+
+## 🚀 快速开始
+
+### 环境要求
+- IntelliJ IDEA 2026.2.3+ (Ultimate/Community)
+- JDK 21 (系统默认)
+- **JBR 25** (项目自动使用 IDE 內建，路径: `/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home/`)
+- 已安装并可在 PATH 中找到 `opencode` CLI
+
+### 构建插件
+
+```bash
+# 克隆项目
+git clone https://github.com/ayongw/opencode-idea-panel.git
+cd opencode-idea-panel
+
+# 设置项目专用 JDK (JBR 25)，不影响系统默认 JDK 21
+export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
+
+# 编译
+./gradlew compileKotlin --no-daemon --no-configuration-cache
+
+# 打包插件 (生成 build/distributions/opencode-idea-panel-0.1.0.zip)
+./gradlew buildPlugin --no-daemon --no-configuration-cache
+```
+
+### 安装插件
+
+1. 打开 IntelliJ IDEA
+2. `Settings` → `Plugins` → ⚙️ → `Install Plugin from Disk`
+3. 选择 `build/distributions/opencode-idea-panel-0.1.0.zip`
+4. 重启 IDE
+
+### 运行沙箱调试 (开发用)
+
+```bash
+# 启动带插件的沙箱 IDE
+export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
+./gradlew runIde --no-daemon --no-configuration-cache
+```
+
+---
+
+## 📦 依赖版本
+
+| 依赖 | 版本 | 用途 |
+|------|------|------|
+| IntelliJ Platform | 2026.2.3 | 插件开发框架 |
+| Kotlin | 2.3.20 | 主开发语言 |
+| OkHttp | 4.12.0 | HTTP 客户端 |
+| okhttp-sse | 4.12.0 | SSE 事件流客户端 |
+| Gson | 2.11.0 | JSON 序列化 |
+| JetBrains Markdown | 0.7.3 | Markdown → HTML 渲染 |
+
+---
+
+## 🛠 开发指南
+
+### 项目结构
+
+```
+.
+├── build.gradle.kts              # 根构建配置
+├── settings.gradle.kts           # 模块包含声明
+├── gradle.properties             # Gradle/JDK 配置
+├── src/main/resources/META-INF/plugin.xml  # 插件入口
+├── opencode-shared/              # 共享契约模块
+│   ├── build.gradle.kts
+│   ├── src/main/resources/modular.plugin.shared.xml
+│   └── src/main/kotlin/com/ayongw/plugins/opencode/shared/
+│       ├── ChatMessage.kt        # 消息实体
+│       ├── ChatRepositoryRpcApi.kt  # RPC 接口
+│       ├── dtos.kt               # 数据传输对象
+│       └── serializers.kt        # 序列化器
+├── opencode-frontend/            # 前端 UI 模块
+│   ├── build.gradle.kts
+│   ├── src/main/resources/modular.plugin.frontend.xml
+│   ├── src/main/resources/icons/opencode.svg
+│   └── src/main/kotlin/com/ayongw/plugins/opencode/frontend/
+│       ├── toolWindow/OpenCodeToolWindowFactory.kt
+│       ├── chatApp/OpenCodeChatApp.kt
+│       ├── chatApp/ui/           # UI 组件
+│       └── chatApp/viewmodel/    # 视图模型
+└── opencode-backend/             # 后端业务模块
+    ├── build.gradle.kts
+    ├── src/main/resources/modular.plugin.backend.xml
+    └── src/main/kotlin/com/ayongw/plugins/opencode/backend/
+        ├── BackendRpcApiProvider.kt
+        ├── BackendChatRepositoryModel.kt
+        ├── BackendChatRepositoryRpcApi.kt
+        └── repository/           # 业务逻辑
+```
+
+### 关键技术点
+
+| 场景 | 实现方案 |
+|------|----------|
+| Server 进程管理 | `OSProcessHandler` + 随机端口 + 健康检查轮询 |
+| SSE 连接 | `okhttp-sse` EventSource + 后台线程 + 自动重连 |
+| 流式渲染 | `ConcurrentHashMap` 缓冲区 + 75ms `javax.swing.Timer` 批量刷新 |
+| 代码块渲染 | `EditorTextField` (真实编辑器) + `JBHtmlPane` (文本) |
+| 跨进程通信 | Fleet RPC (`@Rpc` 接口 + `RemoteApiProvider`) |
+| 上下文收集 | `Editor`/`PsiFile`/`Project` API + 右键菜单 Action |
+
+---
+
+## 📝 文档
+
+- [环境初始化指南](docs/tasks/001%20%E7%8E%AF%E5%A2%83%E5%88%9D%E5%A7%8B%E5%8C%96.md)
+- [产品需求文档 (PRD)](docs/prd/%E4%BA%A7%E5%93%81%E8%AF%B4%E6%98%8E.md)
+- [技术方案设计 (TSD)](docs/tech/%E6%8A%80%E6%9C%AF%E6%96%B9%E6%A1%88.md)
+
+---
+
+## 🤝 贡献
+
+1. Fork 本仓库
+2. 创建特性分支: `git checkout -b feat/amazing-feature`
+3. 提交变更: `git commit -m 'feat: add amazing feature'`
+4. 推送分支: `git push origin feat/amazing-feature`
+5. 发起 Pull Request
+
+---
+
+## 📄 许可证
+
+Apache License 2.0 - 详见 [LICENSE](LICENSE)
+
+---
+
+## 🔗 相关链接
+
+- [OpenCode 官网](https://opencode.ai/)
+- [OpenCode GitHub](https://github.com/opencode-ai/opencode)
+- [IntelliJ Platform SDK 文档](https://plugins.jetbrains.com/docs/intellij/)
+- [JetBrains Runtime (JBR)](https://github.com/JetBrains/JetBrainsRuntime)

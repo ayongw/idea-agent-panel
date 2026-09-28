@@ -1,0 +1,16 @@
+<idea-plugin>
+    <id>opencode-idea-panel.opencode-frontend</id>
+    <name>OpenCode Frontend Module</name>
+    <vendor url="https://github.com/ayongw">AYongW</vendor>
+
+    <dependencies>
+        <module name="intellij.platform.frontend"/>
+        <module name="opencode-idea-panel.opencode-shared"/>
+    </dependencies>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow factoryClass="com.ayongw.plugins.opencode.frontend.toolWindow.OpenCodeToolWindowFactory"
+                    id="OpenCode"
+                    icon="/icons/opencode.svg"/>
+    </extensions>
+</idea-plugin>

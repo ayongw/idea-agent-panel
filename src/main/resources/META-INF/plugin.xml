@@ -1,0 +1,19 @@
+<idea-plugin>
+    <id>com.ayongw.plugins.opencode-idea-panel</id>
+    <name>OpenCode AI Assistant Panel</name>
+    <vendor url="https://github.com/ayongw">AYongW</vendor>
+
+    <description><![CDATA[
+        OpenCode AI Assistant Panel for IntelliJ IDEA.<br>
+        A modular plugin providing AI-powered coding assistance through OpenCode Server.
+    ]]></description>
+
+    <license url="https://www.apache.org/licenses/LICENSE-2.0">Apache 2.0</license>
+    <license url="file://$PLUGIN_HOME$/LICENSE">Apache 2.0 (local copy)</license>
+
+    <content>
+        <module name="opencode-idea-panel.opencode-shared" loading="required"/>
+        <module name="opencode-idea-panel.opencode-frontend"/>
+        <module name="opencode-idea-panel.opencode-backend"/>
+    </content>
+</idea-plugin>
