@@ -12,12 +12,16 @@ data class ChatMessage(
     val author: String,
     val isMyMessage: Boolean = false,
     val timestamp: LocalDateTime = LocalDateTime.now(),
-    val type: ChatMessageType = ChatMessageType.TEXT
+    val type: ChatMessageType = ChatMessageType.TEXT,
+    /** 工具调用卡片数据（仅 [ChatMessageType.TOOL] 有值），见 [ToolCallDto] */
+    val tool: ToolCallDto? = null
 ) : Searchable {
 
     enum class ChatMessageType {
         AI_THINKING,
-        TEXT;
+        TEXT,
+        /** 工具调用卡片（工具名 + 状态 + 入参 + 输出） */
+        TOOL;
     }
 
     @JvmOverloads
@@ -28,6 +32,8 @@ data class ChatMessage(
     fun isTextMessage(): Boolean = this.type == ChatMessageType.TEXT
 
     fun isAIThinkingMessage(): Boolean = this.type == ChatMessageType.AI_THINKING
+
+    fun isToolMessage(): Boolean = this.type == ChatMessageType.TOOL
 
     override fun matches(query: String): Boolean {
         if (query.isBlank()) return false

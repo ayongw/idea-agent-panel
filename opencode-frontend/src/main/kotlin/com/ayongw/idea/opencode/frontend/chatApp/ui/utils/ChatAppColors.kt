@@ -87,6 +87,20 @@ object ChatAppColors {
         val selectedIndicator: Color = JBColor(Color(66, 165, 245), Color(100, 181, 246))
     }
 
+    object Tool {
+        /** 进行中（入参流式 / 执行中）状态文字 */
+        val running: Color = JBColor(Gray._128, Gray._160)
+
+        /** 执行成功 */
+        val success: Color = JBColor(Color(46, 125, 50), Color(129, 199, 132))
+
+        /** 执行失败 */
+        val error: Color = JBColor(Color(0xC0, 0x39, 0x2B), Color(0xFF, 0x8A, 0x80))
+
+        /** 入参等次要文字 */
+        val secondary: Color = JBColor(Gray._96, Gray._150)
+    }
+
     object Context {
         val autoFile: Color = JBColor(Color(200, 230, 255), Color(40, 60, 80))
         val explicitFile: Color = JBColor(Color(255, 230, 200), Color(80, 60, 40))

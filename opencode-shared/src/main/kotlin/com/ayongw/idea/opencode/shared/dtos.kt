@@ -14,7 +14,8 @@ data class ChatMessageDto(
     val isMyMessage: Boolean,
     @Serializable(with = LocalDateTimeSerializer::class)
     val timestamp: LocalDateTime,
-    val type: ChatMessage.ChatMessageType
+    val type: ChatMessage.ChatMessageType,
+    val tool: ToolCallDto? = null
 )
 
 fun ChatMessageDto.toChatMessage(): ChatMessage {
@@ -24,7 +25,8 @@ fun ChatMessageDto.toChatMessage(): ChatMessage {
         author = author,
         isMyMessage = isMyMessage,
         timestamp = timestamp,
-        type = type
+        type = type,
+        tool = tool
     )
 }
 
@@ -35,7 +37,8 @@ fun ChatMessage.toChatMessageDto(): ChatMessageDto {
         author = author,
         isMyMessage = isMyMessage,
         timestamp = timestamp,
-        type = type
+        type = type,
+        tool = tool
     )
 }
 

@@ -19,6 +19,7 @@
 | v1.7 | 2026-09-29 | S4a 落地：对账兜底（执行终态 + 重连成功触发 REST 覆盖）；实测中断收尾契约（`step.failed(aborted)` + `session.execution.interrupted`）并据此新增 `ExecutionInterrupted`、把 `aborted` 视为用户中断（不弹失败气泡）；关闭 §10 遗留 1 | agent |
 | v1.8 | 2026-09-29 | S4b 落地：`PendingPermissionDto` + `getPendingPermissionFlow` + 输入区权限确认条（三态回复闭环）；`replyPermission` 改为 `PermissionResponse`；ITest 补权限用例（本机未触发则跳过）；§6/§7/§9 回填 | agent |
 | v1.9 | 2026-09-29 | S4c：核对打包产物（`0.1.0.28.zip`：okhttp/okhttp-sse/okio 已打包、无 gson、`since-build=261`、新增类齐备）；README 依赖表与权限确认描述同步；S1–S5 全部阶段收口 | agent |
+| v1.10 | 2026-09-29 | S6 落地：工具调用/结果卡片化 —— 补抓 REST 工具部件实测契约（§4.7）；shared 新增 `ToolCallDto`；后端解析 `content[]` 的 `text`/`tool` 部件并一消息多气泡；`SessionStreamState` 消费 `session.tool.*` 就地更新卡片、执行终态收尾；前端工具卡片渲染与统一就地刷新；§2/§5.5/§5.7/§5.9/§6/§7/§9/§10 回填 | agent |
 
 ---
 
@@ -50,6 +51,7 @@
 | 流式承载 | **不引入 delta DTO**：面板消息模型是 `ChatMessage`（非 parts），故由后端按消息 id 合并「累计全文」（75 ms 节流）经既有 `messagesFlow` 推送，前端就地刷新已有气泡 |
 | 心跳 | 实测存在注释帧 `: heartbeat`（空闲时出现），可作为应用层存活检测依据，无需自造 watchdog 心跳 |
 | 工具与权限事件 | 实测已获取：`session.tool.input.started/ended` → `session.tool.called` → `shell.created` → `session.tool.progress` → `shell.exited` → `session.tool.success`；权限请求 `permission.asked`（`data.id` 为 `per_` 前缀）；回复枚举 `once/always/reject` 与现有 `PermissionDecision` 完全一致 |
+| 工具卡片数据源 | **REST 权威 + SSE 补运行中态**：工具部件随 `GET /api/session/{id}/message` 回放（实测 `content[]` 含 `tool` 部件，四态见 §4.7），事件流只负责流式期间的即时态；卡片 id 统一用 `call_*`，两路可原地互相覆盖 |
 | 对账策略 | 沿用「SSE 不可单独信任」：重连成功、`durable.seq` 跳变、执行失败时，触发一次 `GET /api/session/{id}/message` 幂等覆盖 |
 | 测试基准模型 | 真实连接验证固定使用 OpenCode Zen 免费模型 `opencode/mimo-v2.6-flash-free`（默认模型 github-copilot 未授权会直接失败） |
 
@@ -170,6 +172,33 @@ curl -s -u "$AUTH" -X POST -H 'content-type: application/json' \
 - 用户名 `opencode`、密码取 `OPENCODE_SERVER_PASSWORD`（自启实例）或 `~/.config/opencode/service.json`（外部实例）。
 - 观察项：本机 4096 端口由 OpenCode 桌面端启动的实例，其凭据**不在** `service.json`，用该文件的密码访问一律 401；说明"外部实例凭据发现"存在盲区，需在设置页显式配置（与 TSD-05 的凭据来源一致，本条不改变现有行为）。
 
+### 4.7 REST 工具部件契约（实测）
+
+工具卡片**以 REST 为权威**：对账与切会话回放历史都依赖它，SSE 只补流式期间的即时态（§5.5）。
+
+实测 `GET /api/session/{id}/message` 的助手消息 `content[]` 按顺序含 `reasoning` / `text` / `tool` 三类部件：
+
+```json
+{"type":"tool","id":"call_a446f002537b4a22adf1b620","name":"shell","executed":false,
+ "state":{"status":"completed","input":{"command":"echo toolrest"},
+          "content":[{"type":"text","text":"toolrest\n"}],
+          "metadata":{"status":"completed","truncated":false,"exit":0}},
+ "time":{"created":1790695036792,"ran":1790695037210,"completed":1790695037244}}
+```
+
+`state.status` 四态（取自 `openapi.json` 的 `Session.Message.ToolState.*`）：
+
+| status | `input` | 输出所在字段 | 面板映射枚举 |
+|---|---|---|---|
+| `streaming` | 字符串（未解析完的入参片段） | 无 | `STREAMING` |
+| `running` | 对象 | 无 | `RUNNING` |
+| `completed` | 对象 | `content[].text`；`metadata.exit` / `metadata.truncated` | `COMPLETED` |
+| `error` | 对象 | 无 `content` 时退回 `error.message` | `ERROR` |
+
+面板映射规则：**一条助手消息 → 多个气泡**，按部件顺序产出——正文气泡仍复用消息 id（落在首个 `text` 部件的位置，多个 `text` 部件合并），工具卡片 id 复用部件 `id`（`call_` 前缀），与 SSE 侧 `session.tool.*` 的 `callID` 同值，两路可原地互相覆盖。
+
+> `reasoning` 部件暂不渲染，见 §10 遗留 4。
+
 ## 5. 方案设计
 
 ### 5.1 总体架构
@@ -274,7 +303,7 @@ sealed class OpenCodeEvent {
 - **用户中断**（实测契约，见 §4.3）：`reasoning/text.ended`（补全文）→ `step.streamed` → `step.failed(type=aborted)` → **`session.execution.interrupted`**；`ExecutionInterrupted` 与 `aborted` 都只把运行态置 false，正文保留。
 - **会话路由**：只处理 `sessionID == 当前会话` 的事件；`shell.exited` 等无 sessionID 的事件本阶段忽略。
 - **权限请求**：`permission.asked` → `PendingPermissionDto{sessionId, requestId, action, resources}`（`requestId` 实测为 `per_` 前缀，即 `data.id`）→ RPC `getPendingPermissionFlow` → **输入框上方权限确认条**（三按钮 `once / always / reject`，与后端 `PermissionDecision` 一致）；点击后本地立即收起（不等服务端事件）并回 `POST /api/session/{id}/permission/{requestId}`。执行终态 / 中断 / 切会话 / 重连均清空待决项。
-- **工具卡片**：`session.tool.*` / `shell.*` 仍不产出消息部件，留待后续（权限链路已闭环）。
+- **工具卡片**：`session.tool.*` 按 `callID` 就地更新卡片（`input.started` → `STREAMING`、`input.ended` 补入参、`called` → `RUNNING`、`success` → `COMPLETED` 带输出/退出码/截断标记）；执行终态（`execution.succeeded` / `interrupted` / 非 `aborted` 的 `step.failed`）把仍在流式/执行中的卡片收尾（`COMPLETED` / `ERROR`），权威结果由随后的 REST 对账覆盖（§4.7）。卡片数据模型见 shared `ToolCallDto`；`shell.*` 不上卡片（shell 信息已由 `session.tool.*` 覆盖），权限走确认条。
 - 会话切换 / 新建 / 删除时重置状态机（缓冲、运行态、失败气泡），避免串值。
 
 > `durable.seq` 未落地为 DTO 字段：本阶段以「全文覆盖 + 重连后 REST 对账」（S4）兜底，不用序号做增量去重。
@@ -310,9 +339,9 @@ sealed class OpenCodeEvent {
 
 ### 5.9 前端消费
 
-- 后端已把流式内容合并进消息列表并经既有 `messagesFlow` 推出；前端需要**在内容变化时刷新已有气泡**（现状只对新增 id 建气泡，导致流式不可见）——由 `ChatList.setMessages` 对已存在 id 的消息就地更新：`TEXT` → `updateStreamingText`，`AI_THINKING` → `updateReasoningContent`。
+- 后端已把流式内容合并进消息列表并经既有 `messagesFlow` 推出；前端需要**在内容变化时刷新已有气泡**——由 `ChatList.setMessages` 对已存在 id 的消息调用 `MessageBubble.syncWith`：`TEXT` → `updateStreamingText`，`AI_THINKING` → `updateReasoningContent`，`TOOL` → 重建工具卡片（运行中 → 完成/失败）。
 - 新增 `getSessionRunningFlow` → `FrontendChatRepositoryModel.sessionRunningFlow`：`ChatViewModel` 据此把输入框切到「停止」态，执行结束回到可发送并刷新用量（§5.8）——这也补齐了 §5.8 在事件流接通前「用量只在切换/发送后更新」的缺口。
-- 不做全量 diff：按消息 id 比对内容是否变化即可（字符串比较，无二次渲染遍历）。
+- 不做全量 diff：按消息 id 比对内容是否变化即可（`MessageBubble.syncWith` 内部按类型取指纹：正文=内容、工具卡片=「状态+入参+输出」），无二次渲染遍历。
 - 心跳与未知类型不进状态流，避免无谓的 RPC 流量。
 
 ### 5.7 对账与容错
@@ -322,6 +351,7 @@ sealed class OpenCodeEvent {
 | 重连成功（含首次连接） | 事件客户端 `CONNECTED` 回调触发一次对账：`GET /api/session/{id}/message` 覆盖本地并清空流式缓冲 |
 | 执行终态（`execution.succeeded` / `failed` / `interrupted`） | 同上触发一次对账（事件可能丢，REST 不会）；`step.failed` 不触发（多步执行仍在继续） |
 | delta 丢帧（无 seq 可校验） | 由 `session.text.ended` 的全文覆盖兜底 |
+| 工具卡片（REST 权威） | 对账/切会话按 `call_*` id 原地替换卡片内容，不丢卡片、可回放历史工具调用（§4.7）；SSE 只补流式期间的即时态 |
 | `durable.seq` 跳变/缺口 | 不做序号校验（本轮不落地 `durableSeq`），由上述「终态 + 重连对账」覆盖 |
 | 心跳超时 | 判定链路已死 → 主动重建连接 → 重连成功即对账 |
 | 用户中断（实测） | 本地先置 false 让「停止」即时生效；服务端随后补 `step.failed(aborted)` + `execution.interrupted`，不弹失败气泡，正文由 `reasoning/text.ended` 补全 |
@@ -374,6 +404,14 @@ sealed class OpenCodeEvent {
 | `opencode-frontend/.../chatApp/OpenCodeChatApp.kt` | 修改：订阅 `usageFlow` → EDT 更新指示器 | **已实施（S5）** |
 | `src/test/.../ContextUsageFormatterUnitTest.kt` | 新增：紧凑格式、千分位、占比取整、超窗 `100%+`、无窗口不显占比、空数据隐藏、警示阈值 | **已实施（S5）** |
 | `src/test/.../OpenCodeRestClientUnitTest.kt` | 修改：补 `cost/tokens/model`、助手 `tokens.input`、`limit.context` 的解析断言 | **已实施（S5）** |
+| `opencode-shared/.../ToolCall.kt` | 新增：`ToolCallDto` + `ToolCallStatus`（工具卡片数据模型，REST 与 SSE 共用，四态对齐 `ToolState`） | **已实施（S6）** |
+| `opencode-shared/.../ChatMessage.kt`、`dtos.kt` | 修改：`ChatMessageType` 增 `TOOL`、`ChatMessage`/`ChatMessageDto` 增 `tool` 字段（含双向转换） | **已实施（S6）** |
+| `opencode-backend/.../repository/OpenCodeRestClient.kt` | 修改：助手消息 `content[]` 按顺序解析 `text`/`tool` 部件（`OpenCodeMessage.parts`、四态映射、`input` 字符串/对象、`exit`/`truncated`） | **已实施（S6）** |
+| `opencode-backend/.../BackendChatRepositoryModel.kt` | 修改：一条 REST 消息 → 正文气泡 + 工具卡片（按部件顺序），随对账/切会话一并回放 | **已实施（S6）** |
+| `opencode-backend/.../event/SessionStreamState.kt` | 修改：`session.tool.*` 产出并按 `callID` 就地更新 `TOOL` 卡片；执行终态收尾（成功/中断→`COMPLETED`、失败→`ERROR`） | **已实施（S6）** |
+| `opencode-frontend/.../chatApp/ui/MessageItem.kt`、`ChatList.kt` | 修改：工具卡片渲染（工具名/状态/退出码/入参摘要/输出复用 `CodeBlockPane`）；`syncWith` 统一三种气泡的就地刷新 | **已实施（S6）** |
+| `opencode-frontend/.../chatApp/ui/utils/ChatAppColors.kt` | 修改：新增 `Tool` 状态色（进行中/成功/失败/次要文字） | **已实施（S6）** |
+| `src/test/.../OpenCodeRestClientUnitTest.kt`、`SessionStreamStateUnitTest.kt` | 新增用例：工具部件四态解析、卡片生命周期/顺序/终态收尾（分支内 +10 例） | **已实施（S6）** |
 | `README.md` | 依赖表：okhttp/okhttp-sse 状态由「接入时启用」改为已启用；补事件流说明 | **已实施**（S2 客户端 + 用量功能，2026-09-29） |
 
 ## 7. 实施顺序
@@ -385,6 +423,7 @@ sealed class OpenCodeEvent {
 | **S3 通路打通** | 事件 → 流式状态机 → 消息列表（75 ms 节流）→ RPC Flow → 前端就地刷新气泡；运行态驱动「发送/停止」 | 真实连接集成验证通过：面板逐字输出、思考过程可见、首 token 明显提前 | **已完成（2026-09-29）**：S3a 后端 + S3b 前端；真实连接 ITest 实跑通过（§9.1）；面板侧手工验收见 §9.3（待装机执行） |
 | **S4 容错收口** | 对账兜底、权限卡片联调、中断清理、401 处理、包体与 README 同步 | 断开 server 重连自愈；权限允许/拒绝闭环；包体核对完成 | **已完成（2026-09-29）**：S4a 对账 + 中断收口、S4b 权限确认条、S4c 包体核对（`0.1.0.28.zip`：okhttp/okhttp-sse/okio 已打包、无 gson、`since-build=261`、新增类齐备）；面板侧手工验收见 §9.3（待装机执行） |
 | **S5 用量与占比** | 输入框下方展示当前会话 token 用量与上下文占比（REST 拉取：会话累计用量 + 最近一次 step 的 input + 模型上下文窗口） | 切换/发送/中止/切模型后指示器更新；无窗口不显占比、无数据整块隐藏；`ContextUsageFormatter` 单测全绿 | **已完成（2026-09-29）** |
+| **S6 工具卡片** | 工具调用/结果卡片化：REST 工具部件（权威、可对账/回放）+ SSE `session.tool.*`（运行中态）→ `TOOL` 气泡 → 前端卡片与就地刷新 | 四态解析与卡片生命周期单测全绿；对账/切会话不丢卡片；面板侧手工验收见 §9.3 | **已完成（2026-09-29）**：`./gradlew test` 118 例全绿（新增 10 例）；面板侧手工验收见 §9.3（待装机执行） |
 
 ## 8. 风险与对策
 
@@ -427,12 +466,14 @@ OPENCODE_SERVER_PASSWORD=itest-oc-panel opencode serve --port 4097 &
 | `OpenCodeEventParserUnitTest` | 单元（JUnit 4） | 回放两个真实 fixture；心跳帧忽略、未知类型计数、字段缺失、非 JSON `data`、多行 `data` 拼接 |
 | `OpenCodeEventClientUnitTest` | 单元（MockWebServer） | 正常流、重复事件、断线重连（校验退避与对账调用）、401、服务端半途关闭、心跳超时触发重建 |
 | `SessionStreamStateUnitTest` | 单元（JUnit 4） | 回放三个真实 fixture：按 `(messageID, ordinal)` 累积、`ended` 全文覆盖校准、多段拼接顺序、75 ms 节流发布、运行态生命周期、失败可见（含缺 message 兜底）、无关事件不发布、`reset` 清空 |
+| `SessionStreamStateUnitTest`（工具部分） | 单元（JUnit 4） | 回放 `real-session-tool-call.txt`：卡片 id 复用 `callID`、按 `callID` 就地更新（`STREAMING→RUNNING→COMPLETED`）、按事件到达顺序穿插在正文之间、执行终态收尾（成功/失败/中断）、`reset` 清空 |
+| `OpenCodeRestClientUnitTest`（工具部分） | 单元（JUnit 4） | 助手 `content[]` 部件顺序解析（`reasoning` 跳过、`text`/`tool` 保序）；`completed/running/error/streaming` 四态；`input` 字符串（streaming）与对象（其余）；`content[].text` 与 `error.message` 兜底；`exit`/`truncated` |
 
 > 前端 `ChatList` 的增量刷新与「发送/停止」切换依赖 Swing 组件，仓库暂无前端测试沙箱，由 §9.3 手工验收覆盖。
 
 ### 9.3 手工验收
 
-逐字输出与首 token 时延、思考过程折叠、权限三按钮、断开 server 后自愈、长会话不卡顿。
+逐字输出与首 token 时延、思考过程折叠、权限三按钮、工具卡片（运行中 → 完成/失败、退出码与输出截断标记）、断开 server 后自愈、长会话不卡顿。
 
 约束：单测命名以 `UnitTest` 结尾、集成测试以 `ITest` 结尾，统一用 JUnit 4（项目既有栈），不引入 JUnit 5 平台监听。
 
@@ -448,7 +489,9 @@ OPENCODE_SERVER_PASSWORD=itest-oc-panel opencode serve --port 4097 &
 **遗留**
 1. ~~**中断/取消链路未实测**~~ —— **已实测（2026-09-29）**：`session.interrupt` 后事件序列为 `reasoning.ended`（补全文）→ `step.streamed` → `step.failed(error.type=aborted, message="Step interrupted")` → `session.execution.interrupted`；**没有** `execution.failed/succeeded`。实现据此把 `aborted` 视为用户中断（不弹失败气泡），并以 `session.execution.interrupted` 作为执行态收尾依据（§4.3/§5.5），ITest 已覆盖。
 2. 外部实例（桌面端启动）凭据不在 `service.json`，用该文件密码访问 401 —— 需在设置页显式配置凭据（观察项，见 §4.6）。
-3. 工具输出已由 `session.tool.success.content[].text` 提供；`shell.created.info.file`（host 上 `~/.local/share/opencode/shell/<projectID>/sh_*.out`）仅作超大输出截断后的补充读取参考，暂不实现。
+3. 工具输出已由 `session.tool.success.content[].text` 提供（卡片超过 500 行按既有 `CodeBlockPane` 规则截断显示，并标注「输出已截断」）；`shell.created.info.file`（host 上 `~/.local/share/opencode/shell/<projectID>/sh_*.out`）仅作超大输出截断后的补充读取参考，暂不实现。
+4. REST 助手消息 `content[]` 的 `reasoning` 部件仍不渲染：切会话 / 对账后推理气泡会消失（正文与工具卡片不受影响）。如需保留，按 §4.7 同一套 parts 机制补一个 `Reasoning` 部件即可。
+5. 工具失败态只有 REST `state.status=error` 有实测样本：SSE 侧未抓到「工具失败」事件（`session.tool.*` 无 failure 变体），卡片失败态依赖执行终态收尾 + REST 对账。
 
 ---
 

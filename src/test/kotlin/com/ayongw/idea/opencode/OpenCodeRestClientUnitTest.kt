@@ -1,10 +1,12 @@
 package com.ayongw.idea.opencode
 
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
+import com.ayongw.idea.opencode.shared.ToolCallStatus
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -256,5 +258,75 @@ class OpenCodeRestClientUnitTest {
         assertEquals("assistant 的 input tokens 是上下文占比分子", 480L, messages[1].inputTokens)
         assertNull("user 消息无 input tokens", messages[0].inputTokens)
         assertNotNull(messages[1].id)
+    }
+
+    @Test
+    fun assistantTextAndToolPartsAreParsedInOrder() = runBlocking {
+        routes["/api/session/ses_1/message"] = """
+            {"data":[
+              {"id":"msg_1","type":"assistant","time":{"created":1000},
+               "content":[
+                 {"type":"reasoning","text":"思考"},
+                 {"type":"text","text":"我来执行"},
+                 {"type":"tool","id":"call_1","name":"shell","executed":false,
+                  "state":{"status":"completed","input":{"command":"echo hi"},
+                           "content":[{"type":"text","text":"hi\n"}],
+                           "metadata":{"status":"completed","truncated":false,"exit":0}},
+                  "time":{"created":1001}},
+                 {"type":"tool","id":"call_2","name":"read","executed":true,
+                  "state":{"status":"running","input":{"path":"/tmp/a"},"metadata":{"status":"running"}},
+                  "time":{"created":1002}}
+               ]}
+            ],"cursor":{}}
+        """.trimIndent()
+
+        val message = client().getMessages("ses_1").getOrThrow().single()
+        val parts = message.parts
+
+        assertEquals("reasoning 不参与渲染，text/tool 按原顺序保留", 3, parts.size)
+        assertEquals("我来执行", (parts[0] as OpenCodeRestClient.OpenCodePart.Text).text)
+
+        val shell = (parts[1] as OpenCodeRestClient.OpenCodePart.Tool).call
+        assertEquals("call_1", shell.callId)
+        assertEquals("shell", shell.name)
+        assertTrue("completed 的入参对象应序列化为 JSON 字符串", shell.input.contains("echo hi"))
+        assertEquals("hi\n", shell.output)
+        assertEquals(ToolCallStatus.COMPLETED, shell.status)
+        assertEquals(0, shell.exit)
+        assertFalse(shell.truncated)
+
+        val read = (parts[2] as OpenCodeRestClient.OpenCodePart.Tool).call
+        assertEquals("call_2", read.callId)
+        assertEquals(ToolCallStatus.RUNNING, read.status)
+        assertNull("running 态无 metadata 时退出码为 null", read.exit)
+    }
+
+    @Test
+    fun toolErrorAndStreamingStatesAreMapped() = runBlocking {
+        routes["/api/session/ses_1/message"] = """
+            {"data":[
+              {"id":"msg_1","type":"assistant","time":{"created":1000},
+               "content":[
+                 {"type":"tool","id":"call_e","name":"write",
+                  "state":{"status":"error","input":{"path":"/root/x"},
+                           "error":{"type":"permission","message":"permission denied"}},
+                  "time":{"created":1001}},
+                 {"type":"tool","id":"call_s","name":"write",
+                  "state":{"status":"streaming","input":"{\"path\":"},
+                  "time":{"created":1002}}
+               ]}
+            ],"cursor":{}}
+        """.trimIndent()
+
+        val parts = client().getMessages("ses_1").getOrThrow().single().parts
+
+        val error = (parts[0] as OpenCodeRestClient.OpenCodePart.Tool).call
+        assertEquals(ToolCallStatus.ERROR, error.status)
+        assertEquals("error 态无 content 时应退回结构化错误信息", "permission denied", error.output)
+        assertTrue(error.truncated.not())
+
+        val streaming = (parts[1] as OpenCodeRestClient.OpenCodePart.Tool).call
+        assertEquals(ToolCallStatus.STREAMING, streaming.status)
+        assertEquals("streaming 态的入参是未解析完的字符串", """{"path":""", streaming.input)
     }
 }

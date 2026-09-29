@@ -1,7 +1,10 @@
 package com.ayongw.idea.opencode.backend.event
 
 import com.ayongw.idea.opencode.shared.ChatMessage
+import com.ayongw.idea.opencode.shared.ToolCallDto
+import com.ayongw.idea.opencode.shared.ToolCallStatus
 import java.time.Instant
+import java.time.LocalDateTime
 import java.time.ZoneId
 
 /**
@@ -10,6 +13,7 @@ import java.time.ZoneId
  * 契约（见 TSD-06 §5.5）：
  * - 文本 / 推理按 `(assistantMessageID, ordinal)` 累积；`session.*.ended` 的全文**覆盖校准**（防丢帧 / 重复）
  * - 正文落到 `TEXT` 气泡（id 即 `assistantMessageID`，便于后续对账覆盖）；推理落到独立的 `AI_THINKING` 气泡
+ * - 工具调用落到 `TOOL` 卡片气泡（id 即 `callID`，与 REST 工具部件同 id，可被对账原地覆盖）
  * - 同一时刻只有一条消息在流式；`execution/step` 生命周期驱动 [isRunning]
  * - 失败事件把 `error.message` 落成一条正文气泡，避免面板卡在「响应中」
  * - `onEvent` 返回「是否应立即对外发布快照」：里程碑事件恒为 true，delta 事件按 [throttleMillis] 节流
@@ -21,11 +25,14 @@ class SessionStreamState(
     private val clock: () -> Long = System::currentTimeMillis
 ) {
 
-    private enum class Kind { TEXT, REASONING }
+    private enum class Kind { TEXT, REASONING, TOOL }
 
     private class Bubble(val kind: Kind, val createdAtMillis: Long) {
         /** ordinal -> 文本片段 */
         val parts = LinkedHashMap<Int, String>()
+
+        /** 工具卡片数据（仅 [Kind.TOOL] 有值） */
+        var tool: ToolCallDto? = null
     }
 
     private val lock = Any()
@@ -62,24 +69,30 @@ class SessionStreamState(
 
             is OpenCodeEvent.ExecutionSucceeded -> {
                 running = false
+                finishToolCalls(ToolCallStatus.COMPLETED)
                 true
             }
 
             is OpenCodeEvent.ExecutionFailed -> {
                 running = false
-                if (!event.error.isUserInterruption()) applyFailure(event.error, null)
+                val interrupted = event.error.isUserInterruption()
+                if (!interrupted) applyFailure(event.error, null)
+                finishToolCalls(if (interrupted) ToolCallStatus.COMPLETED else ToolCallStatus.ERROR)
                 true
             }
 
             is OpenCodeEvent.StepFailed -> {
                 running = false
-                if (!event.error.isUserInterruption()) applyFailure(event.error, event.assistantMessageId)
+                val interrupted = event.error.isUserInterruption()
+                if (!interrupted) applyFailure(event.error, event.assistantMessageId)
+                finishToolCalls(if (interrupted) ToolCallStatus.COMPLETED else ToolCallStatus.ERROR)
                 true
             }
 
             // 用户中断的终态事件（实测：中断链路只会来这个，不会有 execution.failed/succeeded）
             is OpenCodeEvent.ExecutionInterrupted -> {
                 running = false
+                finishToolCalls(ToolCallStatus.COMPLETED)
                 true
             }
 
@@ -113,7 +126,37 @@ class SessionStreamState(
                 true
             }
 
-            // 工具 / shell / 权限 / 用量 / 模型切换等不影响本状态的正文内容
+            // 工具调用：入参流式 → 已调用 → 执行结果（卡片按 callID 就地更新）
+            is OpenCodeEvent.ToolInputStarted -> {
+                updateTool(event.callId, name = event.toolName, status = ToolCallStatus.STREAMING)
+                true
+            }
+
+            is OpenCodeEvent.ToolInputEnded -> {
+                updateTool(event.callId, input = event.rawInput, status = ToolCallStatus.STREAMING)
+                true
+            }
+
+            is OpenCodeEvent.ToolCalled -> {
+                updateTool(event.callId, input = event.inputJson, status = ToolCallStatus.RUNNING)
+                true
+            }
+
+            // shellID 等执行元信息不上卡片，无需刷新
+            is OpenCodeEvent.ToolProgress -> false
+
+            is OpenCodeEvent.ToolSucceeded -> {
+                updateTool(
+                    event.callId,
+                    status = ToolCallStatus.COMPLETED,
+                    output = event.output,
+                    exit = event.exit,
+                    truncated = event.truncated
+                )
+                true
+            }
+
+            // shell / 权限 / 用量 / 模型切换等不影响本状态的正文内容
             else -> false
         }
 
@@ -121,20 +164,26 @@ class SessionStreamState(
     fun messages(): List<ChatMessage> = synchronized(lock) {
         val result = ArrayList<ChatMessage>(bubbles.size + 1)
         bubbles.forEach { (id, bubble) ->
-            val content = joinParts(bubble.parts)
-            if (content.isNotBlank()) {
-                result += ChatMessage(
-                    id = id,
-                    content = content,
-                    author = author,
-                    isMyMessage = false,
-                    timestamp = toLocalDateTime(bubble.createdAtMillis),
-                    type = if (bubble.kind == Kind.REASONING) {
-                        ChatMessage.ChatMessageType.AI_THINKING
-                    } else {
-                        ChatMessage.ChatMessageType.TEXT
+            val at = toLocalDateTime(bubble.createdAtMillis)
+            when (bubble.kind) {
+                Kind.TOOL -> bubble.tool?.let { result += toolMessage(id, it, at) }
+                else -> {
+                    val content = joinParts(bubble.parts)
+                    if (content.isNotBlank()) {
+                        result += ChatMessage(
+                            id = id,
+                            content = content,
+                            author = author,
+                            isMyMessage = false,
+                            timestamp = at,
+                            type = if (bubble.kind == Kind.REASONING) {
+                                ChatMessage.ChatMessageType.AI_THINKING
+                            } else {
+                                ChatMessage.ChatMessageType.TEXT
+                            }
+                        )
                     }
-                )
+                }
             }
         }
         failureText?.let { text ->
@@ -160,6 +209,53 @@ class SessionStreamState(
     }
 
     // ==================== 内部实现（均在 lock 内调用） ====================
+
+    /**
+     * 工具卡片就地更新：只覆盖本次事件携带的字段。
+     *
+     * 卡片 id 即 `callID`，与 REST 工具部件的 `id` 相同，对账时可原地替换。
+     */
+    private fun updateTool(
+        callId: String,
+        name: String? = null,
+        input: String? = null,
+        status: ToolCallStatus? = null,
+        output: String? = null,
+        exit: Int? = null,
+        truncated: Boolean = false
+    ) {
+        if (callId.isBlank()) return
+        val bubble = bubbles.getOrPut(callId) { Bubble(Kind.TOOL, clock()) }
+        val current = bubble.tool ?: ToolCallDto(callId = callId)
+        bubble.tool = current.copy(
+            name = name ?: current.name,
+            input = input ?: current.input,
+            status = status ?: current.status,
+            output = output ?: current.output,
+            exit = exit ?: current.exit,
+            truncated = truncated || current.truncated
+        )
+    }
+
+    /** 执行收尾：仍在流式/执行中的工具卡片补一个终态（权威结果随后由 REST 对账覆盖） */
+    private fun finishToolCalls(status: ToolCallStatus) {
+        bubbles.values.forEach { bubble ->
+            val tool = bubble.tool ?: return@forEach
+            if (tool.status == ToolCallStatus.STREAMING || tool.status == ToolCallStatus.RUNNING) {
+                bubble.tool = tool.copy(status = status)
+            }
+        }
+    }
+
+    private fun toolMessage(id: String, tool: ToolCallDto, at: LocalDateTime) = ChatMessage(
+        id = id,
+        content = tool.summary,
+        author = author,
+        isMyMessage = false,
+        timestamp = at,
+        type = ChatMessage.ChatMessageType.TOOL,
+        tool = tool
+    )
 
     private fun bubble(id: String): Bubble = bubbles.getOrPut(id) { Bubble(kindOf(id), clock()) }
 

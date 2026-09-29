@@ -6,6 +6,8 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.ayongw.idea.opencode.shared.ChatMessage
+import com.ayongw.idea.opencode.shared.ToolCallDto
+import com.ayongw.idea.opencode.shared.ToolCallStatus
 import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppColors
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatUIConstants
@@ -37,24 +39,43 @@ class MessageBubble(
     /** 当前渲染的内容段落 */
     private var currentSegments: List<MarkdownSegment> = emptyList()
 
-    /** 当前已渲染的内容（供上游按消息 id 判断是否需要重渲染；思考消息初始只渲染动画，故为空） */
-    var renderedContent: String = if (message.isAIThinkingMessage()) "" else message.content
-        private set
+    /** 当前已渲染内容的内容指纹，用于「内容是否变化」的比较；思考消息初始只渲染动画，故为空 */
+    private var renderedContent: String = if (message.isAIThinkingMessage()) "" else contentSignature(message)
 
     init {
         setupAppearance()
 
-        add(AuthorName(message))
-        add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.MEDIUM)))
+        val tool = message.tool
+        if (message.isToolMessage() && tool != null) {
+            // 工具卡片自带标题行，不再显示作者名
+            val card = buildToolCard(tool)
+            contentContainer = card
+            add(card)
+        } else {
+            add(AuthorName(message))
+            add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.MEDIUM)))
 
-        when {
-            message.isTextMessage() -> {
-                contentContainer = buildContentContainer(message.content)
-                add(contentContainer!!)
-                add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.NORMAL)))
-                add(TimeStampLabel(message))
+            when {
+                message.isTextMessage() -> {
+                    contentContainer = buildContentContainer(message.content)
+                    add(contentContainer!!)
+                    add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.NORMAL)))
+                    add(TimeStampLabel(message))
+                }
+                message.isAIThinkingMessage() -> add(ThinkingIndicator())
             }
-            message.isAIThinkingMessage() -> add(ThinkingIndicator())
+        }
+    }
+
+    /**
+     * 上游按消息 id 推送同一气泡的新内容时就地刷新（流式正文 / 推理 / 工具卡片）；内容未变则不动。
+     */
+    fun syncWith(message: ChatMessage) {
+        if (contentSignature(message) == renderedContent) return
+        when {
+            message.isAIThinkingMessage() -> updateReasoningContent(message.content)
+            message.isTextMessage() -> updateStreamingText(message.content)
+            message.isToolMessage() -> message.tool?.let(::updateTool)
         }
     }
 
@@ -175,6 +196,19 @@ class MessageBubble(
         updateReasoningContent(finalContent)
     }
 
+    /** 更新工具卡片（运行中 → 完成 / 失败） */
+    private fun updateTool(tool: ToolCallDto) {
+        val card = buildToolCard(tool)
+        contentContainer?.let { remove(it) }
+        contentContainer = card
+        renderedContent = toolSignature(tool)
+        add(card)
+        revalidate()
+        repaint()
+    }
+
+    private fun buildToolCard(tool: ToolCallDto): JPanel = ToolCallCard(tool)
+
     /**
      * 构建内容容器
      */
@@ -246,6 +280,109 @@ private class AuthorName(message: ChatMessage) : JBLabel() {
 sealed class MarkdownSegment {
     data class Text(val content: String) : MarkdownSegment()
     data class CodeBlock(val language: String, val code: String) : MarkdownSegment()
+}
+
+/** 内容指纹：TOOL 卡片由「状态 + 入参 + 输出」决定是否需要重渲染 */
+private fun contentSignature(message: ChatMessage): String =
+    message.tool?.let(::toolSignature) ?: message.content
+
+private fun toolSignature(tool: ToolCallDto): String = "${tool.status}|${tool.input}|${tool.output}"
+
+/**
+ * 工具调用卡片：工具名 + 状态（+ 退出码）+ 入参摘要 + 输出正文。
+ *
+ * 数据来自 [ToolCallDto]：REST 为权威值，事件流补充运行中态，两者按 `callId` 原地互相覆盖。
+ */
+private class ToolCallCard(private val tool: ToolCallDto) : JPanel() {
+
+    init {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        isOpaque = false
+        alignmentX = LEFT_ALIGNMENT
+
+        add(buildHeader())
+
+        tool.input.takeIf { it.isNotBlank() }?.let { input ->
+            add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+            add(buildInputLabel(input))
+        }
+
+        tool.output.takeIf { it.isNotBlank() }?.let { output ->
+            add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+            add(CodeBlockPane(tool.name.ifBlank { FALLBACK_NAME }, output))
+        }
+    }
+
+    private fun buildHeader() = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.X_AXIS)
+        isOpaque = false
+        alignmentX = LEFT_ALIGNMENT
+        maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(HEADER_HEIGHT))
+
+        add(JBLabel(tool.name.ifBlank { FALLBACK_NAME }).apply {
+            font = JBFont.small().asBold()
+            foreground = ChatAppColors.Text.normal
+        })
+        add(Box.createHorizontalStrut(JBUI.scale(ChatUIConstants.Spacing.NORMAL)))
+        add(JBLabel(statusLabel()).apply {
+            font = JBFont.small()
+            foreground = statusColor()
+        })
+        tool.exit?.let { code ->
+            add(Box.createHorizontalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+            add(JBLabel(EXIT_LABEL + code).apply {
+                font = JBFont.small()
+                foreground = ChatAppColors.Text.timestamp
+            })
+        }
+        if (tool.truncated) {
+            add(Box.createHorizontalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+            add(JBLabel(TRUNCATED_LABEL).apply {
+                font = JBFont.small()
+                foreground = ChatAppColors.Text.timestamp
+            })
+        }
+        add(Box.createHorizontalGlue())
+    }
+
+    private fun buildInputLabel(input: String) = JBLabel(input.toSingleLine()).apply {
+        font = Font(Font.MONOSPACED, Font.PLAIN, 12)
+        foreground = ChatAppColors.Tool.secondary
+        alignmentX = LEFT_ALIGNMENT
+        toolTipText = input
+    }
+
+    private fun statusLabel(): String = when (tool.status) {
+        ToolCallStatus.STREAMING -> STATUS_STREAMING
+        ToolCallStatus.RUNNING -> STATUS_RUNNING
+        ToolCallStatus.COMPLETED -> STATUS_COMPLETED
+        ToolCallStatus.ERROR -> STATUS_ERROR
+    }
+
+    private fun statusColor(): Color = when (tool.status) {
+        ToolCallStatus.COMPLETED -> ChatAppColors.Tool.success
+        ToolCallStatus.ERROR -> ChatAppColors.Tool.error
+        else -> ChatAppColors.Tool.running
+    }
+
+    /** 入参可能很长（整段 JSON），超长截断显示，完整值放 tooltip */
+    private fun String.toSingleLine(): String {
+        val single = replace("\n", " ").replace("\r", " ")
+        return if (single.length > MAX_INPUT_CHARS) single.take(MAX_INPUT_CHARS) + ELLIPSIS else single
+    }
+
+    private companion object {
+        const val FALLBACK_NAME = "tool"
+        const val HEADER_HEIGHT = 20
+        const val MAX_INPUT_CHARS = 120
+        const val ELLIPSIS = "…"
+        const val EXIT_LABEL = "exit "
+        const val TRUNCATED_LABEL = "输出已截断"
+        const val STATUS_STREAMING = "准备中…"
+        const val STATUS_RUNNING = "运行中…"
+        const val STATUS_COMPLETED = "已完成"
+        const val STATUS_ERROR = "失败"
+    }
 }
 
 private fun parseMarkdownWithCodeBlocks(content: String): List<MarkdownSegment> {

@@ -1,5 +1,6 @@
 package com.ayongw.idea.opencode.backend.repository
 
+import com.ayongw.idea.opencode.shared.ToolCallStatus
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
@@ -415,15 +416,67 @@ class OpenCodeRestClient(
         val createdMillis = message.getAsJsonObject("time")?.long("created") ?: 0L
         return when (type) {
             "user" -> OpenCodeMessage(id, "user", message.string("text").orEmpty(), createdMillis)
-            "assistant" -> OpenCodeMessage(
-                id = id,
-                role = "assistant",
-                content = assistantText(message.getAsJsonArray("content")),
-                createdMillis = createdMillis,
-                inputTokens = parseTokenUsage(message.getAsJsonObject("tokens"))?.input
-            )
+            "assistant" -> {
+                val content = message.getAsJsonArray("content")
+                OpenCodeMessage(
+                    id = id,
+                    role = "assistant",
+                    content = assistantText(content),
+                    createdMillis = createdMillis,
+                    inputTokens = parseTokenUsage(message.getAsJsonObject("tokens"))?.input,
+                    parts = parseAssistantParts(content)
+                )
+            }
             else -> null
         }
+    }
+
+    /**
+     * 助手消息 `content[]` → 渲染部件（按原顺序）。
+     *
+     * 实测部件类型：`text` / `reasoning` / `tool`（`ToolState` 四态见 openapi.json）；
+     * `reasoning` 暂不渲染（见 TSD-06 §10 遗留）。
+     */
+    private fun parseAssistantParts(content: JsonArray?): List<OpenCodePart> {
+        if (content == null) return emptyList()
+        return content.asSequence()
+            .mapNotNull { it as? JsonObject }
+            .mapNotNull { part ->
+                when (part.string("type")) {
+                    "text" -> part.string("text")?.let { OpenCodePart.Text(it) }
+                    "tool" -> parseToolCall(part)?.let { OpenCodePart.Tool(it) }
+                    else -> null
+                }
+            }
+            .toList()
+    }
+
+    /** `Session.Message.Assistant.Tool` → 内部模型；`state` 缺失视为不可渲染 */
+    private fun parseToolCall(part: JsonObject): OpenCodeToolCall? {
+        val state = part.getAsJsonObject("state") ?: return null
+        val metadata = state.getAsJsonObject("metadata")
+        return OpenCodeToolCall(
+            callId = part.string("id").orEmpty(),
+            name = part.string("name").orEmpty(),
+            // streaming 阶段 input 是字符串片段，其余状态是对象
+            input = state.get("input")?.let { if (it.isJsonPrimitive) it.asString else it.toString() }.orEmpty(),
+            // completed 取 content 文本；error 无 content 时退回结构化错误信息
+            output = state.getAsJsonArray("content")
+                ?.mapNotNull { (it as? JsonObject)?.string("text") }
+                ?.joinToString("")
+                .orEmpty()
+                .ifBlank { state.getAsJsonObject("error")?.string("message").orEmpty() },
+            status = parseToolStatus(state.string("status")),
+            exit = metadata?.intOrNull("exit"),
+            truncated = metadata?.bool("truncated") ?: false
+        )
+    }
+
+    private fun parseToolStatus(status: String?): ToolCallStatus = when (status) {
+        "streaming" -> ToolCallStatus.STREAMING
+        "completed" -> ToolCallStatus.COMPLETED
+        "error" -> ToolCallStatus.ERROR
+        else -> ToolCallStatus.RUNNING
     }
 
     /** `TokenUsage.Info` → 内部模型；字段缺失时按 0 计 */
@@ -475,6 +528,12 @@ class OpenCodeRestClient(
     private fun JsonObject.longOrNull(name: String): Long? =
         get(name)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asLong
 
+    private fun JsonObject.intOrNull(name: String): Int? =
+        get(name)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asInt
+
+    private fun JsonObject.bool(name: String): Boolean? =
+        get(name)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isBoolean }?.asBoolean
+
     private fun JsonObject.doubleOrNull(name: String): Double? =
         get(name)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asDouble
 
@@ -511,7 +570,31 @@ class OpenCodeRestClient(
         val content: String,
         val createdMillis: Long,
         /** 助手消息本次 step 的 input tokens（上下文占比分子）；用户消息或字段缺失为 null */
-        val inputTokens: Long? = null
+        val inputTokens: Long? = null,
+        /** 助手消息 `content[]` 部件（按原顺序）；用户消息为空 */
+        val parts: List<OpenCodePart> = emptyList()
+    )
+
+    /** 助手消息 `content[]` 部件（仅保留渲染需要的两类） */
+    sealed class OpenCodePart {
+        /** 正文片段（同一消息的多个片段仍合并为一个气泡） */
+        data class Text(val text: String) : OpenCodePart()
+
+        data class Tool(val call: OpenCodeToolCall) : OpenCodePart()
+    }
+
+    /** 工具调用部件（`Session.Message.Assistant.Tool`） */
+    data class OpenCodeToolCall(
+        /** 调用 ID（`call_` 前缀），即工具卡片气泡 id */
+        val callId: String,
+        val name: String,
+        /** 入参 JSON 字符串 */
+        val input: String,
+        /** 输出正文（`error` 状态为错误信息） */
+        val output: String,
+        val status: ToolCallStatus,
+        val exit: Int? = null,
+        val truncated: Boolean = false
     )
 
     /** `TokenUsage.Info`：会话/助手消息的 token 用量 */

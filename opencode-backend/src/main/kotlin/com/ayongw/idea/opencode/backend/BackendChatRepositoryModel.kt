@@ -14,6 +14,7 @@ import com.ayongw.idea.opencode.shared.ChatMessageDto
 import com.ayongw.idea.opencode.shared.PendingPermissionDto
 import com.ayongw.idea.opencode.shared.SessionUsageDto
 import com.ayongw.idea.opencode.shared.TokenUsageDto
+import com.ayongw.idea.opencode.shared.ToolCallDto
 import com.ayongw.idea.opencode.shared.toChatMessageDto
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
@@ -30,6 +31,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
+import java.time.LocalDateTime
 import java.time.ZoneId
 
 @Service(Service.Level.PROJECT)
@@ -200,7 +202,7 @@ class BackendChatRepositoryModel : Disposable {
             val messages = restClient.getMessages(sessionId).getOrNull() ?: return@launch
             if (sessionId != currentSessionId) return@launch
             streamState.reset()
-            _messages.value = messages.map(::toChatMessage)
+            _messages.value = messages.flatMap(::toChatMessages)
             loadSessions()
         }
     }
@@ -368,25 +370,82 @@ class BackendChatRepositoryModel : Disposable {
         _pendingPermission.value = null
         val result = restClient.getMessages(sessionId)
         if (result.isSuccess()) {
-            _messages.value = result.getOrThrow().map(::toChatMessage)
+            _messages.value = result.getOrThrow().flatMap(::toChatMessages)
             currentSessionId = sessionId
         } else {
             _messages.value = emptyList()
         }
     }
 
-    /** opencode 消息 → 面板消息（user 与 assistant 的文本正文） */
-    private fun toChatMessage(openCodeMsg: OpenCodeRestClient.OpenCodeMessage): ChatMessage {
-        val isMy = openCodeMsg.role == "user"
+    /** opencode 消息 → 面板气泡：user 单条；assistant 按 `content[]` 顺序拆成正文气泡 + 工具卡片 */
+    private fun toChatMessages(openCodeMsg: OpenCodeRestClient.OpenCodeMessage): List<ChatMessage> {
+        val at = Instant.ofEpochMilli(openCodeMsg.createdMillis)
+            .atZone(ZoneId.systemDefault())
+            .toLocalDateTime()
+        if (openCodeMsg.role == "user") {
+            return listOf(
+                ChatMessage(
+                    id = openCodeMsg.id,
+                    content = openCodeMsg.content,
+                    author = "Me",
+                    isMyMessage = true,
+                    timestamp = at,
+                    type = ChatMessage.ChatMessageType.TEXT
+                )
+            )
+        }
+
+        val bubbles = mutableListOf<ChatMessage>()
+        var textEmitted = false
+        openCodeMsg.parts.forEach { part ->
+            when (part) {
+                // 同一消息的多个 text 片段仍合并为一个气泡，落在首个 text 片段的位置
+                is OpenCodeRestClient.OpenCodePart.Text -> {
+                    if (!textEmitted && openCodeMsg.content.isNotBlank()) {
+                        bubbles += assistantTextMessage(openCodeMsg, at)
+                        textEmitted = true
+                    }
+                }
+                is OpenCodeRestClient.OpenCodePart.Tool -> bubbles += toolMessage(part.call, at)
+            }
+        }
+        if (!textEmitted && openCodeMsg.content.isNotBlank()) {
+            bubbles += assistantTextMessage(openCodeMsg, at)
+        }
+        return bubbles
+    }
+
+    private fun assistantTextMessage(
+        openCodeMsg: OpenCodeRestClient.OpenCodeMessage,
+        at: LocalDateTime
+    ) = ChatMessage(
+        id = openCodeMsg.id,
+        content = openCodeMsg.content,
+        author = AI_AUTHOR,
+        isMyMessage = false,
+        timestamp = at,
+        type = ChatMessage.ChatMessageType.TEXT
+    )
+
+    /** 工具卡片气泡：id 用 `call_*`，与事件流侧一致，两路可原地互相覆盖 */
+    private fun toolMessage(call: OpenCodeRestClient.OpenCodeToolCall, at: LocalDateTime): ChatMessage {
+        val tool = ToolCallDto(
+            callId = call.callId,
+            name = call.name,
+            input = call.input,
+            output = call.output,
+            status = call.status,
+            exit = call.exit,
+            truncated = call.truncated
+        )
         return ChatMessage(
-            id = openCodeMsg.id,
-            content = openCodeMsg.content,
-            author = if (isMy) "Me" else AI_AUTHOR,
-            isMyMessage = isMy,
-            timestamp = Instant.ofEpochMilli(openCodeMsg.createdMillis)
-                .atZone(ZoneId.systemDefault())
-                .toLocalDateTime(),
-            type = ChatMessage.ChatMessageType.TEXT
+            id = call.callId,
+            content = tool.summary,
+            author = AI_AUTHOR,
+            isMyMessage = false,
+            timestamp = at,
+            type = ChatMessage.ChatMessageType.TOOL,
+            tool = tool
         )
     }
 

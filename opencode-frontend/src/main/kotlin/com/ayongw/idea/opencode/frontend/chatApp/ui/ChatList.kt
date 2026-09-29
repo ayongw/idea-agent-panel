@@ -127,19 +127,14 @@ class ChatList(private val project: Project) : JPanel() {
     }
 
     /**
-     * 已存在的气泡：内容变化时就地重渲染。
+     * 已存在的气泡：内容变化时就地重渲染（流式正文 / 推理 / 工具卡片运行中→完成）。
      *
      * 事件流按消息 id 推送累计全文，这里只做「内容是否变化」的比较，
      * 不做全量 diff（新消息由 [addNewMessages] 负责建气泡）。
      */
     private fun syncExistingMessages(messages: List<ChatMessage>) {
         messages.forEach { message ->
-            val bubble = messageBubbles[message.id] ?: return@forEach
-            if (bubble.renderedContent == message.content) return@forEach
-            when {
-                message.isAIThinkingMessage() -> bubble.updateReasoningContent(message.content)
-                message.isTextMessage() -> bubble.updateStreamingText(message.content)
-            }
+            messageBubbles[message.id]?.syncWith(message)
         }
     }
 

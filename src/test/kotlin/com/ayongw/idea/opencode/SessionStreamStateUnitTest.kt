@@ -5,6 +5,7 @@ import com.ayongw.idea.opencode.backend.event.OpenCodeEvent
 import com.ayongw.idea.opencode.backend.event.OpenCodeEventParser
 import com.ayongw.idea.opencode.backend.event.SessionStreamState
 import com.ayongw.idea.opencode.shared.ChatMessage
+import com.ayongw.idea.opencode.shared.ToolCallStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -178,13 +179,112 @@ class SessionStreamStateUnitTest {
         assertTrue("aborted 是用户主动中断，不应出现失败气泡", stream.messages().isEmpty())
     }
 
+    // ==================== 工具卡片 ====================
+
+    @Test
+    fun toolFixtureProducesToolCardsWithCallIdBubbleIds() {
+        val stream = state()
+        events("real-session-tool-call.txt").forEach { stream.onEvent(it) }
+
+        val tools = stream.messages().filter { it.isToolMessage() }
+        assertEquals("fixture 中有 shell 与 write 两次调用", 2, tools.size)
+
+        val shell = tools[0]
+        assertEquals("工具卡片 id 应复用 callID（与 REST 工具部件同 id）", "call_412055883536419c994c0105", shell.id)
+        assertEquals(shell.id, shell.tool!!.callId)
+        assertEquals("shell", shell.tool!!.name)
+        assertEquals(ToolCallStatus.COMPLETED, shell.tool!!.status)
+        assertEquals("hello\n", shell.tool!!.output)
+        assertEquals(0, shell.tool!!.exit)
+
+        val write = tools[1]
+        assertEquals("write", write.tool!!.name)
+        assertEquals("未收到 success 的调用应保持执行中", ToolCallStatus.RUNNING, write.tool!!.status)
+        assertTrue("入参应落到卡片", write.tool!!.input.contains("/tmp/oc-perm-probe.txt"))
+    }
+
+    @Test
+    fun toolCardOrderFollowsEventArrival() {
+        val stream = state()
+        events("real-session-tool-call.txt").forEach { stream.onEvent(it) }
+
+        val ids = stream.messages().map { it.id }
+        val shellIndex = ids.indexOf("call_412055883536419c994c0105")
+        val textIndex = ids.indexOfFirst { it.startsWith("msg_") }
+        val writeIndex = ids.indexOf("call_1e83b3977f8c4762acfa4ad3")
+
+        assertTrue("工具卡片应按事件到达顺序穿插在正文之间", shellIndex in 0..<textIndex && textIndex < writeIndex)
+    }
+
+    @Test
+    fun toolCalledUpdatesCardInPlace() {
+        val stream = state()
+        stream.onEvent(OpenCodeEvent.ToolInputStarted("ses_1", "msg_1", "call_1", "shell"))
+        assertEquals(ToolCallStatus.STREAMING, stream.messages().single().tool!!.status)
+
+        stream.onEvent(OpenCodeEvent.ToolCalled("ses_1", "msg_1", "call_1", """{"command":"ls"}"""))
+        val running = stream.messages().single()
+        assertEquals("同一 callID 应就地更新同一个气泡", "call_1", running.id)
+        assertEquals(ToolCallStatus.RUNNING, running.tool!!.status)
+        assertEquals("shell", running.tool!!.name)
+
+        stream.onEvent(OpenCodeEvent.ToolSucceeded("ses_1", "msg_1", "call_1", "out", 0, false))
+        assertEquals(ToolCallStatus.COMPLETED, stream.messages().single().tool!!.status)
+    }
+
+    @Test
+    fun executionTerminalFinalizesRunningToolCards() {
+        val stream = state()
+        stream.onEvent(OpenCodeEvent.ToolCalled("ses_1", "msg_1", "call_1", "{}"))
+        stream.onEvent(OpenCodeEvent.ToolSucceeded("ses_1", "msg_1", "call_2", "done", 0, false))
+
+        stream.onEvent(OpenCodeEvent.ExecutionSucceeded("ses_1"))
+
+        val byId = stream.messages().associateBy { it.id }
+        assertEquals(ToolCallStatus.COMPLETED, byId.getValue("call_1").tool!!.status)
+        assertEquals("已有终态的卡片不应被覆盖", ToolCallStatus.COMPLETED, byId.getValue("call_2").tool!!.status)
+    }
+
+    @Test
+    fun executionFailureMarksRunningToolCardsAsError() {
+        val stream = state()
+        stream.onEvent(OpenCodeEvent.ToolCalled("ses_1", "msg_1", "call_1", "{}"))
+        stream.onEvent(OpenCodeEvent.ExecutionFailed("ses_1", OpenCodeError("provider.invalid-request", "HTTP 400", 400)))
+
+        val tool = stream.messages().first { it.isToolMessage() }.tool!!
+        assertEquals(ToolCallStatus.ERROR, tool.status)
+    }
+
+    @Test
+    fun userInterruptionCompletesRunningToolCards() {
+        val stream = state()
+        stream.onEvent(OpenCodeEvent.ToolCalled("ses_1", "msg_1", "call_1", "{}"))
+        stream.onEvent(OpenCodeEvent.ExecutionInterrupted("ses_1"))
+
+        assertEquals(ToolCallStatus.COMPLETED, stream.messages().single().tool!!.status)
+    }
+
+    @Test
+    fun resetClearsToolCards() {
+        val stream = state()
+        stream.onEvent(OpenCodeEvent.ToolSucceeded("ses_1", "msg_1", "call_1", "out", 0, false))
+
+        stream.reset()
+
+        assertTrue("重置后工具卡片应被清空", stream.messages().isEmpty())
+    }
+
     // ==================== 无关事件与重置 ====================
 
     @Test
     fun nonContentEventsDoNotRequestPublish() {
         val stream = state()
         events("real-session-tool-call.txt")
-            .filter { it !is OpenCodeEvent.TextStarted && it !is OpenCodeEvent.TextDelta && it !is OpenCodeEvent.TextEnded }
+            .filterNot {
+                it is OpenCodeEvent.TextStarted || it is OpenCodeEvent.TextDelta || it is OpenCodeEvent.TextEnded ||
+                    it is OpenCodeEvent.ToolInputStarted || it is OpenCodeEvent.ToolInputEnded ||
+                    it is OpenCodeEvent.ToolCalled || it is OpenCodeEvent.ToolSucceeded
+            }
             .forEach { event ->
                 assertFalse("${event::class.simpleName} 不应触发内容刷新", stream.onEvent(event))
             }
