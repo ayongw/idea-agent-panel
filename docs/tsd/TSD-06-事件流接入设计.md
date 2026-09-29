@@ -15,6 +15,7 @@
 | v1.3 | 2026-09-29 | S5 落地：按 §5.8 实现 shared DTO/格式化 → backend 解析聚合 → RPC 透传 → 前端指示器；收紧 `formatTokens` 规则（不足 1000 保持原值）；§6/§7 回填实施状态 | agent |
 | v1.4 | 2026-09-29 | S3a 落地：新增 `SessionStreamState`（累积/校准/75 ms 节流/失败可见）与事件客户端生命周期；新增 `getSessionRunningFlow`；§5.5/§5.9 按实际实现收敛（放弃 delta DTO 与 `StreamingRenderController` 分发方案）；§1/§3/§6/§7/§9 同步 | agent |
 | v1.5 | 2026-09-29 | S3b 落地：`ChatList` 按消息 id 就地重渲染气泡、`MessageBubble.renderedContent`、`sessionRunningFlow` 接线（发送/停止切换 + 结束后刷新用量）、「停止」真实中断服务端执行；§6/§7/§9 回填 | agent |
+| v1.6 | 2026-09-29 | 补 `OpenCodeEventRealServerITest`（真实连接）；根 `build.gradle.kts` 的 `test` 默认排除 `*ITest`、`-Pit=true` 纳入；回填 §9.1 实跑结果（通过） | agent |
 
 ---
 
@@ -325,7 +326,7 @@ sealed class OpenCodeEvent {
 | 文件 | 变更摘要 | 状态 |
 |------|---------|------|
 | `src/test/resources/sse/*.txt`（success / error / tool-call 三个） | 真实抓帧 fixture（按 SSE 规范留帧结束空行、按轮次切分、路径已脱敏） | **已创建（2026-09-29 实测）** |
-| `opencode-backend/build.gradle.kts` | 新增 okhttp、okhttp-sse（`implementation`）与 mockwebserver（`testImplementation`）；`test` 排除 `**/*ITest*` | **已实施**（ITest 排除待 S3 建 ITest 时加） |
+| `opencode-backend/build.gradle.kts` | 新增 okhttp、okhttp-sse（`implementation`）与 mockwebserver（`testImplementation`） | **已实施**（`*ITest` 排除落在根 `build.gradle.kts` 的 `test` 任务） |
 | `opencode-backend/.../event/OpenCodeEvent.kt` | 新增：事件模型（sealed class）+ `TokenUsage` / `OpenCodeError` | **已实施** |
 | `opencode-backend/.../event/OpenCodeEventParser.kt` | 新增：`data` JSON → 事件的纯函数解析（未知类型/缺 sessionID → `Unexpected`） | **已实施** |
 | `opencode-backend/.../event/OpenCodeEventClient.kt` | 新增：SSE 客户端（连接/重连退避/读超时存活/401 停止/stop 释放） | **已实施** |
@@ -344,7 +345,8 @@ sealed class OpenCodeEvent {
 | `opencode-event 前端 delta 分发`（原 `StreamingRenderController` 方案） | 该方案未落地：`StreamingRenderController` 仅保留 `cancelStreaming` 用于清空 | **已收敛** |
 | `src/test/.../OpenCodeEventParserUnitTest.kt` | 新增：解析纯函数用例（含心跳、未知类型、缺字段、非 JSON） | **已实施** |
 | `src/test/.../OpenCodeEventClientUnitTest.kt` | 新增：MockWebServer 回放 fixture（正常流、重复、断线重连、401、半途关闭） | **已实施** |
-| `src/test/.../OpenCodeEventRealServerITest.kt` | 新增：真实服务集成验证（`*ITest`，默认跳过） | 待实施 |
+| `src/test/.../OpenCodeEventRealServerITest.kt` | 新增：真实服务集成验证（`*ITest`，`-Pit=true` 才跑，实跑通过） | **已实施（S3 验证）** |
+| `build.gradle.kts`（根） | 修改：`test` 默认 `exclude("**/*ITest.class")`，`-Pit=true` 时纳入并把开关透给测试 JVM | **已实施** |
 | `opencode-shared/.../SessionUsage.kt` | 新增：`TokenUsageDto` / `SessionUsageDto` + `ContextUsageFormatter`（紧凑格式、千分位、占比与超窗截断，纯函数） | **已实施（S5）** |
 | `opencode-shared/.../AgentModelDto.kt` | 修改：`ModelDto` 增加 `contextWindow`（`Model.Info.limit.context`） | **已实施（S5）** |
 | `opencode-shared/.../ChatRepositoryRpcApi.kt` | 修改：新增 `getSessionUsage(projectId, sessionId)` | **已实施（S5）** |
@@ -365,7 +367,7 @@ sealed class OpenCodeEvent {
 |---|---|---|---|
 | **S1 抓帧定契约** | 起真实实例抓取成功流、失败流、工具调用流（含权限请求）的帧，确认事件名/payload/心跳/鉴权；固化 fixture；回填 §4 | §4 待确认项有实测答案，fixture 入库 | **已完成（2026-09-29）** |
 | **S2 客户端** | 依赖接入 + `OpenCodeEventParser` + `OpenCodeEventClient`（重连/读超时存活/停止） | MockWebServer 回放 fixture 单测全绿 | **已完成（2026-09-29）**：12 例事件单测通过 |
-| **S3 通路打通** | 事件 → 流式状态机 → 消息列表（75 ms 节流）→ RPC Flow → 前端就地刷新气泡；运行态驱动「发送/停止」 | 真实连接集成验证通过：面板逐字输出、思考过程可见、首 token 明显提前 | **已完成（2026-09-29）**：S3a 后端 + S3b 前端；真实连接验收见 §9.1/§9.3（待手工执行） |
+| **S3 通路打通** | 事件 → 流式状态机 → 消息列表（75 ms 节流）→ RPC Flow → 前端就地刷新气泡；运行态驱动「发送/停止」 | 真实连接集成验证通过：面板逐字输出、思考过程可见、首 token 明显提前 | **已完成（2026-09-29）**：S3a 后端 + S3b 前端；真实连接 ITest 实跑通过（§9.1）；面板侧手工验收见 §9.3（待装机执行） |
 | **S4 容错收口** | 对账兜底、权限卡片联调、中断清理、401 处理、包体与 README 同步 | 断开 server 重连自愈；权限允许/拒绝闭环；包体核对完成 | 待实施 |
 | **S5 用量与占比** | 输入框下方展示当前会话 token 用量与上下文占比（REST 拉取：会话累计用量 + 最近一次 step 的 input + 模型上下文窗口） | 切换/发送/中止/切模型后指示器更新；无窗口不显占比、无数据整块隐藏；`ContextUsageFormatter` 单测全绿 | **已完成（2026-09-29）** |
 
@@ -389,12 +391,19 @@ sealed class OpenCodeEvent {
 
 | 项 | 设计 |
 |---|---|
-| 用例 | `OpenCodeEventRealServerITest`（`*ITest`，Gradle `test` 默认排除） |
-| 前置 | 真实服务可达：`OPENCODE_IT_BASE_URL`（如 `http://127.0.0.1:4097`）、`OPENCODE_IT_PASSWORD`；未设置或未加 `-Dopencode.it=true` 时 `Assume.assumeTrue` 跳过 |
-| 流程 | 复用/新建会话 → 切模型 `opencode/mimo-v2.6-flash-free` → 挂 `/api/event` → 发 `prompt("Reply with exactly: PONG")` → 断言：收到 `session.text.started`、至少一条 `session.text.delta`、`session.text.ended`，且 **`ended.text` 等于 delta 累积**、`execution.succeeded` 到达 |
-| 工具链路 | 追加一次 `prompt("Use the shell tool to run: echo hello")`，断言 `tool.called` → `tool.success`（`content[].text` 含 `hello`）；若出现 `permission.asked`，用 `reply` 端点回 `once` 后断言继续执行 |
+| 用例 | `OpenCodeEventRealServerITest`（`*ITest`，Gradle `test` 默认排除；`-Pit=true` 纳入执行） |
+| 前置 | 真实服务可达：`OPENCODE_IT_BASE_URL`（默认 `http://127.0.0.1:4097`）、`OPENCODE_IT_PASSWORD`（默认 `itest-oc-panel`）；未加 `-Pit=true`（测试 JVM 侧为 `-Dopencode.it=true`）时 `Assume.assumeTrue` 跳过 |
+| 流程 | 起受控实例 → `BackendChatRepositoryModel` 建会话 → 切模型 `opencode/mimo-v2.6-flash-free` → 发 `prompt("Reply with exactly: PONG")` → 断言：执行态 true→false、消息列表**多次**中间态推送（≥2 次）、正文以 `text.ended` 校准为 `PONG`、思考气泡非空、无失败气泡 |
+| 工具链路 | 追加一次 `prompt("Use the shell tool to run: echo hello")`，断言 `tool.called` → `tool.success`（`content[].text` 含 `hello`）；若出现 `permission.asked`，用 `reply` 端点回 `once` 后断言继续执行（S4 随工具/权限卡片一起补） |
 | 为什么必要 | mock 只能验证"解析与重连逻辑"；真实链路才能发现鉴权、模型未授权、心跳时序、真实帧字段差异等只有真机才暴露的问题 |
 | 手工兜底 | 保留 §4.5 的 curl 复现步骤，作为无 IDE 环境时的对证手段 |
+
+**验证结果（2026-09-29，opencode v2.0.18 本机 4097 受控实例）**：`-Pit=true` 实跑通过（`tests=1 skipped=0 failures=0`，6.4s）——创建会话、切免费模型、真实事件流驱动下正文/思考逐次上屏并以终态校准为 `PONG`、执行态正确回落。命令：
+
+```bash
+OPENCODE_SERVER_PASSWORD=itest-oc-panel opencode serve --port 4097 &
+./gradlew test -Pit=true --tests "com.ayongw.idea.opencode.OpenCodeEventRealServerITest"
+```
 
 ### 9.2 单元测试
 

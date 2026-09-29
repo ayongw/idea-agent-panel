@@ -144,3 +144,15 @@ tasks.patchPluginXml {
         }
     }
 }
+
+/**
+ * 集成测试（`*ITest`）默认可不跑 —— 它们需要真实可达的 opencode serve。
+ * 显式 `./gradlew test -Pit=true` 时才纳入执行（同时把开关透给测试 JVM）。
+ */
+tasks.test {
+    val integrationTestEnabled = (findProperty("it") as String?)?.toBoolean() ?: false
+    if (!integrationTestEnabled) {
+        exclude("**/*ITest.class")
+    }
+    systemProperty("opencode.it", integrationTestEnabled.toString())
+}
