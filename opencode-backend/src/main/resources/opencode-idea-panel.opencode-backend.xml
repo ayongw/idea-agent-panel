@@ -1,0 +1,15 @@
+<idea-plugin>
+    <id>opencode-idea-panel.opencode-backend</id>
+    <name>OpenCode Backend Module</name>
+    <vendor url="https://github.com/ayongw">ayongw</vendor>
+
+    <dependencies>
+        <module name="intellij.platform.backend"/>
+        <module name="intellij.platform.kernel.backend"/>
+        <module name="opencode-idea-panel.opencode-shared"/>
+    </dependencies>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <platform.rpc.backend.remoteApiProvider implementation="com.ayongw.idea.opencode.backend.BackendRpcApiProvider"/>
+    </extensions>
+</idea-plugin>

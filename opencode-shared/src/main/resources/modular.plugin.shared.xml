@@ -1,7 +1,0 @@
-<idea-plugin>
-    <id>opencode-idea-panel.opencode-shared</id>
-    <name>OpenCode Shared Module</name>
-    <vendor url="https://github.com/ayongw">AYongW</vendor>
-
-    <depends>com.intellij.modules.platform</depends>
-</idea-plugin>

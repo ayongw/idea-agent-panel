@@ -117,7 +117,7 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 ├── opencode-shared/              # 共享契约模块
 │   ├── build.gradle.kts
 │   ├── src/main/resources/modular.plugin.shared.xml
-│   └── src/main/kotlin/com/ayongw/plugins/opencode/shared/
+│   └── src/main/kotlin/com/ayongw/idea/opencode/shared/
 │       ├── ChatMessage.kt        # 消息实体
 │       ├── ChatRepositoryRpcApi.kt  # RPC 接口
 │       ├── dtos.kt               # 数据传输对象
@@ -126,7 +126,7 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 │   ├── build.gradle.kts
 │   ├── src/main/resources/modular.plugin.frontend.xml
 │   ├── src/main/resources/icons/opencode.svg
-│   └── src/main/kotlin/com/ayongw/plugins/opencode/frontend/
+│   └── src/main/kotlin/com/ayongw/idea/opencode/frontend/
 │       ├── toolWindow/OpenCodeToolWindowFactory.kt
 │       ├── chatApp/OpenCodeChatApp.kt
 │       ├── chatApp/ui/           # UI 组件
@@ -134,7 +134,7 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 └── opencode-backend/             # 后端业务模块
     ├── build.gradle.kts
     ├── src/main/resources/modular.plugin.backend.xml
-    └── src/main/kotlin/com/ayongw/plugins/opencode/backend/
+    └── src/main/kotlin/com/ayongw/idea/opencode/backend/
         ├── BackendRpcApiProvider.kt
         ├── BackendChatRepositoryModel.kt
         ├── BackendChatRepositoryRpcApi.kt

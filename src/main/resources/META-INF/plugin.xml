@@ -1,7 +1,7 @@
 <idea-plugin>
-    <id>com.ayongw.plugins.opencode-idea-panel</id>
+    <id>com.ayongw.idea.opencode-idea-panel</id>
     <name>OpenCode AI Assistant Panel</name>
-    <vendor url="https://github.com/ayongw">AYongW</vendor>
+    <vendor url="https://github.com/ayongw">ayongw</vendor>
 
     <description><![CDATA[
         OpenCode AI Assistant Panel for IntelliJ IDEA.<br>

@@ -3,7 +3,7 @@ import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.tasks.aware.SplitModeAware
 import java.io.File
 
-group = "com.ayongw.plugins"
+group = "com.ayongw.idea"
 version = "0.1.0"
 
 // IDEA 安装路径配置 - 支持通过 gradle.properties 或环境变量配置
@@ -81,6 +81,11 @@ dependencies {
         // 如果需要 Java PSI 支持（上下文注入需要）
         bundledPlugin("com.intellij.java")
     }
+}
+
+intellijPlatform {
+    splitMode = true
+    pluginInstallationTarget = SplitModeAware.PluginInstallationTarget.BOTH
 }
 
 // pluginVerification {
