@@ -311,7 +311,8 @@ class OpenCodeRestClient(
             // HttpURLConnection 不支持 PATCH（JDK 限制），v2 的 session 重命名与 experimental.config 依赖它
             val response = if (method == "PATCH") patchRequest(uri, body) else connectionRequest(method, uri, body)
             if (response.code !in 200..299) {
-                Result.failure(IOException("HTTP ${response.code}: ${response.body}"))
+                // 截断响应体，避免整串原始 JSON 灌进设置页状态栏
+                Result.failure(IOException("HTTP ${response.code}: ${response.body.take(200)}"))
             } else {
                 Result.success(parse(response.body))
             }

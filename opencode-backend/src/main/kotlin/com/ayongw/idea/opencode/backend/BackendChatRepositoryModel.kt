@@ -4,6 +4,7 @@ package com.ayongw.idea.opencode.backend
 
 import com.ayongw.idea.opencode.backend.repository.AIResponseGenerator
 import com.ayongw.idea.opencode.backend.repository.ChatMessageFactory
+import com.ayongw.idea.opencode.backend.repository.OpenCodeCredentials
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ChatMessageDto
@@ -44,9 +45,9 @@ class BackendChatRepositoryModel {
     @Volatile
     private var username: String = OpenCodeRestClient.DEFAULT_USERNAME
 
-    /** Basic 认证密码（opencode serve 启动时打印，环境变量 OPENCODE_SERVER_PASSWORD 兜底） */
+    /** Basic 认证密码：显式值 → OPENCODE_SERVER_PASSWORD → ~/.config/opencode/service.json */
     @Volatile
-    private var password: String = System.getenv("OPENCODE_SERVER_PASSWORD") ?: ""
+    private var password: String = OpenCodeCredentials.resolvePassword(null)
 
     /** OpenCode REST 客户端（配置变更时重建） */
     @Volatile
@@ -235,7 +236,8 @@ class BackendChatRepositoryModel {
     fun updateServerConfig(serverUrl: String, username: String, password: String) {
         val normalizedUrl = serverUrl.trim().trimEnd('/').ifEmpty { DEFAULT_SERVER_URL }
         val normalizedUsername = username.trim().ifEmpty { OpenCodeRestClient.DEFAULT_USERNAME }
-        val normalizedPassword = password.trim()
+        // 密码留空时回退 OPENCODE_SERVER_PASSWORD / service.json，避免设置页空值把兜底覆盖掉
+        val normalizedPassword = OpenCodeCredentials.resolvePassword(password)
         if (normalizedUrl == this.serverUrl &&
             normalizedUsername == this.username &&
             normalizedPassword == this.password

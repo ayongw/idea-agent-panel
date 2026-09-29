@@ -5,57 +5,60 @@ import com.ayongw.idea.opencode.shared.ConfigScopeDto
 import com.ayongw.idea.opencode.shared.McpServerDto
 import com.ayongw.idea.opencode.shared.McpTimeoutDto
 import com.ayongw.idea.opencode.shared.SettingsRpcApi
-import com.intellij.openapi.project.ProjectManager
 import com.intellij.platform.project.projectId
 import com.intellij.ui.components.JBCheckBox
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.FlowLayout
 import javax.swing.DefaultComboBoxModel
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
-import javax.swing.JTable
-import javax.swing.ListSelectionModel
 import javax.swing.table.DefaultTableModel
 
 /**
- * MCP 面板：服务器列表（增删改）+ 运行状态 + 超时
+ * MCP 面板（上中下三段）
  *
- * 写入 `mcp.servers.<name>`、`mcp.timeout`；状态来自 `GET /api/mcp`。
+ * 上：配置来源（全局 / 项目配置文件路径）
+ * 中：当前加载的 MCP 服务器（`GET /api/mcp` + 配置 `mcp.servers`）
+ * 下：选中条目的详情编辑 + `mcp.timeout`
  */
 internal class McpSettingsTab : AbstractSettingsTab() {
 
     override val title: String = OpencodeFrontendBundle.message("settings.opencode.tab.mcp")
 
-    private val tableModel = DefaultTableModel(
+    private val scopeCombo = JComboBox<String>()
+    private val sourceLabel = JBLabel(" ").apply { font = JBUI.Fonts.smallFont() }
+
+    private val serverModel = DefaultTableModel(
         arrayOf(
             OpencodeFrontendBundle.message("settings.opencode.mcp.name"),
             OpencodeFrontendBundle.message("settings.opencode.mcp.type"),
             OpencodeFrontendBundle.message("settings.opencode.mcp.target"),
-            OpencodeFrontendBundle.message("settings.opencode.mcp.enabled"),
             OpencodeFrontendBundle.message("settings.opencode.mcp.status"),
-            OpencodeFrontendBundle.message("settings.opencode.scope")
+            OpencodeFrontendBundle.message("settings.opencode.mcp.scope"),
+            OpencodeFrontendBundle.message("settings.opencode.mcp.enabled")
         ),
         0
     )
-    private val table = JTable(tableModel).apply { setSelectionMode(ListSelectionModel.SINGLE_SELECTION) }
+    private val serverTable = buildTable(serverModel, listOf(140, 80, 260, 160, 130, 70))
 
-    private val scopeCombo = JComboBox<String>()
     private val nameField = JBTextField()
     private val typeCombo = JComboBox<String>()
     private val commandField = JBTextField()
     private val urlField = JBTextField()
-    private val environmentArea = JBTextArea(4, 40)
+    private val environmentArea = JBTextArea().apply { rows = 3 }
     private val enabledCheck = JBCheckBox(OpencodeFrontendBundle.message("settings.opencode.mcp.enabled"), true)
 
-    private val startupField = JBTextField(8)
-    private val catalogField = JBTextField(8)
-    private val executionField = JBTextField(8)
+    private val startupField = JBTextField()
+    private val catalogField = JBTextField()
+    private val executionField = JBTextField()
 
     private val localLabel = OpencodeFrontendBundle.message("settings.opencode.mcp.type.local")
     private val remoteLabel = OpencodeFrontendBundle.message("settings.opencode.mcp.type.remote")
@@ -65,70 +68,105 @@ internal class McpSettingsTab : AbstractSettingsTab() {
     override val component: JComponent = buildPanel()
 
     private fun buildPanel(): JComponent {
-        scopeCombo.model = buildScopeModel()
         typeCombo.model = DefaultComboBoxModel(arrayOf(localLabel, remoteLabel))
-        nameField.columns = 24
-        commandField.columns = 40
-        urlField.columns = 40
 
-        table.selectionModel.addListSelectionListener { event ->
+        serverTable.selectionModel.addListSelectionListener { event ->
             if (!event.valueIsAdjusting) fillFormFromSelection()
         }
 
-        val saveButton = JButton(OpencodeFrontendBundle.message("settings.opencode.save")).apply {
-            addActionListener { saveServer() }
-        }
-        val deleteButton = JButton(OpencodeFrontendBundle.message("settings.opencode.delete")).apply {
-            addActionListener { deleteServer() }
-        }
-        val saveTimeoutButton = JButton(OpencodeFrontendBundle.message("settings.opencode.save")).apply {
-            addActionListener { saveTimeout() }
+        val listBlock = JPanel(BorderLayout()).apply {
+            add(sourceLabel, BorderLayout.NORTH)
+            add(JBScrollPane(serverTable), BorderLayout.CENTER)
         }
 
-        return FormBuilder.createFormBuilder()
-            .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.scope"), scopeCombo)
-            .addComponent(JBScrollPane(table).apply { preferredSize = JBUI.size(760, 180) })
-            .addSeparator()
+        val detailBlock = FormBuilder.createFormBuilder()
+            .addComponent(JBLabel(OpencodeFrontendBundle.message("settings.opencode.mcp.detail")))
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.mcp.name"), nameField)
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.mcp.type"), typeCombo)
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.mcp.command"), commandField)
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.mcp.url"), urlField)
-            .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.mcp.environment"), JBScrollPane(environmentArea))
+            .addComponent(JBLabel(OpencodeFrontendBundle.message("settings.opencode.mcp.environment")))
+            .addComponent(JBScrollPane(environmentArea))
             .addComponent(enabledCheck)
             .addComponent(
-                JPanel(BorderLayout()).apply {
-                    add(saveButton, BorderLayout.WEST)
-                    add(deleteButton, BorderLayout.EAST)
+                JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+                    add(
+                        JButton(OpencodeFrontendBundle.message("settings.opencode.save")).apply {
+                            addActionListener { saveServer() }
+                        }
+                    )
+                    add(
+                        JButton(OpencodeFrontendBundle.message("settings.opencode.delete")).apply {
+                            addActionListener { deleteServer() }
+                        }
+                    )
+                    add(buildScopeRow(scopeCombo))
                 }
             )
+            .panel
+
+        val timeoutBlock = FormBuilder.createFormBuilder()
             .addSeparator()
+            .addComponent(JBLabel(OpencodeFrontendBundle.message("settings.opencode.mcp.timeout")))
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.mcp.timeout.startup"), startupField)
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.mcp.timeout.catalog"), catalogField)
-            .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.mcp.timeout.execution"), executionField)
-            .addComponent(saveTimeoutButton)
-            .addComponent(statusLabel)
-            .addComponentFillVertically(JPanel(), 0)
+            .addLabeledComponent(
+                OpencodeFrontendBundle.message("settings.opencode.mcp.timeout.execution"),
+                executionField
+            )
+            .addComponent(
+                JButton(OpencodeFrontendBundle.message("settings.opencode.save")).apply {
+                    addActionListener { saveTimeout() }
+                }
+            )
             .panel
+
+        return JPanel(BorderLayout()).apply {
+            add(
+                buildHeader(title, OpencodeFrontendBundle.message("settings.opencode.mcp.hint")) { reload() },
+                BorderLayout.NORTH
+            )
+            add(listBlock, BorderLayout.CENTER)
+            add(
+                JPanel(BorderLayout()).apply {
+                    add(
+                        JPanel(BorderLayout()).apply {
+                            add(detailBlock, BorderLayout.CENTER)
+                            add(timeoutBlock, BorderLayout.SOUTH)
+                        },
+                        BorderLayout.CENTER
+                    )
+                    add(statusLabel, BorderLayout.SOUTH)
+                },
+                BorderLayout.SOUTH
+            )
+        }
     }
 
     override fun reload() {
         loadSnapshot { snapshot ->
+            sourceLabel.text = OpencodeFrontendBundle.message(
+                "settings.opencode.mcp.source",
+                snapshot.globalConfigPath,
+                snapshot.projectConfigPath
+            )
+
             servers = snapshot.mcpServers
-            tableModel.rowCount = 0
+            serverModel.rowCount = 0
             snapshot.mcpServers.forEach { server ->
-                tableModel.addRow(
+                serverModel.addRow(
                     arrayOf(
                         server.name,
                         if (server.type == "remote") remoteLabel else localLabel,
                         server.url ?: server.command.joinToString(" "),
-                        if (server.enabled) OpencodeFrontendBundle.message("settings.opencode.yes")
-                        else OpencodeFrontendBundle.message("settings.opencode.no"),
                         server.statusError?.let { "${server.status.orEmpty()} ($it)" } ?: server.status.orEmpty(),
                         when (server.scope) {
                             ConfigScopeDto.GLOBAL -> OpencodeFrontendBundle.message("settings.opencode.scope.global")
                             ConfigScopeDto.PROJECT -> OpencodeFrontendBundle.message("settings.opencode.scope.project")
                             null -> OpencodeFrontendBundle.message("settings.opencode.scope.server")
-                        }
+                        },
+                        if (server.enabled) OpencodeFrontendBundle.message("settings.opencode.yes")
+                        else OpencodeFrontendBundle.message("settings.opencode.no")
                     )
                 )
             }
@@ -151,19 +189,15 @@ internal class McpSettingsTab : AbstractSettingsTab() {
         scopeCombo.selectedIndex = if (server.scope == ConfigScopeDto.PROJECT) 1 else 0
     }
 
-    private fun selectedServer(): McpServerDto? {
-        val row = table.selectedRow
-        if (row < 0 || row >= servers.size) return null
-        return servers[row]
-    }
+    private fun selectedServer(): McpServerDto? = servers.getOrNull(serverTable.selectedRow)
 
     private fun saveServer() {
         val name = nameField.text.trim()
         if (name.isBlank()) {
-            statusLabel.text = OpencodeFrontendBundle.message("settings.opencode.mcp.name.required")
+            showStatus(OpencodeFrontendBundle.message("settings.opencode.mcp.name.required"))
             return
         }
-        val project = ProjectManager.getInstance().openProjects.first()
+        val project = currentProject() ?: return
         val isRemote = typeCombo.selectedItem == remoteLabel
         val server = McpServerDto(
             name = name,
@@ -183,14 +217,14 @@ internal class McpSettingsTab : AbstractSettingsTab() {
 
     private fun deleteServer() {
         val server = selectedServer() ?: return
-        val project = ProjectManager.getInstance().openProjects.first()
+        val project = currentProject() ?: return
         runWrite({ reload() }) {
             SettingsRpcApi.getInstance().removeMcpServer(project.projectId(), scopeOf(scopeCombo), server.name)
         }
     }
 
     private fun saveTimeout() {
-        val project = ProjectManager.getInstance().openProjects.first()
+        val project = currentProject() ?: return
         val timeout = McpTimeoutDto(
             startup = startupField.text.trim().toLongOrNull(),
             catalog = catalogField.text.trim().toLongOrNull(),
@@ -198,7 +232,11 @@ internal class McpSettingsTab : AbstractSettingsTab() {
         )
         val isEmpty = timeout.startup == null && timeout.catalog == null && timeout.execution == null
         runWrite({ reload() }) {
-            SettingsRpcApi.getInstance().saveMcpTimeout(project.projectId(), scopeOf(scopeCombo), if (isEmpty) null else timeout)
+            SettingsRpcApi.getInstance().saveMcpTimeout(
+                project.projectId(),
+                scopeOf(scopeCombo),
+                if (isEmpty) null else timeout
+            )
         }
     }
 

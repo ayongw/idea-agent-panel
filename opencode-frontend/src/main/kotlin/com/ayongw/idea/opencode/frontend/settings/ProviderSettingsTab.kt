@@ -4,22 +4,18 @@ import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
 import com.ayongw.idea.opencode.shared.ConfigScopeDto
 import com.ayongw.idea.opencode.shared.ProviderDto
 import com.ayongw.idea.opencode.shared.SettingsRpcApi
-import com.intellij.openapi.project.ProjectManager
 import com.intellij.platform.project.projectId
-import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
-import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.FlowLayout
 import javax.swing.DefaultComboBoxModel
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
-import javax.swing.JTable
-import javax.swing.ListSelectionModel
 import javax.swing.table.DefaultTableModel
 
 /**
@@ -43,7 +39,7 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
         ),
         0
     )
-    private val table = JTable(tableModel).apply { setSelectionMode(ListSelectionModel.SINGLE_SELECTION) }
+    private val table = buildTable(tableModel, listOf(120, 140, 180, 200, 200, 100, 80))
     private val idField = JBTextField()
     private val nameField = JBTextField()
     private val packageField = JBTextField()
@@ -60,57 +56,57 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
     override val component: JComponent = buildPanel()
 
     private fun buildPanel(): JComponent {
-        idField.columns = 24
-        nameField.columns = 24
-        packageField.columns = 24
-        baseUrlField.columns = 24
-        modelsField.columns = 40
-        apiKeyField.columns = 24
-
-        scopeCombo.model = buildScopeModel()
-
         table.selectionModel.addListSelectionListener { event ->
             if (!event.valueIsAdjusting) fillFormFromSelection()
         }
 
-        val saveButton = JButton(OpencodeFrontendBundle.message("settings.opencode.save")).apply {
-            addActionListener { saveProvider() }
-        }
-        val deleteButton = JButton(OpencodeFrontendBundle.message("settings.opencode.delete")).apply {
-            addActionListener { deleteProvider() }
-        }
-        val credentialButton = JButton(OpencodeFrontendBundle.message("settings.opencode.provider.save.credential")).apply {
-            addActionListener { saveCredential() }
-        }
-        val defaultModelButton = JButton(OpencodeFrontendBundle.message("settings.opencode.save")).apply {
-            addActionListener { saveDefaultModel() }
-        }
-
-        val center = FormBuilder.createFormBuilder()
-            .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.scope"), scopeCombo)
-            .addComponent(JBScrollPane(table).apply { preferredSize = JBUI.size(760, 200) })
-            .addSeparator()
+        val detail = FormBuilder.createFormBuilder()
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.provider.id"), idField)
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.provider.name"), nameField)
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.provider.package"), packageField)
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.provider.baseurl"), baseUrlField)
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.provider.models"), modelsField)
             .addComponent(
-                JPanel(BorderLayout()).apply {
-                    add(saveButton, BorderLayout.WEST)
-                    add(deleteButton, BorderLayout.CENTER)
-                    add(credentialButton, BorderLayout.EAST)
+                JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+                    add(
+                        JButton(OpencodeFrontendBundle.message("settings.opencode.save")).apply {
+                            addActionListener { saveProvider() }
+                        }
+                    )
+                    add(
+                        JButton(OpencodeFrontendBundle.message("settings.opencode.delete")).apply {
+                            addActionListener { deleteProvider() }
+                        }
+                    )
+                    add(
+                        JButton(OpencodeFrontendBundle.message("settings.opencode.provider.save.credential")).apply {
+                            addActionListener { saveCredential() }
+                        }
+                    )
                 }
             )
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.provider.apikey"), apiKeyField)
             .addSeparator()
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.model.default"), defaultModelCombo)
-            .addComponent(defaultModelButton)
-            .addComponent(statusLabel)
-            .addComponentFillVertically(JPanel(), 0)
+            .addComponent(
+                JButton(OpencodeFrontendBundle.message("settings.opencode.save")).apply {
+                    addActionListener { saveDefaultModel() }
+                }
+            )
             .panel
 
-        return center
+        return JPanel(BorderLayout()).apply {
+            add(buildHeader(title) { reload() }, BorderLayout.NORTH)
+            add(
+                JPanel(BorderLayout()).apply {
+                    add(buildScopeRow(scopeCombo), BorderLayout.NORTH)
+                    add(JBScrollPane(table), BorderLayout.CENTER)
+                    add(detail, BorderLayout.SOUTH)
+                },
+                BorderLayout.CENTER
+            )
+            add(statusLabel, BorderLayout.SOUTH)
+        }
     }
 
     override fun reload() {
@@ -157,11 +153,7 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
         scopeCombo.selectedIndex = if (provider.scope == ConfigScopeDto.PROJECT) 1 else 0
     }
 
-    private fun selectedProvider(): ProviderDto? {
-        val row = table.selectedRow
-        if (row < 0 || row >= providers.size) return null
-        return providers[row]
-    }
+    private fun selectedProvider(): ProviderDto? = providers.getOrNull(table.selectedRow)
 
     private fun selectedScope(): ConfigScopeDto = scopeOf(scopeCombo)
 
@@ -171,10 +163,10 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
     private fun saveProvider() {
         val id = idField.text.trim()
         if (id.isBlank()) {
-            statusLabel.text = OpencodeFrontendBundle.message("settings.opencode.provider.id.required")
+            showStatus(OpencodeFrontendBundle.message("settings.opencode.provider.id.required"))
             return
         }
-        val project = ProjectManager.getInstance().openProjects.first()
+        val project = currentProject() ?: return
         val scope = selectedScope()
         val provider = ProviderDto(
             id = id,
@@ -190,7 +182,7 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
 
     private fun deleteProvider() {
         val provider = selectedProvider() ?: return
-        val project = ProjectManager.getInstance().openProjects.first()
+        val project = currentProject() ?: return
         runWrite({ reload() }) {
             SettingsRpcApi.getInstance().removeProvider(project.projectId(), selectedScope(), provider.id)
         }
@@ -200,10 +192,10 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
         val provider = selectedProvider() ?: return
         val key = String(apiKeyField.password).trim()
         if (key.isBlank()) {
-            statusLabel.text = OpencodeFrontendBundle.message("settings.opencode.provider.apikey.required")
+            showStatus(OpencodeFrontendBundle.message("settings.opencode.provider.apikey.required"))
             return
         }
-        val project = ProjectManager.getInstance().openProjects.first()
+        val project = currentProject() ?: return
         runWrite({ reload() }) {
             SettingsRpcApi.getInstance().saveCredential(
                 project.projectId(),
@@ -215,7 +207,7 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
     }
 
     private fun saveDefaultModel() {
-        val project = ProjectManager.getInstance().openProjects.first()
+        val project = currentProject() ?: return
         val selected = (defaultModelCombo.selectedItem as? String)?.takeIf { it != defaultModelNone }
         runWrite({ reload() }) {
             SettingsRpcApi.getInstance().setDefaultModel(project.projectId(), selectedScope(), selected)
