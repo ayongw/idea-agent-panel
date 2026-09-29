@@ -3,13 +3,21 @@ package com.ayongw.idea.opencode.backend.repository
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
+import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.google.gson.JsonPrimitive
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.time.Duration
 import java.util.Base64
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * OpenCode Server v2 REST 客户端
@@ -173,15 +181,123 @@ class OpenCodeRestClient(
         return executeRequest("POST", "/session/${encodePath(sessionId)}/model", body) { Unit }
     }
 
+    // ==================== 设置类接口 ====================
+
+    /**
+     * 配置文档清单（按优先级低→高，含文档路径）
+     * GET /api/config
+     */
+    suspend fun getConfigEntries(): Result<List<JsonObject>> =
+        executeRequest("GET", "/config") { parseDataObjects(it) }
+
+    /**
+     * 供应商清单
+     * GET /api/provider
+     */
+    suspend fun getProviders(): Result<List<JsonObject>> =
+        executeRequest("GET", "/provider") { parseDataObjects(it) }
+
+    /**
+     * 模型清单
+     * GET /api/model
+     */
+    suspend fun getModels(): Result<List<JsonObject>> =
+        executeRequest("GET", "/model") { parseDataObjects(it) }
+
+    /**
+     * 默认模型（无默认时为 null）
+     * GET /api/model/default
+     */
+    suspend fun getDefaultModel(): Result<JsonObject?> =
+        executeRequest("GET", "/model/default") { parseDataObjects(it).firstOrNull() }
+
+    /**
+     * MCP 服务器与连接状态
+     * GET /api/mcp
+     *
+     * @param directory 定位目录；不传时服务端可能返回空列表，建议显式传入项目目录
+     */
+    suspend fun getMcpServers(directory: String? = null): Result<List<JsonObject>> =
+        executeRequest("GET", "/mcp${directoryQuery(directory)}") { parseDataObjects(it) }
+
+    /**
+     * 已注册技能清单
+     * GET /api/skill
+     */
+    suspend fun getSkills(): Result<List<JsonObject>> =
+        executeRequest("GET", "/skill") { parseDataObjects(it) }
+
+    /**
+     * 集成清单（含供应商的认证方式与已存凭据）
+     * GET /api/integration
+     */
+    suspend fun getIntegrations(): Result<List<JsonObject>> =
+        executeRequest("GET", "/integration") { parseDataObjects(it) }
+
+    /**
+     * 可用 shell 清单
+     * GET /api/config/shell
+     */
+    suspend fun getShells(): Result<List<JsonObject>> =
+        executeRequest("GET", "/config/shell") { parseDataObjects(it) }
+
+    /**
+     * 服务信息（version/pid/urls/paths）
+     * GET /api/info
+     */
+    suspend fun getInfo(): Result<JsonObject> =
+        executeRequest("GET", "/info") { objectOrData(it) }
+
+    /**
+     * 写入全局配置的 shell（v2 唯一可经 HTTP 落盘的配置字段）
+     * PATCH /api/experimental/config
+     */
+    suspend fun setShell(shell: String?): Result<Unit> {
+        val body = JsonObject().apply {
+            add("shell", if (shell == null) JsonNull.INSTANCE else JsonPrimitive(shell))
+        }.toString()
+        return executeRequest("PATCH", "/experimental/config", body) { Unit }
+    }
+
+    /**
+     * 触发配置重载（写入配置文件后兜底使用）
+     * POST /api/location/reload
+     */
+    suspend fun reloadConfig(): Result<Unit> =
+        executeRequest("POST", "/location/reload", "{}") { Unit }
+
+    /**
+     * 写入集成凭据（apiKey，落 opencode 数据库，非配置文件）
+     * POST /api/integration/{integrationID}/connect/key
+     */
+    suspend fun connectKey(integrationId: String, key: String, label: String? = null): Result<Unit> {
+        val body = JsonObject().apply {
+            addProperty("key", key)
+            if (!label.isNullOrBlank()) addProperty("label", label)
+        }.toString()
+        return executeRequest("POST", "/integration/${encodePath(integrationId)}/connect/key", body) { Unit }
+    }
+
+    /** 拼接 location.directory 查询参数 */
+    private fun directoryQuery(directory: String?): String =
+        directory?.takeIf { it.isNotBlank() }
+            ?.let { "?location.directory=" + URLEncoder.encode(it, "UTF-8") }
+            ?: ""
+
     // ==================== 认证与请求 ====================
 
     /**
      * 按需附加 Basic 认证头（密码为空则不鉴权）
      */
     private fun applyAuthHeader(connection: HttpURLConnection) {
-        val secret = password?.takeIf { it.isNotBlank() } ?: return
+        authHeaderValue()?.let { connection.setRequestProperty("Authorization", it) }
+    }
+
+    /** Basic 认证头取值，密码为空时返回 null */
+    private fun authHeaderValue(): String? {
+        val secret = password?.takeIf { it.isNotBlank() } ?: return null
         val credentials = "$username:$secret".toByteArray(Charsets.UTF_8)
-        connection.setRequestProperty("Authorization", "Basic ${Base64.getEncoder().encodeToString(credentials)}")
+        return "Basic ${Base64.getEncoder().encodeToString(credentials)}"
     }
 
     private suspend fun <T> executeRequest(
@@ -190,36 +306,62 @@ class OpenCodeRestClient(
         body: String? = null,
         parse: (String) -> T
     ): Result<T> {
+        val uri = URI("$base/api$path")
         return try {
-            val connection = URI("$base/api$path").toURL().openConnection() as HttpURLConnection
-            connection.connectTimeout = 10000
-            connection.readTimeout = 30000
-            connection.requestMethod = method
-            connection.doOutput = body != null
-            applyAuthHeader(connection)
-
-            if (body != null) {
-                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                connection.outputStream.use { it.write(body.toByteArray()) }
-            }
-
-            val responseCode = connection.responseCode
-            val responseBody = if (responseCode >= 400) {
-                connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+            // HttpURLConnection 不支持 PATCH（JDK 限制），v2 的 session 重命名与 experimental.config 依赖它
+            val response = if (method == "PATCH") patchRequest(uri, body) else connectionRequest(method, uri, body)
+            if (response.code !in 200..299) {
+                Result.failure(IOException("HTTP ${response.code}: ${response.body}"))
             } else {
-                connection.inputStream.bufferedReader().use { it.readText() }
-            }
-            connection.disconnect()
-
-            if (responseCode !in 200..299) {
-                Result.failure(IOException("HTTP $responseCode: $responseBody"))
-            } else {
-                Result.success(parse(responseBody))
+                Result.success(parse(response.body))
             }
         } catch (e: IOException) {
             Result.failure(e)
         }
     }
+
+    private fun connectionRequest(method: String, uri: URI, body: String?): RawResponse {
+        val connection = uri.toURL().openConnection() as HttpURLConnection
+        connection.connectTimeout = CONNECT_TIMEOUT_MS
+        connection.readTimeout = READ_TIMEOUT_MS
+        connection.requestMethod = method
+        connection.doOutput = body != null
+        applyAuthHeader(connection)
+
+        if (body != null) {
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            connection.outputStream.use { it.write(body.toByteArray()) }
+        }
+
+        val code = connection.responseCode
+        val text = if (code >= 400) {
+            connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+        } else {
+            connection.inputStream.bufferedReader().use { it.readText() }
+        }
+        connection.disconnect()
+        return RawResponse(code, text)
+    }
+
+    /** PATCH 走 JDK HttpClient（HttpURLConnection 不接受该方法） */
+    private suspend fun patchRequest(uri: URI, body: String?): RawResponse = withContext(Dispatchers.IO) {
+        val builder = HttpRequest.newBuilder(uri)
+            .timeout(Duration.ofMillis(READ_TIMEOUT_MS.toLong()))
+            .method(
+                "PATCH",
+                body?.let { HttpRequest.BodyPublishers.ofString(it) } ?: HttpRequest.BodyPublishers.noBody()
+            )
+        if (body != null) builder.header("Content-Type", "application/json; charset=utf-8")
+        authHeaderValue()?.let { builder.header("Authorization", it) }
+
+        val client = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofMillis(CONNECT_TIMEOUT_MS.toLong()))
+            .build()
+        val response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString())
+        RawResponse(response.statusCode(), response.body() ?: "")
+    }
+
+    private class RawResponse(val code: Int, val body: String)
 
     // ==================== 响应解析 ====================
 
@@ -229,6 +371,14 @@ class OpenCodeRestClient(
         val data = if (root.isJsonObject) root.asJsonObject.get("data") else null
         return data?.takeIf { it.isJsonObject }?.asJsonObject
             ?: throw IOException("Unexpected response shape: ${json.take(200)}")
+    }
+
+    /** 取对象响应：优先 `{ "data": {...} }`，否则取根对象本身（如 /api/info 直接返回对象） */
+    private fun objectOrData(json: String): JsonObject {
+        val root = JsonParser.parseString(json)
+        if (!root.isJsonObject) throw IOException("Unexpected response shape: ${json.take(200)}")
+        val obj = root.asJsonObject
+        return obj.get("data")?.takeIf { it.isJsonObject }?.asJsonObject ?: obj
     }
 
     /** 取 `{ "data": [ ... ] }` 中的数据数组 */
@@ -362,5 +512,11 @@ class OpenCodeRestClient(
 
     companion object {
         const val DEFAULT_USERNAME = "opencode"
+
+        /** 连接超时（毫秒） */
+        const val CONNECT_TIMEOUT_MS = 10_000
+
+        /** 读取超时（毫秒） */
+        const val READ_TIMEOUT_MS = 30_000
     }
 }

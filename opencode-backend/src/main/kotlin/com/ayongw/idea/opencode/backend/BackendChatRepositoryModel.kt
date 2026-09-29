@@ -252,6 +252,9 @@ class BackendChatRepositoryModel {
     /** 当前生效的 Server 地址 */
     fun getServerUrl(): String = serverUrl
 
+    /** 当前生效的 REST 客户端（设置页复用其连接配置） */
+    fun getRestClient(): OpenCodeRestClient = restClient
+
     /**
      * 列出可用 Agent（模式）
      */
