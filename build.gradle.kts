@@ -1,9 +1,15 @@
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.tasks.aware.SplitModeAware
+import java.io.File
 
 group = "com.ayongw.plugins"
 version = "0.1.0"
+
+// IDEA 安装路径配置 - 支持通过 gradle.properties 或环境变量配置
+val ideaHome: String = project.findProperty("ideaHome")?.toString() 
+    ?: System.getenv("IDEA_HOME") 
+    ?: "/Applications/IntelliJ IDEA.app"
 
 plugins {
     application
@@ -31,8 +37,6 @@ subprojects {
             apply(plugin = "org.jetbrains.intellij.platform.module")
             dependencies {
                 intellijPlatform {
-                    // IntelliJ Platform 由根项目的 local(...) 提供，子模块通过 module 插件共享，
-                    // 不可再声明 intellijIdea(...)，否则会触发从 JetBrains 下载完整 IDE（~1.5GB）
                     compileOnly("org.jetbrains.kotlin:kotlin-serialization:2.3.20")
                     compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.0")
                 }
@@ -42,7 +46,7 @@ subprojects {
             apply(plugin = "org.jetbrains.intellij.platform.module")
             dependencies {
                 intellijPlatform {
-                    local("/Applications/IntelliJ IDEA.app")
+                    local(ideaHome)
                     compileOnly("org.jetbrains.kotlin:kotlin-serialization:2.3.20")
                     compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.0")
                 }
@@ -59,7 +63,6 @@ subprojects {
                     bundledModule("intellij.platform.backend")
                 }
                 implementation(project(":opencode-shared"))
-                // Dependencies will be resolved from opencode-backend/build.gradle.kts
             }
         }
     }
@@ -68,7 +71,7 @@ subprojects {
 dependencies {
     intellijPlatform {
         // Use local IntelliJ IDEA 2026.2.3 installation for root
-        local("/Applications/IntelliJ IDEA.app")
+        local(ideaHome)
 
         pluginModule(implementation(project(":opencode-shared")))
         pluginModule(implementation(project(":opencode-frontend")))
