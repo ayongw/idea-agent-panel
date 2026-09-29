@@ -5,11 +5,9 @@
 
     <description><![CDATA[
         OpenCode AI Assistant Panel for IntelliJ IDEA.<br>
-        A modular plugin providing AI-powered coding assistance through OpenCode Server.
+        A modular plugin providing AI-powered coding assistance through OpenCode Server.<br><br>
+        License: Apache License 2.0 - <a href="https://www.apache.org/licenses/LICENSE-2.0">https://www.apache.org/licenses/LICENSE-2.0</a>
     ]]></description>
-
-    <license url="https://www.apache.org/licenses/LICENSE-2.0">Apache 2.0</license>
-    <license url="file://$PLUGIN_HOME$/LICENSE">Apache 2.0 (local copy)</license>
 
     <content>
         <module name="opencode-idea-panel.opencode-shared" loading="required"/>
