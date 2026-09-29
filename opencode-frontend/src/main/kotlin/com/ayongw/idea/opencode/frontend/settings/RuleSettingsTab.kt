@@ -1,76 +1,73 @@
 package com.ayongw.idea.opencode.frontend.settings
 
 import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
+import com.ayongw.idea.opencode.shared.ConfigScopeDto
 import com.ayongw.idea.opencode.shared.RuleFileDto
-import com.ayongw.idea.opencode.shared.SettingsRpcApi
-import com.intellij.platform.project.projectId
+import com.ayongw.idea.opencode.shared.SettingsSnapshotDto
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBTextArea
-import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.FlowLayout
-import javax.swing.DefaultComboBoxModel
-import javax.swing.JButton
-import javax.swing.JComboBox
+import javax.swing.BoxLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
 
 /**
- * 规则面板：`AGENTS.md`（真正生效的规则载体）编辑 + `instructions` 只读展示
+ * 规则面板
  *
- * 规则不走 JSON，直接做文本读写；`instructions` 在 v2 只接受不解析，此处仅作兼容展示。
+ * 上：规则加载位置（`AGENTS.md` 所在目录 + 配置 `instructions` 条目）
+ * 下：已加载规则文件卡片（文件名 + 文件前 150 个字符），右侧齿轮在编辑器中打开该文件
+ *
+ * 规则内容不在设置页内编辑——opencode 只从 `AGENTS.md` 读取规则。
  */
 internal class RuleSettingsTab : AbstractSettingsTab() {
 
     override val title: String = OpencodeFrontendBundle.message("settings.opencode.tab.rules")
 
-    private val fileCombo = JComboBox<String>()
-    private val existsLabel = JBLabel(" ").apply { font = JBUI.Fonts.smallFont() }
-    private val editor = JBTextArea()
-    private val instructionsArea = JBTextArea().apply {
-        rows = 5
-        isEditable = false
+    private val locationsRow = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        isOpaque = false
     }
-
-    private var ruleFiles: List<RuleFileDto> = emptyList()
+    private val loadedLabel = JBLabel(" ").apply { font = JBUI.Fonts.smallFont() }
+    private val cards = SettingsCardList(OpencodeFrontendBundle.message("settings.opencode.filter"))
 
     override val component: JComponent = buildPanel()
 
     private fun buildPanel(): JComponent {
-        fileCombo.addActionListener { loadSelectedFile() }
-
-        val head = FormBuilder.createFormBuilder()
-            .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.rules.file"), fileCombo)
-            .addComponent(existsLabel)
-            .addComponent(
-                JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
-                    add(
-                        JButton(OpencodeFrontendBundle.message("settings.opencode.rules.reload")).apply {
-                            addActionListener { loadSelectedFile() }
-                        }
-                    )
-                    add(
-                        JButton(OpencodeFrontendBundle.message("settings.opencode.save")).apply {
-                            addActionListener { saveSelectedFile() }
-                        }
-                    )
-                }
+        val locationsBlock = JPanel(BorderLayout()).apply {
+            add(
+                JBLabel(OpencodeFrontendBundle.message("settings.opencode.rules.locations")).apply {
+                    font = JBUI.Fonts.label().asBold()
+                },
+                BorderLayout.NORTH
             )
-            .panel
+            add(buildScroll(locationsRow, 90), BorderLayout.CENTER)
+        }
 
-        val instructions = FormBuilder.createFormBuilder()
-            .addComponent(buildHint(OpencodeFrontendBundle.message("settings.opencode.rules.instructions.hint")))
-            .addComponent(buildScroll(instructionsArea, 90))
-            .panel
+        val loadedBlock = JPanel(BorderLayout()).apply {
+            add(
+                JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+                    add(
+                        JBLabel(OpencodeFrontendBundle.message("settings.opencode.rules.list")).apply {
+                            font = JBUI.Fonts.label().asBold()
+                        }
+                    )
+                    add(loadedLabel)
+                },
+                BorderLayout.NORTH
+            )
+            add(cards, BorderLayout.CENTER)
+        }
 
         return JPanel(BorderLayout()).apply {
-            add(buildHeader(title) { reload() }, BorderLayout.NORTH)
+            add(
+                buildHeader(title, OpencodeFrontendBundle.message("settings.opencode.rules.hint")) { reload() },
+                BorderLayout.NORTH
+            )
             add(
                 JPanel(BorderLayout()).apply {
-                    add(head, BorderLayout.NORTH)
-                    add(buildScroll(editor, 200), BorderLayout.CENTER)
-                    add(instructions, BorderLayout.SOUTH)
+                    add(locationsBlock, BorderLayout.NORTH)
+                    add(loadedBlock, BorderLayout.CENTER)
                 },
                 BorderLayout.CENTER
             )
@@ -80,39 +77,56 @@ internal class RuleSettingsTab : AbstractSettingsTab() {
 
     override fun reload() {
         loadSnapshot { snapshot ->
-            ruleFiles = snapshot.ruleFiles
-            val model = DefaultComboBoxModel<String>()
-            snapshot.ruleFiles.forEach { model.addElement(it.path) }
-            fileCombo.model = model
-            fileCombo.selectedIndex = if (snapshot.ruleFiles.isEmpty()) -1 else 0
-            instructionsArea.text = snapshot.instructions.joinToString("\n")
-            if (snapshot.ruleFiles.isNotEmpty()) loadSelectedFile()
+            renderLocations(snapshot)
+            // 只列出已存在的规则文件；不存在的候选在位置上已说明扫描目录
+            val existing = snapshot.ruleFiles.filter { it.exists }
+            cards.setCards(existing.map { ruleCard(it) })
+            loadedLabel.text = OpencodeFrontendBundle.message("settings.opencode.count", existing.size)
         }
     }
 
-    private fun selectedFile(): RuleFileDto? = ruleFiles.getOrNull(fileCombo.selectedIndex)
+    private fun renderLocations(snapshot: SettingsSnapshotDto) {
+        locationsRow.removeAll()
+        snapshot.ruleFiles.forEach { file ->
+            locationsRow.add(
+                locationLabel(parentDirOf(file.path), OpencodeFrontendBundle.message("settings.opencode.rules.agents.md"))
+            )
+        }
+        snapshot.instructions.forEach { entry ->
+            locationsRow.add(
+                locationLabel(entry, OpencodeFrontendBundle.message("settings.opencode.rules.instructions"))
+            )
+        }
+        if (locationsRow.componentCount == 0) {
+            locationsRow.add(buildHint(OpencodeFrontendBundle.message("settings.opencode.rules.locations.empty")))
+        }
+        locationsRow.revalidate()
+        locationsRow.repaint()
+    }
 
-    private fun loadSelectedFile() {
-        val file = selectedFile() ?: return
-        existsLabel.text = OpencodeFrontendBundle.message(
-            if (file.exists) "settings.opencode.rules.exists" else "settings.opencode.rules.missing"
+    private fun locationLabel(path: String, kind: String): JComponent = wrappedHintLabel("• " + path, kind)
+
+    private fun ruleCard(file: RuleFileDto): SettingsCard {
+        val scope = OpencodeFrontendBundle.message(
+            if (file.scope == ConfigScopeDto.GLOBAL) "settings.opencode.scope.short.global"
+            else "settings.opencode.scope.short.project"
         )
-        val project = currentProject() ?: return
-        runAsync({ content ->
-            editor.text = content?.content.orEmpty()
-            editor.caretPosition = 0
-        }) {
-            SettingsRpcApi.getInstance().readRuleFile(project.projectId(), file.path)
-        }
-    }
-
-    private fun saveSelectedFile() {
-        val file = selectedFile() ?: return
-        val project = currentProject() ?: return
-        runWrite({ loadSelectedFile() }) {
-            SettingsRpcApi.getInstance().saveRuleFile(project.projectId(), file.path, editor.text)
-        }
+        val preview = file.preview?.takeIf { it.isNotBlank() }
+            ?: OpencodeFrontendBundle.message("settings.opencode.rules.empty.file")
+        return SettingsCard(
+            title = fileNameOf(file.path) + "（" + scope + "）",
+            subtitle = truncate(preview, PREVIEW_CHARS)
+        ).withAction(
+            buildGearButton(OpencodeFrontendBundle.message("settings.opencode.rules.open.file")) {
+                openInEditor(file.path)
+            }
+        )
     }
 
     override fun isModified(): Boolean = false
+
+    private companion object {
+        /** 文件预览展示的字符数（后端已截断，这里再兜一层） */
+        const val PREVIEW_CHARS = 150
+    }
 }

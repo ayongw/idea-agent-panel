@@ -27,8 +27,10 @@ class ConfigModifiedException(val file: Path) :
 /**
  * opencode 配置文件（opencode.json / opencode.jsonc）读写
  *
- * - 定位规则与 opencode 自身一致：`opencode.json` → `opencode.jsonc` →
- *   `.opencode/opencode.json` → `.opencode/opencode.jsonc`，都不存在时返回默认新建路径
+ * - 定位规则与 opencode 自身一致：同一目录内 `opencode.jsonc` 优先级高于 `opencode.json`
+ *   （`Config.loadDirectory` 按 `["opencode.json","opencode.jsonc"]` 顺序加载，后者覆盖前者），
+ *   候选顺序为 `opencode.jsonc` → `opencode.json` → `.opencode/opencode.jsonc` → `.opencode/opencode.json`，
+ *   都不存在时返回默认新建路径 `opencode.jsonc`（与 `Config.update` 一致）
  * - 写入走 [JsoncEditor] 定点 patch，保留注释与缩进；写前备份 `.bak`，写后原子落盘
  * - 支持传入「读取时的文本」做并发校验，发现外部改动直接拒绝写入
  */
@@ -38,24 +40,21 @@ class OpenCodeConfigStore(
 ) {
 
     companion object {
-        /** 候选文件（相对作用域目录），顺序与 opencode 一致 */
+        /** 候选文件（相对作用域目录），按优先级由高到低 */
         val CANDIDATES = listOf(
-            "opencode.json",
             "opencode.jsonc",
-            ".opencode/opencode.json",
-            ".opencode/opencode.jsonc"
+            "opencode.json",
+            ".opencode/opencode.jsonc",
+            ".opencode/opencode.json"
         )
 
-        /** 全局作用域默认新建的文件名（与 opencode core `Config.update` 一致） */
-        const val GLOBAL_DEFAULT_FILE = "opencode.jsonc"
-
-        /** 项目作用域默认新建的文件名 */
-        const val PROJECT_DEFAULT_FILE = "opencode.json"
+        /** 默认新建的文件名（与 opencode core `Config.update` 一致，不区分作用域） */
+        const val DEFAULT_FILE = "opencode.jsonc"
     }
 
     /** 全局配置目录：OPENCODE_CONFIG_DIR → XDG_CONFIG_HOME/opencode → ~/.config/opencode */
     fun globalConfigDir(): Path {
-        env("OPENCODE_CONFIG_DIR")?.takeIf { it.isNotBlank() }?.let { return expandHome(it) }
+        env("OPENCODE_CONFIG_DIR")?.takeIf { it.isNotBlank() }?.let { return expandUserPath(it) }
         env("XDG_CONFIG_HOME")?.takeIf { it.isNotBlank() }?.let { return Paths.get(it).resolve("opencode") }
         return home.resolve(".config").resolve("opencode")
     }
@@ -66,12 +65,11 @@ class OpenCodeConfigStore(
         ConfigScope.PROJECT -> projectDir ?: throw IllegalArgumentException("项目级作用域需要项目目录")
     }
 
-    /** 定位目标配置文件：已存在的候选优先，否则返回默认新建路径 */
+    /** 定位目标配置文件：已存在的候选中优先级最高者，否则返回默认新建路径 */
     fun resolveFile(scope: ConfigScope, projectDir: Path?): Path {
         val base = scopeDir(scope, projectDir)
         CANDIDATES.firstOrNull { Files.isRegularFile(base.resolve(it)) }?.let { return base.resolve(it) }
-        val defaultName = if (scope == ConfigScope.GLOBAL) GLOBAL_DEFAULT_FILE else PROJECT_DEFAULT_FILE
-        return base.resolve(defaultName)
+        return base.resolve(DEFAULT_FILE)
     }
 
     /** 读取文本，文件不存在返回 null */
@@ -133,7 +131,7 @@ class OpenCodeConfigStore(
     }
 
     /** 展开路径开头的 `~` */
-    private fun expandHome(path: String): Path {
+    fun expandUserPath(path: String): Path {
         val trimmed = path.trim()
         return when {
             trimmed == "~" -> home

@@ -2,26 +2,31 @@ package com.ayongw.idea.opencode.frontend.settings
 
 import com.ayongw.idea.opencode.frontend.CoroutineScopeHolder
 import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
+import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ButtonUtils
 import com.ayongw.idea.opencode.shared.ConfigScopeDto
 import com.ayongw.idea.opencode.shared.SettingsRpcApi
 import com.ayongw.idea.opencode.shared.SettingsSnapshotDto
 import com.ayongw.idea.opencode.shared.SettingsWriteResultDto
+import com.intellij.icons.AllIcons
+import com.intellij.ide.actions.ShowFilePathAction
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.platform.project.projectId
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
-import javax.swing.DefaultComboBoxModel
+import java.io.File
 import javax.swing.JButton
-import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JTable
@@ -32,6 +37,15 @@ import javax.swing.table.TableModel
 internal interface SettingsTab {
     val title: String
     val component: JComponent
+
+    /**
+     * 是否需要在设置页打开时立即加载
+     *
+     * 参与「OK」统一提交的插件自身设置页必须置为 true，
+     * 否则用户未访问该 Tab 就点 OK 时，会用空表单把已有配置写回默认值。
+     * 其余 Tab 在首次显示 / 切换时按需加载。
+     */
+    val eager: Boolean get() = false
 
     /** 由 `Configurable.apply()` 处理的可写项；自带保存按钮的面板返回 false */
     fun isModified(): Boolean = false
@@ -51,6 +65,9 @@ internal interface SettingsTab {
 internal abstract class AbstractSettingsTab : SettingsTab {
 
     protected val statusLabel = JBLabel(" ").apply { font = JBUI.Fonts.smallFont() }
+
+    /** 是否有一次快照加载在途（避免重复请求同一份数据） */
+    private var loading = false
 
     protected fun currentProject(): Project? = ProjectManager.getInstance().openProjects.firstOrNull()
 
@@ -81,25 +98,6 @@ internal abstract class AbstractSettingsTab : SettingsTab {
         foreground = UIUtil.getContextHelpForeground()
     }
 
-    /** 作用域行：标签 + 下拉（默认全局） */
-    protected fun buildScopeRow(combo: JComboBox<String>): JComponent {
-        combo.model = buildScopeModel()
-        return JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
-            add(JBLabel(OpencodeFrontendBundle.message("settings.opencode.scope")))
-            add(combo)
-        }
-    }
-
-    protected fun buildScopeModel(): DefaultComboBoxModel<String> = DefaultComboBoxModel(
-        arrayOf(
-            OpencodeFrontendBundle.message("settings.opencode.scope.global"),
-            OpencodeFrontendBundle.message("settings.opencode.scope.project")
-        )
-    )
-
-    protected fun scopeOf(combo: JComboBox<String>): ConfigScopeDto =
-        if (combo.selectedIndex == 1) ConfigScopeDto.PROJECT else ConfigScopeDto.GLOBAL
-
     /** 统一列表样式：填满可用宽度、按列宽偏好按比例分配 */
     protected fun buildTable(model: TableModel, widths: List<Int> = emptyList()): JTable {
         val table = JBTable(model)
@@ -118,6 +116,59 @@ internal abstract class AbstractSettingsTab : SettingsTab {
         JBScrollPane(view).apply {
             preferredSize = Dimension(JBUI.scale(CONTENT_WIDTH), JBUI.scale(height))
         }
+
+    /** 齿轮按钮：只画图标与 hover 背景，无边框、无焦点框 */
+    protected fun buildGearButton(tooltip: String, onClick: () -> Unit): JButton =
+        ButtonUtils.ToolbarButton(icon = AllIcons.General.GearPlain).apply {
+            preferredSize = Dimension(JBUI.scale(24), JBUI.scale(24))
+            toolTipText = tooltip
+            addActionListener { onClick() }
+        }
+
+    /** 打开配置文件：文件不存在时先让后端建出空 `{}`，再在编辑器中打开指定的那一个 */
+    protected fun openConfigFile(path: String, scope: ConfigScopeDto) {
+        val project = currentProject()
+        if (project == null) {
+            showStatus(OpencodeFrontendBundle.message("settings.opencode.no.project"))
+            return
+        }
+        showStatus(OpencodeFrontendBundle.message("settings.opencode.loading"))
+        CoroutineScopeHolder.getInstance(project).createScope("OpenCodeSettingsOpenFile").launch {
+            val result = runCatching { SettingsRpcApi.getInstance().ensureConfigFile(project.projectId(), scope) }
+                .getOrElse { SettingsWriteResultDto.fail(it.message ?: it.toString()) }
+            ApplicationManager.getApplication().invokeLater {
+                if (result.ok) openInEditor(path) else showStatus(friendlyError(result.message), result.message)
+            }
+        }
+    }
+
+    /** 在编辑器中打开文件（支持工作区外的绝对路径） */
+    protected fun openInEditor(path: String) {
+        val project = currentProject()
+        if (project == null) {
+            showStatus(OpencodeFrontendBundle.message("settings.opencode.no.project"))
+            return
+        }
+        val file = LocalFileSystem.getInstance().refreshAndFindFileByPath(path)
+        if (file == null || !file.isValid) {
+            showStatus(OpencodeFrontendBundle.message("settings.opencode.file.missing", path), path)
+            return
+        }
+        OpenFileDescriptor(project, file).navigate(true)
+        showStatus(null)
+    }
+
+    /** 在系统文件管理器中定位路径（传文件则打开其所在目录） */
+    protected fun openDirectory(path: String) {
+        val file = File(path)
+        val dir = if (file.isDirectory) file else file.parentFile
+        if (dir == null || !dir.isDirectory) {
+            showStatus(OpencodeFrontendBundle.message("settings.opencode.file.missing", path), path)
+            return
+        }
+        ShowFilePathAction.openFile(dir)
+        showStatus(null)
+    }
 
     /** 状态行：友好文案 + 完整信息放 tooltip（过长文案截断，避免撑宽设置页） */
     protected fun showStatus(message: String?, detail: String? = null) {
@@ -141,7 +192,7 @@ internal abstract class AbstractSettingsTab : SettingsTab {
         }
     }
 
-    /** 后台读取设置快照并回 EDT 渲染 */
+    /** 后台读取设置快照并回 EDT 渲染（服务端未就绪时自动重试，无需用户点刷新） */
     protected fun loadSnapshot(onLoaded: (SettingsSnapshotDto) -> Unit) {
         val project = currentProject()
         if (project == null) {
@@ -149,14 +200,18 @@ internal abstract class AbstractSettingsTab : SettingsTab {
             onLoaded(SettingsSnapshotDto("", ""))
             return
         }
+        // 打开设置页时会连续触发多次加载（createComponent + 平台 reset），同一次只保留一个在途请求
+        if (loading) return
+        loading = true
         showStatus(OpencodeFrontendBundle.message("settings.opencode.loading"))
         CoroutineScopeHolder.getInstance(project).createScope("OpenCodeSettingsLoad").launch {
-            val snapshot = runCatching { SettingsRpcApi.getInstance().getSnapshot(project.projectId()) }
+            val loaded = runCatching { loadWithRetry() }
                 .getOrElse { error ->
                     SettingsSnapshotDto("", "", warnings = listOf(error.message ?: error.toString()))
                 }
             ApplicationManager.getApplication().invokeLater {
-                val warnings = snapshot.warnings
+                loading = false
+                val warnings = loaded.warnings
                 if (warnings.isEmpty()) {
                     showStatus(null)
                 } else {
@@ -165,10 +220,35 @@ internal abstract class AbstractSettingsTab : SettingsTab {
                         warnings.joinToString("\n")
                     )
                 }
-                onLoaded(snapshot)
+                onLoaded(loaded)
             }
         }
     }
+
+    private suspend fun loadWithRetry(): SettingsSnapshotDto {
+        var snapshot = fetchSnapshot()
+        var attempt = 1
+        // 刚打开设置页时项目/RPC/opencode 服务可能尚未就绪，接口会静默返回空清单 → 稍后重试
+        while (isEmptySnapshot(snapshot) && attempt < LOAD_MAX_ATTEMPTS) {
+            delay(LOAD_RETRY_DELAY_MS)
+            snapshot = fetchSnapshot()
+            attempt++
+        }
+        return snapshot
+    }
+
+    private suspend fun fetchSnapshot(): SettingsSnapshotDto {
+        val project = currentProject() ?: return SettingsSnapshotDto("", "")
+        return runCatching { SettingsRpcApi.getInstance().getSnapshot(project.projectId()) }
+            .getOrElse { error -> SettingsSnapshotDto("", "", warnings = listOf(error.message ?: error.toString())) }
+    }
+
+    /** 无告警且三个服务端清单都为空 —— 视为「服务端尚未就绪」，而非「确实没有数据」 */
+    private fun isEmptySnapshot(snapshot: SettingsSnapshotDto): Boolean =
+        snapshot.warnings.isEmpty() &&
+            snapshot.providers.isEmpty() &&
+            snapshot.discoveredSkills.isEmpty() &&
+            snapshot.mcpServers.isEmpty()
 
     /** 后台执行任意 RPC，回 EDT 处理结果（失败传 null） */
     protected fun <T> runAsync(onResult: (T?) -> Unit, action: suspend () -> T) {
@@ -211,5 +291,9 @@ internal abstract class AbstractSettingsTab : SettingsTab {
 
         /** 状态行展示的最大字符数，超出部分放 tooltip（避免长文案撑宽设置页） */
         const val STATUS_MAX_CHARS = 100
+
+        /** 快照为空时的最大尝试次数与重试间隔 */
+        const val LOAD_MAX_ATTEMPTS = 3
+        const val LOAD_RETRY_DELAY_MS = 800L
     }
 }

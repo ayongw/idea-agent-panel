@@ -4,6 +4,7 @@ import com.ayongw.idea.opencode.shared.ConfigScopeDto
 import com.ayongw.idea.opencode.shared.McpServerDto
 import com.ayongw.idea.opencode.shared.McpTimeoutDto
 import com.ayongw.idea.opencode.shared.ProviderDto
+import com.ayongw.idea.opencode.shared.ProviderModelDto
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 
@@ -14,46 +15,197 @@ import com.google.gson.JsonObject
  */
 object SettingsMapping {
 
-    /** 供应商：合并 `providers` 配置与服务端目录，并带上认证集成信息 */
+    /** V2 供应商在配置里的容器键 */
+    const val PROVIDER_CONTAINER = "providers"
+
+    /** V1 供应商在配置里的容器键（V1 是单数 `provider`，字段与模型禁用写法都不同） */
+    const val LEGACY_PROVIDER_CONTAINER = "provider"
+
+    /** V2 `package` 的前缀（`Provider.aisdk()` 生成，V1 的 `npm` 不带） */
+    const val AISDK_PREFIX = "aisdk:"
+
+    /** V1 用模型 `status` 表达禁用（`migrateModel` 里 `disabled = status === "deprecated"`） */
+    const val LEGACY_DISABLED_STATUS = "deprecated"
+
+    /** V1 两个历史供应商 id 会被 normalize 重命名 */
+    private val LEGACY_PROVIDER_ID_RENAMES = mapOf(
+        "azure-cognitive-services" to "azure",
+        "google-vertex-anthropic" to "google-vertex"
+    )
+
+    /**
+     * 一条供应商声明
+     *
+     * @param key 配置文件里的原始键（V1 历史 id 会被改名，写回时必须用原名）
+     * @param legacy 来自 V1 的 `provider`：字段为 `npm` / `options.baseURL`，模型禁用写成 `status: "deprecated"`
+     */
+    data class ProviderConfig(val key: String, val id: String, val json: JsonObject, val legacy: Boolean)
+
+    /** 写配置时的定位：容器键 + 实际写入的供应商键 */
+    data class ProviderWriteTarget(val container: String, val key: String)
+
+    /**
+     * 收集配置里的供应商声明（V2 `providers` 与 V1 `provider` 两个容器都读）
+     *
+     * opencode 的 `normalize.ts` 对两者做同一层合并：**同名条目 V2 整体覆盖 V1**（`mergeMaps` 直接覆盖并报冲突），
+     * 所以这里也以 V2 优先；V1 的历史 id 按 `ConfigMigrateV1.providerID` 重命名。
+     */
+    fun providerConfigs(config: JsonObject): Map<String, ProviderConfig> {
+        val result = LinkedHashMap<String, ProviderConfig>()
+        config.obj(PROVIDER_CONTAINER).entrySet().forEach { (key, value) ->
+            value.asObj()?.let { result[key] = ProviderConfig(key, key, it, legacy = false) }
+        }
+        config.obj(LEGACY_PROVIDER_CONTAINER).entrySet().forEach { (key, value) ->
+            val json = value.asObj() ?: return@forEach
+            val id = LEGACY_PROVIDER_ID_RENAMES[key] ?: key
+            if (result.containsKey(id)) return@forEach
+            result[id] = ProviderConfig(key, id, json, legacy = true)
+        }
+        return result
+    }
+
+    /**
+     * 写配置时该供应商应落在哪个容器、哪个键
+     *
+     * 跟随它当前的声明（V1 声明就写回 V1 的键），未声明过则按 V2 新建，
+     * 避免在 V1 配置文件里凭空造出一份并存的 V2 条目（opencode 会为此报冲突诊断）。
+     */
+    fun providerWriteTarget(config: JsonObject, providerId: String): ProviderWriteTarget =
+        providerConfigs(config)[providerId]?.let { entry ->
+            if (entry.legacy) ProviderWriteTarget(LEGACY_PROVIDER_CONTAINER, entry.key)
+            else ProviderWriteTarget(PROVIDER_CONTAINER, entry.key)
+        } ?: ProviderWriteTarget(PROVIDER_CONTAINER, providerId)
+
+    /**
+     * 供应商包名，统一成 V2 的 `aisdk:<npm>` 形式
+     *
+     * V1 的 `npm: "@ai-sdk/openai-compatible"` 经迁移后即 `package: "aisdk:@ai-sdk/openai-compatible"`，
+     * 界面统一展示 V2 形式，写回 V1 时再剥掉前缀。
+     */
+    fun providerPackage(entry: ProviderConfig): String? {
+        entry.json.str("package")?.let { return it }
+        return if (entry.legacy) entry.json.str("npm")?.let { AISDK_PREFIX + it } else null
+    }
+
+    /** 供应商 baseURL：V2 取 `settings.baseURL`，V1 取 `api`（优先）或 `options.baseURL` */
+    fun providerBaseUrl(entry: ProviderConfig): String? {
+        entry.json.objOrNull("settings")?.str("baseURL")?.let { return it }
+        if (!entry.legacy) return null
+        return entry.json.str("api") ?: entry.json.objOrNull("options")?.str("baseURL")
+    }
+
+    /** 供应商：合并配置声明（V2/V1 两种写法）、服务端目录与已启用模型清单，并带上认证集成信息 */
     fun providers(
         globalConfig: JsonObject,
         projectConfig: JsonObject,
         live: List<JsonObject>,
+        liveModels: List<JsonObject>,
         integrations: List<JsonObject>
     ): List<ProviderDto> {
-        val globalProviders = globalConfig.obj("providers")
-        val projectProviders = projectConfig.obj("providers")
+        val globalProviders = providerConfigs(globalConfig)
+        val projectProviders = providerConfigs(projectConfig)
         val liveById = live.mapNotNull { provider -> provider.str("id")?.let { it to provider } }.toMap()
+        val enabledModelsByProvider = liveModels
+            .mapNotNull { model -> model.str("providerID")?.let { it to model } }
+            .groupBy({ it.first }, { it.second })
 
         val ids = LinkedHashSet<String>()
         ids += liveById.keys
-        ids += globalProviders.keySet()
-        ids += projectProviders.keySet()
+        ids += globalProviders.keys
+        ids += projectProviders.keys
 
         // 字段级合并：项目级覆盖同名键，未覆盖的字段（如 package）仍取全局值
         return ids.map { id ->
-            val projectCfg = projectProviders.objOrNull(id)
-            val globalCfg = globalProviders.objOrNull(id)
+            val projectCfg = projectProviders[id]
+            val globalCfg = globalProviders[id]
             val integration = integrations.firstOrNull { it.str("id") == id }
             ProviderDto(
                 id = id,
-                name = projectCfg?.str("name") ?: globalCfg?.str("name") ?: liveById[id]?.str("name"),
-                packageName = projectCfg?.str("package") ?: globalCfg?.str("package"),
-                baseUrl = projectCfg?.objOrNull("settings")?.str("baseURL")
-                    ?: globalCfg?.objOrNull("settings")?.str("baseURL"),
-                models = (projectCfg?.objOrNull("models") ?: globalCfg?.objOrNull("models"))
-                    ?.keySet()?.toList().orEmpty(),
+                name = projectCfg?.json?.str("name") ?: globalCfg?.json?.str("name") ?: liveById[id]?.str("name"),
+                packageName = projectCfg?.let { providerPackage(it) } ?: globalCfg?.let { providerPackage(it) },
+                baseUrl = projectCfg?.let { providerBaseUrl(it) } ?: globalCfg?.let { providerBaseUrl(it) },
+                models = models(
+                    globalConfig = globalCfg,
+                    projectConfig = projectCfg,
+                    live = enabledModelsByProvider[id].orEmpty()
+                ),
                 scope = when {
                     projectCfg != null -> ConfigScopeDto.PROJECT
                     globalCfg != null -> ConfigScopeDto.GLOBAL
                     else -> null
                 },
+                custom = projectCfg != null || globalCfg != null,
                 integrationId = integration?.str("id") ?: id,
                 hasCredential = integration?.get("connections")?.let { connections ->
                     connections.isJsonArray && connections.asJsonArray.any { it.asObj()?.str("type") == "credential" }
                 } ?: false
             )
         }.sortedBy { it.id }
+    }
+
+    /**
+     * 供应商模型清单：配置里声明的（含禁用状态）与服务端**已启用**清单取并集
+     *
+     * 服务端 `GET /api/model` 会过滤掉被禁模型，禁用状态只存在于配置里，
+     * 所以必须并集，否则界面上被禁模型会直接消失、无法再启用。
+     */
+    private fun models(
+        globalConfig: ProviderConfig?,
+        projectConfig: ProviderConfig?,
+        live: List<JsonObject>
+    ): List<ProviderModelDto> {
+        // 服务端已启用模型：id / modelID 都建索引（两者可能不同，任一个都能匹配配置里的键）
+        val canonicalId = LinkedHashMap<String, String>()
+        val names = HashMap<String, String?>()
+        live.forEach { model ->
+            val id = model.str("id") ?: model.str("modelID") ?: return@forEach
+            names[id] = model.str("name")
+            listOfNotNull(model.str("id"), model.str("modelID")).distinct().forEach { canonicalId[it] = id }
+        }
+
+        val result = LinkedHashMap<String, ProviderModelDto>()
+        canonicalId.values.distinct().forEach { id ->
+            result[id] = ProviderModelDto(id = id, name = names[id])
+        }
+
+        // 配置声明：补禁用状态 / declaredInConfig，并纳入服务端未返回的（被禁用或尚未生效）
+        listOf(globalConfig, projectConfig).forEach { entry ->
+            entry?.json?.objOrNull("models")?.entrySet()?.forEach { (key, value) ->
+                val declared = value.asObj()
+                val id = canonicalId[key] ?: key
+                val existing = result[id]
+                result[id] = ProviderModelDto(
+                    id = id,
+                    name = declared?.str("name") ?: existing?.name,
+                    disabled = modelDisabled(entry.legacy, declared) ?: existing?.disabled ?: false,
+                    declaredInConfig = true
+                )
+            }
+        }
+        return result.values.sortedBy { it.id }
+    }
+
+    /** 模型是否被禁用：V2 看 `disabled`，V1 看 `status == "deprecated"`（V1 没有 `disabled` 字段） */
+    private fun modelDisabled(legacy: Boolean, model: JsonObject?): Boolean? {
+        model ?: return null
+        model.boolean("disabled")?.let { return it }
+        return if (legacy && model.str("status") == LEGACY_DISABLED_STATUS) true else null
+    }
+
+    /**
+     * 技能加载来源：配置 `skills` 声明的路径 / URL
+     *
+     * opencode 兼容两种写法（`packages/core/src/config/normalize.ts`）：
+     * 字符串数组，或 `{ "paths": [...], "urls": [...] }` 对象——两种都要读，否则界面上会漏展示。
+     */
+    fun skillPaths(globalConfig: JsonObject, projectConfig: JsonObject): List<String> =
+        (skillPathsOf(globalConfig) + skillPathsOf(projectConfig)).distinct()
+
+    private fun skillPathsOf(config: JsonObject): List<String> {
+        val skills = config.element("skills") ?: return emptyList()
+        if (skills.isJsonArray) return skills.stringList()
+        val obj = skills.asObj() ?: return emptyList()
+        return obj.element("paths").stringList() + obj.element("urls").stringList()
     }
 
     /** MCP 服务器：合并 `mcp.servers` 配置与服务端运行状态 */

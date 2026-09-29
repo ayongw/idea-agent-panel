@@ -3,7 +3,6 @@ package com.ayongw.idea.opencode.frontend.settings
 import com.ayongw.idea.opencode.frontend.CoroutineScopeHolder
 import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
 import com.ayongw.idea.opencode.shared.ChatRepositoryRpcApi
-import com.ayongw.idea.opencode.shared.SettingsRpcApi
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.platform.project.projectId
 import com.intellij.ui.components.JBPasswordField
@@ -12,30 +11,27 @@ import com.intellij.util.ui.FormBuilder
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
-import javax.swing.DefaultComboBoxModel
 import javax.swing.JButton
-import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
 
 /**
- * 连接面板：Server 地址与 Basic 认证凭据（原设置页内容）+ shell 选择
+ * 连接面板：**插件自身设置**（Server 地址、用户名、密码）
  *
- * Server 地址/用户名写入插件自身设置，密码写入 IDE 凭据存储（[OpenCodePasswordStore]），均下发后端；
- * shell 走 `PATCH /api/experimental/config`（失败回退配置文件）。
+ * 三项都保存在 IDEA 侧：地址/用户名写入插件设置（[OpenCodeSettingsState]），
+ * 密码写入 IDE 凭据存储（[OpenCodePasswordStore]）；保存时下发给后端使其即时生效。
+ * 该面板是本设置页唯一由「OK」统一提交的 Tab（`isModified` / `apply`）。
  */
 internal class ConnectionSettingsTab : AbstractSettingsTab() {
 
     override val title: String = OpencodeFrontendBundle.message("settings.opencode.tab.connection")
 
+    /** 由「OK」统一提交，打开设置页即需就绪 */
+    override val eager: Boolean = true
+
     private val serverUrlField = JBTextField(40)
     private val usernameField = JBTextField(30)
     private val passwordField = JBPasswordField().apply { columns = 30 }
-    private val shellCombo = JComboBox<String>()
-    private val defaultShellLabel = OpencodeFrontendBundle.message("settings.opencode.shell.default")
-
-    /** 服务端当前生效的 shell（来自快照），用于判断是否改动 */
-    private var currentShell: String? = null
 
     override val component: JComponent = buildPanel()
 
@@ -45,13 +41,12 @@ internal class ConnectionSettingsTab : AbstractSettingsTab() {
         }
 
         val form = FormBuilder.createFormBuilder()
+            .addComponent(buildHint(OpencodeFrontendBundle.message("settings.opencode.connection.hint")))
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.server.url"), serverUrlField)
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.username"), usernameField)
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.password"), passwordField)
             .addComponent(buildHint(OpencodeFrontendBundle.message("settings.opencode.password.hint")))
             .addComponent(testConnectionButton)
-            .addSeparator()
-            .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.shell"), shellCombo)
             .addComponent(statusLabel)
             .addComponentFillVertically(JPanel(), 0)
             .panel
@@ -67,22 +62,13 @@ internal class ConnectionSettingsTab : AbstractSettingsTab() {
         serverUrlField.text = state.serverUrl
         usernameField.text = state.username
         passwordField.text = OpenCodePasswordStore.load()
-        loadSnapshot { snapshot ->
-            currentShell = snapshot.shell
-            val model = DefaultComboBoxModel<String>()
-            model.addElement(defaultShellLabel)
-            snapshot.shells.forEach { model.addElement(it.path) }
-            shellCombo.model = model
-            shellCombo.selectedItem = snapshot.shell?.takeIf { it.isNotBlank() } ?: defaultShellLabel
-        }
     }
 
     override fun isModified(): Boolean {
         val state = OpenCodeSettingsState.getInstance()
         return normalizedUrl() != state.serverUrl ||
             inputUsername() != state.username ||
-            inputPassword() != OpenCodePasswordStore.load() ||
-            inputShell() != currentShell
+            inputPassword() != OpenCodePasswordStore.load()
     }
 
     override fun apply() {
@@ -103,18 +89,6 @@ internal class ConnectionSettingsTab : AbstractSettingsTab() {
                 }
             }
         }
-
-        val shell = inputShell()
-        if (shell != currentShell) {
-            val project = currentProject()
-            if (project == null) {
-                showStatus(OpencodeFrontendBundle.message("settings.opencode.no.project"))
-            } else {
-                runWrite({ reload() }) {
-                    SettingsRpcApi.getInstance().setShell(project.projectId(), shell)
-                }
-            }
-        }
     }
 
     private fun normalizedUrl(): String {
@@ -126,9 +100,6 @@ internal class ConnectionSettingsTab : AbstractSettingsTab() {
         usernameField.text.trim().ifEmpty { OpenCodeSettingsState.DEFAULT_USERNAME }
 
     private fun inputPassword(): String = String(passwordField.password).trim()
-
-    private fun inputShell(): String? =
-        (shellCombo.selectedItem as? String)?.takeIf { it.isNotBlank() && it != defaultShellLabel }
 
     /**
      * 探测连通性：先把输入值下发给后端（密码留空由后端回退环境变量 / service.json），

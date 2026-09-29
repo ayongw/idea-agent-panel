@@ -42,21 +42,31 @@ class OpenCodeConfigStoreUnitTest {
 
     @Test
     fun resolvesExistingCandidateInOpencodeOrder() {
-        Files.createDirectories(project.resolve(".opencode"))
-        Files.writeString(project.resolve(".opencode/opencode.jsonc"), "{}")
+        // 同目录内 opencode.jsonc 覆盖 opencode.json（Config.loadDirectory 的加载顺序）
+        Files.writeString(project.resolve("opencode.json"), "{}")
+        assertEquals(project.resolve("opencode.json"), store().resolveFile(ConfigScope.PROJECT, project))
 
+        Files.writeString(project.resolve("opencode.jsonc"), "{}")
         assertEquals(
-            project.resolve(".opencode/opencode.jsonc"),
+            "同目录内 jsonc 优先级高于 json",
+            project.resolve("opencode.jsonc"),
             store().resolveFile(ConfigScope.PROJECT, project)
         )
 
-        Files.writeString(project.resolve("opencode.json"), "{}")
-        assertEquals("opencode.json 优先级最高", project.resolve("opencode.json"), store().resolveFile(ConfigScope.PROJECT, project))
+        // 普通候选优先于 .opencode 目录内的候选
+        Files.delete(project.resolve("opencode.jsonc"))
+        Files.delete(project.resolve("opencode.json"))
+        Files.createDirectories(project.resolve(".opencode"))
+        Files.writeString(project.resolve(".opencode/opencode.json"), "{}")
+        assertEquals(project.resolve(".opencode/opencode.json"), store().resolveFile(ConfigScope.PROJECT, project))
+
+        Files.writeString(project.resolve(".opencode/opencode.jsonc"), "{}")
+        assertEquals(project.resolve(".opencode/opencode.jsonc"), store().resolveFile(ConfigScope.PROJECT, project))
     }
 
     @Test
     fun fallsBackToDefaultFileNamePerScope() {
-        assertEquals(project.resolve("opencode.json"), store().resolveFile(ConfigScope.PROJECT, project))
+        assertEquals(project.resolve("opencode.jsonc"), store().resolveFile(ConfigScope.PROJECT, project))
         assertEquals(
             home.resolve(".config/opencode/opencode.jsonc"),
             store().resolveFile(ConfigScope.GLOBAL, project)

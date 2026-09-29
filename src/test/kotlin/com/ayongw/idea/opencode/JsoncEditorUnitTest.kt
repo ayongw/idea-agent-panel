@@ -282,4 +282,116 @@ class JsoncEditorUnitTest {
 
         assertTrue("非对象根节点应被拒绝", error is IllegalArgumentException)
     }
+
+    // ==================== 模型页的按键写入（禁用/启用/增删） ====================
+
+    @Test
+    fun disablesModelKeepingSiblingFields() {
+        val input = """
+            {
+              "providers": {
+                "hello-tw": {
+                  "models": {
+                    "GLM-5.2": {
+                      "name": "GLM 5.2",
+                      "limit": { "context": 128000 }
+                    }
+                  }
+                }
+              }
+            }
+        """.trimIndent()
+
+        val result = JsoncEditor.patch(
+            input,
+            listOf("providers", "hello-tw", "models", "GLM-5.2", "disabled"),
+            JsonPrimitive(true)
+        )
+
+        val model = parseJsonc(result).asJsonObject
+            .getAsJsonObject("providers").getAsJsonObject("hello-tw")
+            .getAsJsonObject("models").getAsJsonObject("GLM-5.2")
+        assertTrue(model.get("disabled").asBoolean)
+        assertEquals("GLM 5.2", model.get("name").asString)
+        assertEquals(128000, model.getAsJsonObject("limit").get("context").asInt)
+    }
+
+    @Test
+    fun enablingModelRemovesDisabledKeyOnly() {
+        val input = """
+            {
+              "providers": {
+                "hello-tw": {
+                  "models": {
+                    "GLM-5.2": { "name": "GLM 5.2", "disabled": true }
+                  }
+                }
+              }
+            }
+        """.trimIndent()
+
+        val result = JsoncEditor.patch(
+            input,
+            listOf("providers", "hello-tw", "models", "GLM-5.2", "disabled"),
+            null
+        )
+
+        val model = parseJsonc(result).asJsonObject
+            .getAsJsonObject("providers").getAsJsonObject("hello-tw")
+            .getAsJsonObject("models").getAsJsonObject("GLM-5.2")
+        assertTrue("disabled 键应被删除", !model.has("disabled"))
+        assertEquals("GLM 5.2", model.get("name").asString)
+    }
+
+    @Test
+    fun addingModelCreatesEntryAndKeepsExistingOnes() {
+        val input = """
+            {
+              "providers": {
+                "hello-tw": {
+                  "models": {
+                    "existing": {}
+                  }
+                }
+              }
+            }
+        """.trimIndent()
+
+        val result = JsoncEditor.patch(
+            input,
+            listOf("providers", "hello-tw", "models", "custom-1", "name"),
+            JsonPrimitive("自定义模型")
+        )
+
+        val models = parseJsonc(result).asJsonObject
+            .getAsJsonObject("providers").getAsJsonObject("hello-tw")
+            .getAsJsonObject("models")
+        assertEquals(2, models.size())
+        assertEquals("自定义模型", models.getAsJsonObject("custom-1").get("name").asString)
+        assertTrue(models.has("existing"))
+    }
+
+    @Test
+    fun removingModelDeletesEntryKeepingSiblings() {
+        val input = """
+            {
+              "providers": {
+                "hello-tw": {
+                  "models": {
+                    "keep": { "name": "保留" },
+                    "drop": { "name": "删除" }
+                  }
+                }
+              }
+            }
+        """.trimIndent()
+
+        val result = JsoncEditor.patch(input, listOf("providers", "hello-tw", "models", "drop"), null)
+
+        val models = parseJsonc(result).asJsonObject
+            .getAsJsonObject("providers").getAsJsonObject("hello-tw")
+            .getAsJsonObject("models")
+        assertEquals(1, models.size())
+        assertTrue(models.has("keep"))
+    }
 }

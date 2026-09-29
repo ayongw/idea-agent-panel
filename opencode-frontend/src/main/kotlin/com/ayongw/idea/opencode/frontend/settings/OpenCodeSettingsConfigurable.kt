@@ -14,12 +14,16 @@ import javax.swing.Scrollable
 /**
  * OpenCode 设置页（应用级）：Tab 容器
  *
- * 连接（Server 地址与凭据、shell）・模型（供应商/默认模型/apiKey）・
- * 规则（AGENTS.md/instructions）・技能（skills）・MCP（servers/timeout）
+ * 两类设置分列其中：
+ * - 插件自身设置（Connection）：保存在 IDEA（密码进 IDE 凭据存储），由「OK」统一提交；
+ * - opencode 设置（Models / Rules / Skills / MCP）：在 IDEA 中展示，写入 opencode 配置文件，面板内自带保存按钮。
+ *
+ * 各 Tab 在首次显示与切换时自动加载，无需先点刷新。
  */
 class OpenCodeSettingsConfigurable : Configurable {
 
     private var panel: JComponent? = null
+    private var tabbed: JBTabbedPane? = null
 
     private val tabs: List<SettingsTab> by lazy {
         listOf(
@@ -34,11 +38,15 @@ class OpenCodeSettingsConfigurable : Configurable {
     override fun getDisplayName(): String = OpencodeFrontendBundle.message("settings.opencode.title")
 
     override fun createComponent(): JComponent {
-        val tabbed = JBTabbedPane()
-        tabs.forEach { tab -> tabbed.addTab(tab.title, tab.component) }
-        val wrapper = SettingsPage().apply { add(tabbed, BorderLayout.CENTER) }
+        val pane = JBTabbedPane()
+        tabs.forEach { tab -> pane.addTab(tab.title, tab.component) }
+        // 切换 Tab 即加载该页数据
+        pane.addChangeListener { reloadSelectedTab() }
+        tabbed = pane
+
+        val wrapper = SettingsPage().apply { add(pane, BorderLayout.CENTER) }
         panel = wrapper
-        reset()
+        reloadSelectedTab()
         return wrapper
     }
 
@@ -46,7 +54,16 @@ class OpenCodeSettingsConfigurable : Configurable {
 
     override fun apply() = tabs.forEach { it.apply() }
 
-    override fun reset() = tabs.forEach { it.reload() }
+    /** 需统一提交的 Tab（如 Connection）始终加载；其余页在显示 / 切换时加载 */
+    override fun reset() {
+        tabs.filter { it.eager }.forEach { it.reload() }
+        if (tabbed?.selectedIndex != 0) reloadSelectedTab()
+    }
+
+    private fun reloadSelectedTab() {
+        val index = tabbed?.selectedIndex ?: return
+        tabs.getOrNull(index)?.reload()
+    }
 }
 
 /**

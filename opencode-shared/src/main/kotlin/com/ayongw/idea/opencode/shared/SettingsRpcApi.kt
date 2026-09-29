@@ -46,12 +46,48 @@ interface SettingsRpcApi : RemoteApi<Unit> {
         model: String?
     ): SettingsWriteResultDto
 
+    /**
+     * 启用/禁用供应商下的模型
+     *
+     * 写 `providers.<id>.models.<mid>.disabled`：true 写入禁用，false 删除该键。
+     * 服务端 `GET /api/model` 会过滤掉被禁模型，故该状态以配置文件为唯一真源。
+     *
+     * @param scope 写入作用域，取该供应商在配置里声明的作用域（未声明时用 GLOBAL）
+     */
+    suspend fun setProviderModelEnabled(
+        projectId: ProjectId,
+        scope: ConfigScopeDto,
+        providerId: String,
+        modelId: String,
+        enabled: Boolean
+    ): SettingsWriteResultDto
+
+    /** 新增/更新供应商下的模型：按键写 `providers.<id>.models.<mid>`，不影响同层其它字段 */
+    suspend fun saveProviderModel(
+        projectId: ProjectId,
+        scope: ConfigScopeDto,
+        providerId: String,
+        modelId: String,
+        name: String?
+    ): SettingsWriteResultDto
+
+    /** 删除配置里声明的模型（写 null 删键）；仅服务端目录带来的模型删不掉，只能用禁用 */
+    suspend fun removeProviderModel(
+        projectId: ProjectId,
+        scope: ConfigScopeDto,
+        providerId: String,
+        modelId: String
+    ): SettingsWriteResultDto
+
     /** 保存 skills 目录/URL 列表 */
     suspend fun saveSkills(
         projectId: ProjectId,
         scope: ConfigScopeDto,
         paths: List<String>
     ): SettingsWriteResultDto
+
+    /** 确保该作用域的配置文件存在（缺失时建立空 `{}`），供「打开配置文件」入口使用 */
+    suspend fun ensureConfigFile(projectId: ProjectId, scope: ConfigScopeDto): SettingsWriteResultDto
 
     /** 保存/更新 MCP 服务器：`mcp.servers.<name>` */
     suspend fun saveMcpServer(

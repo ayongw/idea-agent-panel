@@ -1,76 +1,79 @@
 package com.ayongw.idea.opencode.frontend.settings
 
 import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
-import com.ayongw.idea.opencode.shared.SettingsRpcApi
-import com.intellij.platform.project.projectId
+import com.ayongw.idea.opencode.shared.ConfigScopeDto
+import com.ayongw.idea.opencode.shared.SkillDto
+import com.ayongw.idea.opencode.shared.SkillSourceDto
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBTextArea
-import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.FlowLayout
+import javax.swing.BoxLayout
 import javax.swing.JButton
-import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
-import javax.swing.table.DefaultTableModel
 
 /**
- * 技能面板（上下分区）
+ * 技能面板
  *
- * 上：技能加载目录（写入配置 `skills`，一行一个目录或 URL）
- * 下：opencode 已加载的技能（来自 `GET /api/skill`，只读）
+ * 上：技能加载来源（只读）——配置 `skills` 声明的路径/URL + opencode 约定扫描目录；编辑直接打开配置文件
+ * 下：已加载技能列表（第一行 `id`、第二行描述），右侧齿轮跳转到该技能所在目录
  */
 internal class SkillSettingsTab : AbstractSettingsTab() {
 
     override val title: String = OpencodeFrontendBundle.message("settings.opencode.tab.skills")
 
-    private val scopeCombo = JComboBox<String>()
-    private val dirsArea = JBTextArea().apply { rows = 4 }
-    private val dirsSourceLabel = JBLabel(" ").apply { font = JBUI.Fonts.smallFont() }
-    private val loadedCountLabel = JBLabel(" ").apply { font = JBUI.Fonts.smallFont() }
+    private val sourcesRow = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        isOpaque = false
+    }
+    private val loadedLabel = JBLabel(" ").apply { font = JBUI.Fonts.smallFont() }
+    private val cards = SettingsCardList(OpencodeFrontendBundle.message("settings.opencode.filter"))
 
-    private val loadedModel = DefaultTableModel(
-        arrayOf(
-            OpencodeFrontendBundle.message("settings.opencode.skills.col.name"),
-            OpencodeFrontendBundle.message("settings.opencode.skills.col.id"),
-            OpencodeFrontendBundle.message("settings.opencode.skills.col.path")
-        ),
-        0
-    )
-    private val loadedTable = buildTable(loadedModel, listOf(220, 200, 400))
+    /** 全局配置文件路径（快照给出，可能尚不存在，打开时后端会自动建出） */
+    private var globalConfigPath: String = ""
 
     override val component: JComponent = buildPanel()
 
     private fun buildPanel(): JComponent {
-        val saveDirsButton = JButton(OpencodeFrontendBundle.message("settings.opencode.save")).apply {
-            addActionListener { saveDirs() }
-        }
-
-        val dirsBlock = FormBuilder.createFormBuilder()
-            .addComponent(JBLabel(OpencodeFrontendBundle.message("settings.opencode.skills.dirs")))
-            .addComponent(buildScroll(dirsArea, 80))
-            .addComponent(dirsSourceLabel)
-            .addComponent(
+        val sourcesBlock = JPanel(BorderLayout()).apply {
+            add(
                 JPanel(BorderLayout()).apply {
-                    add(buildScopeRow(scopeCombo), BorderLayout.WEST)
                     add(
-                        JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply { add(saveDirsButton) },
-                        BorderLayout.CENTER
+                        JBLabel(OpencodeFrontendBundle.message("settings.opencode.skills.sources")).apply {
+                            font = JBUI.Fonts.label().asBold()
+                        },
+                        BorderLayout.WEST
                     )
-                }
+                    add(
+                        JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
+                            add(
+                                JButton(OpencodeFrontendBundle.message("settings.opencode.config.open")).apply {
+                                    addActionListener { openGlobalConfigFile() }
+                                }
+                            )
+                        },
+                        BorderLayout.EAST
+                    )
+                },
+                BorderLayout.NORTH
             )
-            .panel
+            add(buildScroll(sourcesRow, 90), BorderLayout.CENTER)
+        }
 
         val loadedBlock = JPanel(BorderLayout()).apply {
             add(
                 JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
-                    add(JBLabel(OpencodeFrontendBundle.message("settings.opencode.skills.loaded")))
-                    add(loadedCountLabel)
+                    add(
+                        JBLabel(OpencodeFrontendBundle.message("settings.opencode.skills.list")).apply {
+                            font = JBUI.Fonts.label().asBold()
+                        }
+                    )
+                    add(loadedLabel)
                 },
                 BorderLayout.NORTH
             )
-            add(buildScroll(loadedTable, 240), BorderLayout.CENTER)
+            add(cards, BorderLayout.CENTER)
         }
 
         return JPanel(BorderLayout()).apply {
@@ -80,7 +83,7 @@ internal class SkillSettingsTab : AbstractSettingsTab() {
             )
             add(
                 JPanel(BorderLayout()).apply {
-                    add(dirsBlock, BorderLayout.NORTH)
+                    add(sourcesBlock, BorderLayout.NORTH)
                     add(loadedBlock, BorderLayout.CENTER)
                 },
                 BorderLayout.CENTER
@@ -91,30 +94,56 @@ internal class SkillSettingsTab : AbstractSettingsTab() {
 
     override fun reload() {
         loadSnapshot { snapshot ->
-            dirsArea.text = snapshot.skills.joinToString("\n")
-            dirsSourceLabel.text = OpencodeFrontendBundle.message(
-                "settings.opencode.skills.source",
-                snapshot.globalConfigPath,
-                snapshot.projectConfigPath
-            )
+            globalConfigPath = snapshot.globalConfigPath
+            renderSources(snapshot.skillSources)
 
-            loadedModel.rowCount = 0
-            snapshot.discoveredSkills.forEach { skill ->
-                loadedModel.addRow(arrayOf(skill.name.orEmpty().ifBlank { skill.id }, skill.id, skill.path.orEmpty()))
-            }
-            loadedCountLabel.text = OpencodeFrontendBundle.message(
+            cards.setCards(snapshot.discoveredSkills.map { skillCard(it) })
+            loadedLabel.text = OpencodeFrontendBundle.message(
                 "settings.opencode.count",
                 snapshot.discoveredSkills.size
             )
         }
     }
 
-    private fun saveDirs() {
-        val project = currentProject() ?: return
-        val paths = dirsArea.text.lines().map { it.trim() }.filter { it.isNotBlank() }
-        runWrite({ reload() }) {
-            SettingsRpcApi.getInstance().saveSkills(project.projectId(), scopeOf(scopeCombo), paths)
+    private fun renderSources(sources: List<SkillSourceDto>) {
+        sourcesRow.removeAll()
+        if (sources.isEmpty()) {
+            sourcesRow.add(buildHint(OpencodeFrontendBundle.message("settings.opencode.skills.sources.empty")))
+        } else {
+            sources.forEach { sourcesRow.add(sourceLabel(it)) }
         }
+        sourcesRow.revalidate()
+        sourcesRow.repaint()
+    }
+
+    private fun sourceLabel(source: SkillSourceDto): JComponent {
+        val kind = OpencodeFrontendBundle.message(
+            if (source.declared) "settings.opencode.skills.source.declared"
+            else "settings.opencode.skills.source.convention"
+        )
+        val suffix = if (source.exists) kind
+        else kind + " · " + OpencodeFrontendBundle.message("settings.opencode.skills.source.missing")
+        return wrappedHintLabel("• " + source.path, suffix)
+    }
+
+    private fun skillCard(skill: SkillDto): SettingsCard {
+        val description = skill.description?.takeIf { it.isNotBlank() }
+            ?: OpencodeFrontendBundle.message("settings.opencode.skills.no.description")
+        return SettingsCard(title = skill.id, subtitle = description).withAction(
+            buildGearButton(OpencodeFrontendBundle.message("settings.opencode.skills.open.dir")) {
+                val path = skill.path
+                if (path.isNullOrBlank()) showStatus(OpencodeFrontendBundle.message("settings.opencode.skills.no.path"))
+                else openDirectory(path)
+            }
+        )
+    }
+
+    private fun openGlobalConfigFile() {
+        if (globalConfigPath.isBlank()) {
+            showStatus(OpencodeFrontendBundle.message("settings.opencode.config.unknown"))
+            return
+        }
+        openConfigFile(globalConfigPath, ConfigScopeDto.GLOBAL)
     }
 
     override fun isModified(): Boolean = false

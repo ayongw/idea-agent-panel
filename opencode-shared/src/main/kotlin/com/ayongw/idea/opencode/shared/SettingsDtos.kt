@@ -21,11 +21,10 @@ data class SettingsSnapshotDto(
     val globalConfigPath: String,
     val projectConfigPath: String,
     val providers: List<ProviderDto> = emptyList(),
-    val models: List<ModelDto> = emptyList(),
     /** 默认模型，形如 `provider/model` */
     val defaultModel: String? = null,
-    /** 配置中的 skills 目录/URL */
-    val skills: List<String> = emptyList(),
+    /** 技能的加载来源：配置声明的路径/URL + opencode 约定扫描目录 */
+    val skillSources: List<SkillSourceDto> = emptyList(),
     /** 服务端已发现的技能 */
     val discoveredSkills: List<SkillDto> = emptyList(),
     val mcpServers: List<McpServerDto> = emptyList(),
@@ -49,12 +48,40 @@ data class ProviderDto(
     val packageName: String? = null,
     /** `settings.baseURL` */
     val baseUrl: String? = null,
-    val models: List<String> = emptyList(),
+    /** 模型清单：配置里声明的（含禁用标记）与服务端启用清单的并集 */
+    val models: List<ProviderModelDto> = emptyList(),
     /** 该供应商在配置里出现的作用域；仅存在于服务端目录（未写入配置）时为 null */
     val scope: ConfigScopeDto? = null,
+    /** 是否自定义：配置里有声明即为自定义（可改 baseURL/apiKey、可增删模型） */
+    val custom: Boolean = false,
     /** 认证集成 ID，用于写入 apiKey */
     val integrationId: String? = null,
     val hasCredential: Boolean = false
+)
+
+/**
+ * 供应商下的模型
+ *
+ * 服务端 `GET /api/model` 只返回**已启用**模型，被禁用的只能从配置读
+ * （`providers.<id>.models.<mid>.disabled`），故这里取两者并集。
+ */
+@Serializable
+data class ProviderModelDto(
+    val id: String,
+    val name: String? = null,
+    /** 配置里标记为 `disabled`（仅在配置文件中可见） */
+    val disabled: Boolean = false,
+    /** 是否在配置文件里声明过：只有声明过的模型才能从界面删除 */
+    val declaredInConfig: Boolean = false
+)
+
+/** 技能加载来源（opencode 的约定目录 + 配置 `skills` 里声明的路径/URL） */
+@Serializable
+data class SkillSourceDto(
+    val path: String,
+    /** true = 配置 `skills` 声明；false = opencode 约定扫描目录 */
+    val declared: Boolean = false,
+    val exists: Boolean = false
 )
 
 /** 已发现技能 */
@@ -98,12 +125,14 @@ data class ShellOptionDto(
     val acceptable: Boolean = true
 )
 
-/** 规则文件（AGENTS.md 等） */
+/** 规则文件（AGENTS.md 候选） */
 @Serializable
 data class RuleFileDto(
     val path: String,
     val scope: ConfigScopeDto,
-    val exists: Boolean = false
+    val exists: Boolean = false,
+    /** 文件开头若干字符，供列表预览；文件不存在时为 null */
+    val preview: String? = null
 )
 
 /** 规则文件内容 */

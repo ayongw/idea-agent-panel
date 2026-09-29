@@ -3,7 +3,7 @@
 > 插件：OpenCode AI Assistant Panel（`com.ayongw.idea.opencode-idea-panel`）
 > 目标：在插件内管理 opencode 的设置参数（自定义模型、规则目录、技能、MCP），设置项能走接口的走接口，接口不满足的直接改 opencode 配置文件。
 > 关联文档：整体架构见《技术方案》（`docs/tech/技术方案.md`，对应 TSD-01 段位）。
-> 状态：**实施完成**（五个 Tab 全部落地；v1.5 已按手测反馈修复 401 与布局，v1.6 修复凭据明文落盘报错并收口内容宽度），待再次手测与提交。
+> 状态：**实施完成**（五个 Tab 全部落地；v1.5 修复 401 与布局，v1.6 修复凭据明文落盘报错并收口内容宽度，v1.7 重做模型页与连接页并改为自动加载，v1.8 把技能/规则/MCP 改为「只读展示 + 打开配置文件/文件」形态，v1.9 兼容 V1 写法的供应商配置），待再次手测与提交。
 
 ## 修订历史
 
@@ -16,6 +16,9 @@
 | v1.4 | 2026-09-29 | 实施完成：设置类接口（12 个）、`SettingsDtos`/`SettingsRpcApi`、`BackendSettingsRpcApi` + `SettingsMapping`、前端 5 个 Tab；52 个单测全绿、`buildPlugin` 通过。过程中修复两处既有缺陷：`HttpURLConnection` 不支持 PATCH（导致 `setShell` 与既有 `renameSession` 请求发不出去）、`JsonObject.get()` 缺键 NPE | agent |
 | v1.5 | 2026-09-29 | 手测反馈修复：① 新增 `OpenCodeCredentials`，密码留空时按「显式值 → `OPENCODE_SERVER_PASSWORD` → `~/.config/opencode/service.json`」兜底，消除设置页 401；② 错误体截断为 200 字符 + 前端按 401/403/不可达转友好文案（原样贴整段 JSON 的写法移除）；③ 全部面板改 `BorderLayout` 自适应布局、去掉固定 `columns`/`preferredSize`，内容不再超宽；④ 技能页改为「加载目录 + 已加载技能列表」，MCP 页改为「配置来源 + 服务器列表 + 详情/超时」；⑤ 测试连接改走后端真实凭据探测，不再由前端自行拼 Basic 误判；⑥ 新增 `OpenCodeCredentialsUnitTest`（4 例），单测合计 56 例全绿 | agent |
 | v1.6 | 2026-09-29 | 修复安装后报错 `Element component@OpenCodeSettings.option.@name=password probably contains sensitive information`：密码从插件设置文件（明文）迁到 IDE 凭据存储 —— 新增 `OpenCodePasswordStore`（`PasswordSafe` + 内存缓存），`OpenCodeSettingsState` 不再持有密码字段，连接页与启动时的配置下发改从凭据存储取值。另：设置页内容宽度收口（表格/多行文本 preferred 宽度上限 560、文本框限定 `columns`、状态行截断 100 字），容器实现 `Scrollable`（`tracksViewportWidth`）使页面宽度跟随对话框、不再横向溢出 | agent |
+| v1.7 | 2026-09-29 | 按手测反馈重做设置页（详见 §5.2/§5.4）：① 明确两类设置——插件自身设置（连接页，存 IDEA）与 opencode 设置（模型/规则/技能/MCP，写配置文件）；② 连接页只留 URL/用户名/密码，去掉 shell 界面（后端 `setShell` 接口保留）；③ 模型页重做为 master-detail：默认模型置顶 → 供应商表（id/名称/是否自定义 + 行内「设置」按钮）→ 选中供应商的模型表（id/名称/启用勾选，自定义供应商可增删），去掉作用域选择；模型状态改为「配置声明（含 `disabled`）∪ `/api/model` 启用清单」并集，写入一律按键 patch（不再整体覆盖 `models`）；④ 设置页改为首次显示与切换 Tab 自动加载，并对「服务端未就绪导致的静默空结果」自动重试 | agent |
+| v1.8 | 2026-09-29 | 按手测反馈把技能/规则/MCP 三页改为「只读展示 + 打开文件」形态（详见 §5.2）：① 技能页＝加载来源（配置声明 + opencode 约定目录，标注存在性）+ 技能卡片（第一行 id、第二行描述、齿轮跳转技能目录）+ 搜索过滤；② 规则页＝加载位置（AGENTS.md 目录 + `instructions` 条目）+ 规则文件卡片（文件名 + 前 150 字符、齿轮在编辑器打开），移除内嵌编辑器；③ MCP 页＝卡片列表（名称 + 状态徽标 + 启用开关 + 齿轮打开配置文件），移除详情表单、增删服务器与 `mcp.timeout` 编辑；④ 修正 `skills` 只读字符串数组导致用户 `{paths,urls}` 写法被漏展示的缺陷；⑤ 配置定位改为同目录 `opencode.jsonc` 优先、缺省新建 `opencode.jsonc`（对齐 opencode `Config.loadDirectory`/`Config.update`）；⑥ 新增 `ensureConfigFile` 与前端「在编辑器打开 / 跳转目录」能力 | agent |
+| v1.9 | 2026-09-29 | 兼容 V1 写法的供应商配置（详见 §5.2/§5.3/§5.4）：opencode 同时接受 V2 `providers`（`package`/`settings.baseURL`/模型 `disabled`）与 V1 `provider`（`npm`/`options.baseURL`，`api` 优先；模型用 `status:"deprecated"` 表达禁用），此前只读 V2 导致 V1 配置的供应商在模型页显示为空、且无法增删模型。现按 `normalize.ts` 的 `migrateProviders`/`mergeMaps` 口径读两侧（同名条目 V2 覆盖 V1、V1 历史 id 改名），写入位置与键名跟随条目现有写法（避免造出并存的 V2 条目），包名统一按 V2 的 `aisdk:` 形式展示 | agent |
 
 ---
 
@@ -151,19 +154,21 @@ backend   ├─ OpenCodeConfigStore    配置文件定位 / JSONC 读 / 路径 
 
 | Tab | 内容 | 读来源 | 写目标 |
 |-----|------|--------|--------|
-| 连接【已落地】 | 标题 + 刷新；Server URL、Basic 用户名（默认 `opencode`）、密码（附「留空即回退环境变量 / `service.json`」提示）、测试连接；`shell` 选择 | 快照（`settings` 作用域）取 `shell`/`shells`；测试连接走后端 `updateServerConfig` + `getAllSessions` + `getServerInfo` | 插件自身设置（`opencode-settings.xml`）存 URL/用户名；**密码存 IDE 凭据存储**（`OpenCodePasswordStore`，v1.6）；`shell` 优先走 `PATCH /api/experimental/config` |
-| 模型 | provider 列表（id / name / package / `settings.baseURL` / models）增删改；默认模型下拉；每个 provider 的 apiKey | `/api/provider`、`/api/model` | 配置文件 `providers.*`、`model`；apiKey 走 `connect/key` |
-| 规则 | 标题 + 刷新；`AGENTS.md` 列表（全局 + 项目，标注存在性，可编辑保存，编辑器随窗口拉伸）；`instructions` 只读展示（标注“V2 不生效”） | 文件系统 | `AGENTS.md` 文本读写；`instructions` 兼容增删 |
-| 技能 | 标题 + 说明 + 刷新；上：**加载目录**（一行一个目录/URL，可编辑保存，显示写入的全局/项目配置文件路径）；下：**已加载技能**只读列表（名称/ID/路径 + 数量） | 配置 `skills` + `/api/skill` | 配置文件 `skills` |
-| MCP | 标题 + 说明 + 刷新；上：**配置来源**（读取的全局/项目配置文件路径）；中：**服务器列表**（名称/类型/command 或 url/状态/作用域/启用）；下：选中条目详情编辑 + `mcp.timeout` | 配置 `mcp.servers` + `/api/mcp?location.directory=<项目>` | 配置文件 `mcp.servers.<name>`、`mcp.timeout` |
+| 连接【已落地】 | **插件自身设置**：标题 + 刷新；Server URL、Basic 用户名（默认 `opencode`）、密码（附「留空即回退环境变量 / `service.json`」提示）、测试连接。不含 shell | 插件状态（`OpenCodeSettingsState` + `OpenCodePasswordStore`）；测试连接走后端 `updateServerConfig` + `getAllSessions` + `getServerInfo` | IDE 侧：`opencode-settings.xml` 存 URL/用户名，**密码存 IDE 凭据存储**（`OpenCodePasswordStore`，v1.6）。本页由「OK」统一提交（`isModified`/`apply`） |
+| 模型【v1.7 重做 / v1.9 兼容 V1】 | **opencode 设置**（无作用域选择）：上=默认模型下拉 + 保存；中=供应商表（id / 名称 / 是否自定义 + 行内「设置」按钮 → 弹窗改名称、连接 URL、API Key；工具栏可新增/删除供应商）；下=选中供应商的模型表（模型 id / 名称 / 启用勾选；自定义供应商可新增/删除模型） | `/api/provider`、`/api/model` + 配置 `providers.*`（V2）**与 `provider.*`（V1）都读**（`ProviderModelDto` = 配置声明（含禁用状态）∪ 服务端启用清单） | 按键 patch；路径与键名**跟随条目的现有写法**：V2 写 `providers.<id>.package` / `.settings.baseURL` / `.models.<mid>.disabled`，V1 写 `provider.<id>.npm` / `.options.baseURL` / `.models.<mid>.status="deprecated"`。apiKey 走 `connect/key`。作用域由该供应商的声明作用域决定（未声明过则全局），界面不暴露 |
+| 规则【v1.8 重做】 | **opencode 设置**：上=规则加载位置（`AGENTS.md` 所在目录 + 配置 `instructions` 条目，标注「v2 未消费」）；下=已加载规则文件卡片（文件名 + 文件前 150 字符，齿轮在编辑器中打开） | 文件系统（`ruleFiles` 带 `preview`）+ 配置 `instructions` | 不在设置页内编辑，一律打开 `AGENTS.md` 直接改 |
+| 技能【v1.8 重做】 | **opencode 设置**：上=技能加载来源（配置声明的路径/URL + opencode 约定目录 `skill`/`skills`，标注存在性）+「打开配置文件」；下=已加载技能卡片（第一行 `id`、第二行描述，齿轮跳转到技能所在目录）+ 关键词过滤 | 配置 `skills`（**字符串数组与 `{paths,urls}` 对象两种写法都读**）+ 约定目录 + `/api/skill` | 不在设置页内编辑，一律打开 opencode 配置文件改 |
+| MCP【v1.8 重做】 | **opencode 设置**：配置来源行 + 「打开配置文件」；卡片列表＝名称 + 状态徽标 + 启用开关 + 齿轮打开配置文件（无描述字段，故不显示第二行） | 配置 `mcp.servers` + `/api/mcp` | 启用/禁用写 `mcp.servers.<name>.disabled`（复用 `saveMcpServer`，保留条目内其它键）；增删改一律编辑配置文件 |
 
 所有面板统一布局约定：`BorderLayout` 分区（标题行 → 内容区 → 状态行），不使用固定 `columns`/`preferredSize`，内容随设置窗口拉伸；状态行只显示友好文案（401/403/不可达等），原始错误放 tooltip。
 
-每项设置标注作用域（全局 / 项目），**默认全局**，切换作用域后重新定位目标文件。
+**加载时机（v1.7）**：设置页打开时只加载必需页（连接页，`SettingsTab.eager = true`）与当前选中页，切换 Tab 时加载该页；`loadSnapshot` 对「无告警但服务端清单全空」的结果自动重试（最多 3 次、间隔 800ms），避免「必须先点刷新」；同一面板同时只保留一个在途快照请求。
+
+除模型页外，其余写配置文件的页仍按 §5.2 标注作用域（全局 / 项目），**默认全局**；v1.8 起界面不再暴露作用域选择，写入作用域一律由「该条目在哪个配置文件里声明」推断（未声明过则全局）。
 
 ### 5.3 配置文件读写（`OpenCodeConfigStore`）
 
-**定位**：沿用 opencode 自身顺序，在目标作用域目录下依次探测 `opencode.json` → `opencode.jsonc` → `.opencode/opencode.json` → `.opencode/opencode.jsonc`；全不存在则按作用域默认新建 `opencode.json`（项目级）/ `opencode.jsonc`（全局级，与 core `Config.update` 行为一致）。
+**定位**：沿用 opencode 自身顺序，在目标作用域目录下依次探测 `opencode.jsonc` → `opencode.json` → `.opencode/opencode.jsonc` → `.opencode/opencode.json`（同一目录内 **jsonc 覆盖 json**，见 `Config.loadDirectory` 按 `["opencode.json","opencode.jsonc"]` 顺序加载）；全不存在则新建 `opencode.jsonc`（与 `Config.update` 的回退一致，不区分作用域）。
 
 **读**：Gson lenient 模式解析 JSONC（兼容注释）。
 
@@ -171,7 +176,9 @@ backend   ├─ OpenCodeConfigStore    配置文件定位 / JSONC 读 / 路径 
 
 | JSON 路径 | 用途 |
 |-----------|------|
-| `providers.<id>` / `providers.<id>.settings.baseURL` / `providers.<id>.models.<mid>` | 模型配置 |
+| `providers.<id>` / `providers.<id>.settings.baseURL` | 供应商（V2 写法） |
+| `provider.<id>` / `provider.<id>.npm` / `provider.<id>.options.baseURL` | 供应商（V1 写法，v1.9 兼容；条目已按 V1 声明时写回这一侧） |
+| `models.<mid>` / `.name` / `.disabled`（V2）或 `.status="deprecated"`（V1） | 模型增删改与启用状态（一律写叶子键，避免覆盖同层 `limit`/`capabilities`） |
 | `model` | 默认模型 |
 | `skills` | 技能目录列表 |
 | `mcp.servers.<name>` / `mcp.timeout` | MCP |
@@ -185,13 +192,17 @@ backend   ├─ OpenCodeConfigStore    配置文件定位 / JSONC 读 / 路径 
 
 | 方法 | 作用 |
 |------|------|
-| `getSnapshot(projectId)` | 一次性返回设置页所需全部读数据（配置路径、providers/models/默认模型、`skills` + 已发现技能、MCP servers + 状态 + timeout、shell/shells、instructions、`AGENTS.md` 候选、warnings） |
-| `saveProvider / removeProvider` | 写 `providers.<id>`、models |
+| `getSnapshot(projectId)` | 一次性返回设置页所需全部读数据（配置路径、providers（含模型清单，V1/V2 两种写法都解析）/默认模型、技能加载来源 + 已发现技能、MCP servers + 状态 + timeout、shell/shells、instructions、`AGENTS.md` 候选（带 `preview`）、warnings） |
+| `saveProvider / removeProvider` | 写 / 删供应商（名称、包、`baseURL`）。**不写 `models`**（v1.7：整体覆盖会丢 `limit`/`capabilities` 等字段）；v1.9：目标容器与键名跟随条目现有写法（V1 写 `provider.<id>.npm` / `.options.baseURL`） |
 | `setDefaultModel` | 写 `model` |
-| `saveSkills` | 写 `skills` |
-| `saveMcpServer / removeMcpServer / saveMcpTimeout` | 写 `mcp.servers.<name>`、`mcp.timeout`（保留条目内未覆盖的键） |
+| `setProviderModelEnabled`（v1.7） | 启用/禁用模型：V2 写 `providers.<id>.models.<mid>.disabled`（禁用 `true`、启用删键），V1 写 `provider.<id>.models.<mid>.status = "deprecated"`（v1.9） |
+| `saveProviderModel`（v1.7） | 新增/改名模型：只写 `...models.<mid>.name`，条目缺失时自动补出 |
+| `removeProviderModel`（v1.7） | 删 `...models.<mid>`（仅配置声明过的模型可删） |
+| `saveSkills` | 写 `skills`（v1.8 起界面不再调用，保留接口） |
+| `ensureConfigFile`（v1.8） | 目标作用域配置文件缺失时建立空 `{}`，供「打开配置文件」入口使用 |
+| `saveMcpServer / removeMcpServer / saveMcpTimeout` | 写 `mcp.servers.<name>`、`mcp.timeout`（保留条目内未覆盖的键）；v1.8 起界面只用 `saveMcpServer` 切换 `disabled`，增删与 timeout 编辑改由用户直接编辑配置文件 |
 | `saveInstructions` | 写 `instructions`（兼容保留项） |
-| `readRuleFile / saveRuleFile` | 读写 `AGENTS.md`（纯文本，写前 `.bak` 备份 + 原子写） |
+| `readRuleFile / saveRuleFile` | 读写任意文本文件（v1.8 起界面不再内嵌编辑规则，改为在编辑器打开；接口保留） |
 | `saveCredential(integrationId, key)` | 调 `POST /api/integration/{id}/connect/key` |
 | `setShell` | 优先 `PATCH /api/experimental/config`，失败回退写文件 |
 | `reloadConfig` | 调 `POST /api/config/reload` 兜底 |
@@ -218,28 +229,30 @@ backend   ├─ OpenCodeConfigStore    配置文件定位 / JSONC 读 / 路径 
 
 | 文件 | 变更摘要 | 状态 |
 |------|---------|------|
-| `opencode-shared/.../SettingsDtos.kt` | 新增：Provider/McpServer/McpTimeout/Skill/ShellOption/RuleFile/SettingsSnapshot/WriteResult DTO（模型复用既有 `ModelDto`） | ✅ 已完成 |
-| `opencode-shared/.../SettingsRpcApi.kt` | 新增：设置读写 RPC 契约（13 个方法） | ✅ 已完成 |
+| `opencode-shared/.../SettingsDtos.kt` | 新增：Provider/McpServer/McpTimeout/Skill/SkillSource/ShellOption/RuleFile/SettingsSnapshot/WriteResult DTO；v1.7：`ProviderDto.models` 由 `List<ModelDto>` 改为 `List<ProviderModelDto>`（id/name/disabled/declaredInConfig），新增 `custom` 标记，快照去掉已无用的 `models` 字段；v1.8：快照 `skills` 改为 `skillSources`（含 `declared`/`exists`），`RuleFileDto` 增加 `preview` | ✅ 已完成 |
+| `opencode-shared/.../SettingsRpcApi.kt` | 新增：设置读写 RPC 契约（v1.7 增 3 个模型写方法；v1.8 增 `ensureConfigFile`，共 17 个方法） | ✅ 已完成 |
 | `opencode-shared/.../ChatRepositoryRpcApi.kt` | 连接配置支持 Basic（`serverUrl` + `username` + `password`） | ✅ 已完成（`9f1b2fc`） |
 | `opencode-backend/.../repository/OpenCodeRestClient.kt` | v2 前缀 + Basic 鉴权 + 探测 `GET /api/project`；新增 config/provider/model/mcp/skill/integration/reload/connect-key 方法；**PATCH 改走 JDK HttpClient** | ✅ 已完成 |
 | `opencode-backend/.../repository/JsoncEditor.kt` | 新增：JSONC 定点编辑器（按 JSON 路径 patch，保留注释/缩进/未知字段） | ✅ 已完成 |
-| `opencode-backend/.../repository/OpenCodeConfigStore.kt` | 新增：配置文件定位、JSONC 读取、路径 patch、备份、原子写、并发改动校验 | ✅ 已完成 |
-| `opencode-backend/.../BackendSettingsRpcApi.kt` | 新增：实现 `SettingsRpcApi`（快照组装 + 定点写入；多键写入为单文件读改写） | ✅ 已完成 |
-| `opencode-backend/.../SettingsMapping.kt` | 新增：配置 × 服务端目录 × 状态的纯映射（分端字段级合并、V1/V2 写法兼容）+ JSON 读取小工具 | ✅ 已完成 |
+| `opencode-backend/.../repository/OpenCodeConfigStore.kt` | 新增：配置文件定位、JSONC 读取、路径 patch、备份、原子写、并发改动校验；v1.8：候选顺序改为 jsonc 优先、缺省新建 `opencode.jsonc`（对齐 opencode），并公开 `expandUserPath` 供技能来源判存在 | ✅ 已完成 |
+| `opencode-backend/.../BackendSettingsRpcApi.kt` | 新增：实现 `SettingsRpcApi`（快照组装 + 定点写入；多键写入为单文件读改写）；v1.7：实现 3 个模型写方法（按键 patch）、`saveProvider` 不再写 `models`；v1.8：快照新增技能加载来源与规则文件预览，新增 `ensureConfigFile`；v1.9：供应商与模型的写入按 V1/V2 方言选择容器与键名 | ✅ 已完成 |
+| `opencode-backend/.../SettingsMapping.kt` | 新增：配置 × 服务端目录 × 状态的纯映射（字段级合并、V1/V2 写法兼容）+ JSON 读取小工具；v1.7：`providers` 增加 `liveModels` 入参，模型清单改为「配置声明（含 `disabled`）∪ 服务端启用清单」并集，并按配置声明判定 `custom`/`declaredInConfig`；v1.8：新增 `skillPaths`（兼容字符串数组与 `{paths,urls}` 对象）；v1.9：供应商改为同时读 V2 `providers` 与 V1 `provider`（`providerConfigs`/`providerPackage`/`providerBaseUrl`/`providerWriteTarget`） | ✅ 已完成 |
 | `opencode-backend/.../repository/OpenCodeCredentials.kt` | 新增（v1.5）：Basic 密码发现（显式值 → 环境变量 → `service.json`），消除设置页 401 | ✅ 已完成 |
 | `opencode-backend/.../BackendChatRepositoryModel.kt` | 修改：暴露 `getRestClient()`；初始密码与 `updateServerConfig` 改走 `OpenCodeCredentials.resolvePassword` | ✅ 已完成 |
 | `opencode-backend/.../BackendRpcApiProvider.kt` | 修改：注册 `SettingsRpcApi` | ✅ 已完成 |
-| `opencode-frontend/.../settings/OpenCodeSettingsConfigurable.kt` | 改为 Tab 容器（5 个 Tab） | ✅ 已完成 |
-| `opencode-frontend/.../settings/SettingsTab.kt` | Tab 接口 + 面板基类：标题/说明行、作用域行、统一表格样式、**状态行（友好文案 + tooltip 明细）**、401/403/不可达文案转换、异步读取/写入骨架 | ✅ 已完成 |
-| `opencode-frontend/.../settings/ConnectionSettingsTab.kt` | 连接面板（原表单迁入 + shell 选择 + 密码留空提示）；测试连接改走后端真实凭据探测；密码读写改走 `OpenCodePasswordStore`（v1.6） | ✅ 已完成 |
-| `opencode-frontend/.../settings/{Provider,Rule}SettingsTab.kt` | 模型 / 规则面板：改自适应布局，写操作统一 `currentProject()` 守卫 | ✅ 已完成 |
-| `opencode-frontend/.../settings/SkillSettingsTab.kt` | 技能面板：加载目录（可编辑 + 来源提示）+ 已加载技能列表（只读） | ✅ 已完成 |
-| `opencode-frontend/.../settings/McpSettingsTab.kt` | MCP 面板：配置来源 + 服务器列表 + 详情/超时 | ✅ 已完成 |
+| `opencode-frontend/.../settings/OpenCodeSettingsConfigurable.kt` | 改为 Tab 容器（5 个 Tab）；v1.7：连接页 `eager` 常驻加载、切换 Tab 自动加载该页 | ✅ 已完成 |
+| `opencode-frontend/.../settings/SettingsTab.kt` | Tab 接口 + 面板基类：标题/说明行、统一表格样式、**状态行（友好文案 + tooltip 明细）**、401/403/不可达文案转换、异步读取/写入骨架；v1.7：新增 `eager` 标记、快照空结果自动重试、在途请求去重；v1.8：新增齿轮按钮与「在编辑器打开文件 / 跳转目录 / 打开配置文件」能力，移除已无用的作用域行 | ✅ 已完成 |
+| `opencode-frontend/.../settings/SettingsCards.kt` | 新增（v1.8）：卡片列表组件（第一行标题 + 第二行折行副标题 + 右侧操作区，横向跟随视口、内部纵向滚动）与关键词过滤、HTML 折行标签、路径/截断工具 | ✅ 已完成 |
+| `opencode-frontend/.../settings/ConnectionSettingsTab.kt` | 插件自身设置面板：Server URL / 用户名 / 密码 + 密码留空提示 + 测试连接（走后端真实凭据探测），密码读写走 `OpenCodePasswordStore`；v1.7：移除 shell 界面（后端 `setShell` 接口保留） | ✅ 已完成 |
+| `opencode-frontend/.../settings/ProviderSettingsTab.kt` | v1.7 全面重做：默认模型置顶 → 供应商表（id/名称/是否自定义 + 行内「设置」按钮 → 名称/连接 URL/API Key 弹窗；工具栏新增/删除供应商）→ master-detail 模型表（id/名称/启用勾选，自定义供应商可增删模型）；去掉作用域选择，写作用域跟随供应商声明作用域 | ✅ 已完成 |
+| `opencode-frontend/.../settings/RuleSettingsTab.kt` | v1.8 重写：规则加载位置（AGENTS.md 目录 + `instructions` 条目）+ 规则文件卡片（文件名 + 前 150 字符 + 齿轮编辑器打开）；移除内嵌编辑器与保存/Reload | ✅ 已完成 |
+| `opencode-frontend/.../settings/SkillSettingsTab.kt` | v1.8 重写：技能加载来源（配置声明 + 约定目录，标注存在性）+ 「打开配置文件」+ 技能卡片（id + 描述 + 齿轮跳转目录）+ 关键词过滤；移除可编辑目录文本域 | ✅ 已完成 |
+| `opencode-frontend/.../settings/McpSettingsTab.kt` | v1.8 重写：卡片列表（名称 + 状态徽标 + 启用开关 + 齿轮打开配置文件）+ 配置来源行；移除详情表单、增删服务器、`mcp.timeout` 编辑 | ✅ 已完成 |
 | `opencode-frontend/.../settings/OpenCodeSettingsState.kt` | 修改（v1.6）：移除密码字段 —— 明文凭据落 `opencode-settings.xml` 会被 IDE 判为敏感信息并报 error；`username` 由 `9f1b2fc` 落地；作用域默认全局在面板内置（不持久化上次选择） | ✅ 已完成 |
 | `opencode-frontend/.../settings/OpenCodePasswordStore.kt` | 新增（v1.6）：Basic 密码存取（`PasswordSafe` 凭据存储 + 内存缓存，读写失败不阻塞），供连接页与启动配置下发使用 | ✅ 已完成 |
-| `opencode-frontend/src/main/resources/messages/OpencodeFrontendBundle.properties` | 新增 `settings.opencode.*` 面板文案 | ✅ 已完成 |
+| `opencode-frontend/src/main/resources/messages/OpencodeFrontendBundle.properties` | 新增 `settings.opencode.*` 面板文案；v1.7：补模型页/供应商弹窗文案；v1.8：补技能/规则/MCP 卡片与「打开配置文件」文案，移除已下线的 shell、旧 provider 表单、MCP 详情/超时、作用域下拉文案 | ✅ 已完成 |
 | `opencode-frontend/src/main/resources/opencode-idea-panel.opencode-frontend.xml` | 无需改动（Configurable 类名与注册项不变） | — |
-| `src/test/.../JsoncEditorUnitTest`、`OpenCodeConfigStoreUnitTest`、`OpenCodeSettingsApiUnitTest`、`SettingsMappingUnitTest`、`OpenCodeCredentialsUnitTest` | 新增：56 个单测（其中设置相关 44 个） | ✅ 已完成 |
+| `src/test/.../JsoncEditorUnitTest`、`OpenCodeConfigStoreUnitTest`、`OpenCodeSettingsApiUnitTest`、`SettingsMappingUnitTest`、`OpenCodeCredentialsUnitTest` | 全仓 109 个单测，其中设置相关 57 个（v1.7 补模型并集映射 2 例、模型按键 patch 4 例；v1.8 补 `skills` 写法兼容 2 例，并订正配置定位优先级断言；v1.9 补供应商 V1/V2 兼容 5 例） | ✅ 已完成 |
 
 ## 7. 实施顺序
 
