@@ -104,9 +104,11 @@ class OpenCodeRestClient(
         text: String,
         files: List<PromptFile> = emptyList(),
         skills: List<String> = emptyList()
-    ): Result<Unit> {
+    ): Result<String> {
         val body = promptBody(text, files, skills)
-        return executeRequest("POST", "/session/${encodePath(sessionId)}/prompt", gson.toJson(body)) { Unit }
+        return executeRequest("POST", "/session/${encodePath(sessionId)}/prompt", gson.toJson(body)) { json ->
+            createdUserMessageId(json)
+        }
     }
 
     /**
@@ -121,11 +123,24 @@ class OpenCodeRestClient(
         text: String,
         files: List<PromptFile> = emptyList(),
         skills: List<String> = emptyList()
-    ): Result<Unit> {
+    ): Result<String> {
         val body = promptBody(text, files, skills)
         body["name"] = name
-        return executeRequest("POST", "/session/${encodePath(sessionId)}/command", gson.toJson(body)) { Unit }
+        return executeRequest("POST", "/session/${encodePath(sessionId)}/command", gson.toJson(body)) { json ->
+            createdUserMessageId(json)
+        }
     }
+
+    /**
+     * `/prompt` 与 `/command` 的响应体是服务端创建出的 user 消息（`{ "data": { "id": "msg_*" } }`）。
+     *
+     * 面板用该 id 作为本地回声气泡的 id，与后续对账拿到的 REST id 一致，
+     * 避免「本地 id → 服务端 id」换 key 造成的重建闪烁。
+     * 形状不符合预期时返回空串（发送本身仍算成功）。
+     */
+    private fun createdUserMessageId(json: String): String =
+        runCatching { dataObject(json).get("id")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty() }
+            .getOrDefault("")
 
     /** prompt / command 共有请求体：text + files + skills */
     private fun promptBody(

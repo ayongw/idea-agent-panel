@@ -361,12 +361,11 @@ class BackendChatRepositoryModel : Disposable {
                     return@withContext
                 }
 
-                // 发送用户消息到本地缓存
-                _messages.value += chatMessageFactory.createUserMessage(messageContent)
-
                 // 会话上下文附件随消息下发：有命令时走命令端点，否则走普通 prompt
                 val attachments = mergedAttachments(sessionId, context.attachments)
                 val commandName = context.commandName?.takeIf { it.isNotBlank() }
+                // 发送前的条数：流式气泡可能在本请求期间先到，稍后把用户消息插到它们之前
+                val pendingIndex = _messages.value.size
                 val result = if (commandName != null) {
                     restClient.sendCommand(
                         sessionId,
@@ -384,11 +383,20 @@ class BackendChatRepositoryModel : Disposable {
                     )
                 }
                 if (result.isFailure()) {
-                    // 服务器调用失败，回退到模拟模式
+                    // 服务器调用失败，回退到模拟模式（模拟路径自带用户消息与回复）
                     log.warn("发送消息失败 session=$sessionId，回退模拟响应: ${result.exceptionOrNull()?.message}")
                     simulateLocalResponse(messageContent)
                 } else {
-                    log.info("已发送消息 session=$sessionId, 长度=${messageContent.length}, command=${commandName ?: "-"}")
+                    // 用服务端返回的 user 消息 id 作为本地回声气泡的 id：与后续对账的 REST id 一致，
+                    // 不会再因「换 id」把气泡删掉重建（表现为闪烁）
+                    val serverMessageId = result.getOrThrow().takeIf { it.isNotBlank() }
+                    val userMessage = chatMessageFactory.createUserMessage(messageContent)
+                        .let { if (serverMessageId != null) it.copy(id = serverMessageId) else it }
+                    insertUserMessage(pendingIndex, userMessage)
+                    log.info(
+                        "已发送消息 session=$sessionId, 长度=${messageContent.length}, " +
+                            "消息=${serverMessageId ?: "-"}, command=${commandName ?: "-"}"
+                    )
                 }
                 // 流式响应通过 SSE 单独处理（在 BackendChatRepositoryRpcApi 中）
             } catch (e: Exception) {
@@ -400,6 +408,17 @@ class BackendChatRepositoryModel : Disposable {
                 simulateLocalResponse(messageContent)
             }
         }
+    }
+
+    /**
+     * 把用户消息插到「发送前已有条数」的位置。
+     *
+     * 流式气泡（thinking / 正文）可能在本轮 prompt 请求期间先到并被追加到列表末尾，
+     * 直接 `+=` 会让用户消息排到回复之后（问在下、答在上）；按发送前的位置插入可保证顺序。
+     */
+    private fun insertUserMessage(index: Int, message: ChatMessage) {
+        val current = _messages.value
+        _messages.value = current.toMutableList().apply { add(index.coerceIn(0, current.size), message) }
     }
 
     /**

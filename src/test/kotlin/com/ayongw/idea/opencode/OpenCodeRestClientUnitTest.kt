@@ -125,6 +125,7 @@ class OpenCodeRestClientUnitTest {
         )
 
         assertTrue("发送 prompt 应成功", result.isSuccess())
+        assertEquals("应返回服务端创建的 user 消息 id（用于本地回声气泡复用同一 id）", "msg_1", result.getOrThrow())
         assertEquals("POST", lastMethod)
         assertEquals("/api/session/ses_1/prompt", lastPath)
         assertTrue(lastBody!!.contains("\"text\":\"你好\""))
@@ -135,12 +136,23 @@ class OpenCodeRestClientUnitTest {
     }
 
     @Test
+    fun promptIdIsBestEffortWhenResponseHasNoId() = runBlocking {
+        routes["/api/session/ses_1/prompt"] = """{"data":{"delivery":"steer"}}"""
+
+        val result = client().sendPrompt("ses_1", "你好")
+
+        assertTrue("响应缺 id 时发送仍应成功", result.isSuccess())
+        assertEquals("缺 id 时返回空串（调用方回退到本地 id）", "", result.getOrThrow())
+    }
+
+    @Test
     fun commandUsesCommandEndpointWithName() = runBlocking {
         routes["/api/session/ses_1/command"] = """{"data":{"id":"msg_2"}}"""
 
         val result = client().sendCommand("ses_1", "init", "请初始化", emptyList(), listOf("skill_2"))
 
         assertTrue("执行命令应成功", result.isSuccess())
+        assertEquals("msg_2", result.getOrThrow())
         assertEquals("POST", lastMethod)
         assertEquals("/api/session/ses_1/command", lastPath)
         assertTrue(lastBody!!.contains("\"name\":\"init\""))
