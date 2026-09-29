@@ -25,7 +25,7 @@ import java.time.LocalDateTime
 class BackendChatRepositoryModel {
     companion object {
         /** 默认 Server 地址 */
-        const val DEFAULT_SERVER_URL = "http://localhost:8080"
+        const val DEFAULT_SERVER_URL = "http://127.0.0.1:4096"
 
         fun getInstance(project: Project): BackendChatRepositoryModel {
             return project.getService(BackendChatRepositoryModel::class.java)

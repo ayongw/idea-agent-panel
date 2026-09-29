@@ -14,7 +14,7 @@ import com.intellij.openapi.components.Storage
 )
 class OpenCodeSettingsState : PersistentStateComponent<OpenCodeSettingsState> {
 
-    /** Server 地址，如 http://localhost:8080 */
+    /** Server 地址，如 http://127.0.0.1:4096（opencode serve 默认端口 4096） */
     var serverUrl: String = DEFAULT_SERVER_URL
 
     /** 认证 Token（请求头 Authorization: Bearer <token>），为空表示不鉴权 */
@@ -28,7 +28,7 @@ class OpenCodeSettingsState : PersistentStateComponent<OpenCodeSettingsState> {
     }
 
     companion object {
-        const val DEFAULT_SERVER_URL = "http://localhost:8080"
+        const val DEFAULT_SERVER_URL = "http://127.0.0.1:4096"
 
         fun getInstance(): OpenCodeSettingsState {
             return ApplicationManager.getApplication().getService(OpenCodeSettingsState::class.java)

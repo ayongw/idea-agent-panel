@@ -113,7 +113,7 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
 
     /**
      * 下发 OpenCode Server 连接配置（前端设置页 → 后端）
-     * @param serverUrl Server 地址，如 http://localhost:8080
+     * @param serverUrl Server 地址，如 http://127.0.0.1:4096
      * @param token 认证 Token，为空表示不鉴权（请求头 Authorization: Bearer <token>）
      */
     suspend fun updateServerConfig(projectId: ProjectId, serverUrl: String, token: String)
