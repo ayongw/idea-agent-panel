@@ -27,9 +27,9 @@ internal class ConnectionSettingsTab : AbstractSettingsTab() {
 
     override val title: String = OpencodeFrontendBundle.message("settings.opencode.tab.connection")
 
-    private val serverUrlField = JBTextField()
-    private val usernameField = JBTextField()
-    private val passwordField = JBPasswordField()
+    private val serverUrlField = JBTextField(40)
+    private val usernameField = JBTextField(30)
+    private val passwordField = JBPasswordField().apply { columns = 30 }
     private val shellCombo = JComboBox<String>()
     private val defaultShellLabel = OpencodeFrontendBundle.message("settings.opencode.shell.default")
 

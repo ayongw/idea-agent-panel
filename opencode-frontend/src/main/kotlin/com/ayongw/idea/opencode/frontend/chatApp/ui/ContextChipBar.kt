@@ -18,7 +18,6 @@ import java.awt.event.KeyEvent
 import javax.swing.AbstractAction
 import javax.swing.Box
 import javax.swing.BoxLayout
-import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.KeyStroke
@@ -140,15 +139,11 @@ class ContextChipBar : JPanel() {
             }
             add(label)
 
-            val removeBtn = JButton().apply {
-                icon = ChatAppIcons.Context.remove
-                preferredSize = Dimension(JBUI.scale(16), JBUI.scale(16))
-                isBorderPainted = false
-                isContentAreaFilled = false
-                isFocusable = false
-                addActionListener { onRemove() }
-                ButtonUtils.applyHoverEffect(this)
-            }
+            val removeBtn = ButtonUtils.createActionButton(
+                icon = ChatAppIcons.Context.remove,
+                tooltip = "",
+                size = Dimension(JBUI.scale(16), JBUI.scale(16))
+            ) { onRemove() }
             add(removeBtn)
         }
     }

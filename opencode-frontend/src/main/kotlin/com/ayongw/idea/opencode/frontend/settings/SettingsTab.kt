@@ -11,11 +11,13 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.platform.project.projectId
 import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
+import java.awt.Dimension
 import java.awt.FlowLayout
 import javax.swing.DefaultComboBoxModel
 import javax.swing.JButton
@@ -108,9 +110,19 @@ internal abstract class AbstractSettingsTab : SettingsTab {
         return table
     }
 
-    /** 状态行：友好文案 + 完整信息放 tooltip */
+    /**
+     * 滚动面板：宽度只作为 preferred 上限，避免表格 / 长文本把设置页撑出水平滚动条；
+     * 实际显示宽度仍由外层布局（BorderLayout / FormBuilder）拉伸到可用宽度。
+     */
+    protected fun buildScroll(view: JComponent, height: Int): JBScrollPane =
+        JBScrollPane(view).apply {
+            preferredSize = Dimension(JBUI.scale(CONTENT_WIDTH), JBUI.scale(height))
+        }
+
+    /** 状态行：友好文案 + 完整信息放 tooltip（过长文案截断，避免撑宽设置页） */
     protected fun showStatus(message: String?, detail: String? = null) {
-        statusLabel.text = message?.takeIf { it.isNotBlank() } ?: " "
+        val text = message?.takeIf { it.isNotBlank() } ?: " "
+        statusLabel.text = if (text.length > STATUS_MAX_CHARS) text.take(STATUS_MAX_CHARS) + "…" else text
         statusLabel.toolTipText = detail ?: message
     }
 
@@ -191,5 +203,13 @@ internal abstract class AbstractSettingsTab : SettingsTab {
                 }
             }
         }
+    }
+
+    private companion object {
+        /** 内容块 preferred 宽度上限（逻辑像素），只影响布局计算，不影响实际拉伸 */
+        const val CONTENT_WIDTH = 560
+
+        /** 状态行展示的最大字符数，超出部分放 tooltip（避免长文案撑宽设置页） */
+        const val STATUS_MAX_CHARS = 100
     }
 }

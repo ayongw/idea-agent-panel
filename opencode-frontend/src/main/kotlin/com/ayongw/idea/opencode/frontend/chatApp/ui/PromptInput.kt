@@ -130,17 +130,11 @@ class PromptInput(
         minimumSize = Dimension(ChatUIConstants.Input.MIN_WIDTH, ChatUIConstants.Input.MIN_HEIGHT)
     }
 
-    private fun createSendButton() = JButton().apply {
-        icon = ChatAppIcons.Prompt.send
-        isEnabled = false
-        preferredSize = ChatUIConstants.Button.SEND_BUTTON_SIZE
-        toolTipText = OpencodeFrontendBundle.message("chat.prompt.send.tooltip")
-        isFocusable = false
-        isBorderPainted = false
-        isContentAreaFilled = false
-        addActionListener { handleButtonClick() }
-        ButtonUtils.applyHoverEffect(this)
-    }
+    private fun createSendButton() = ButtonUtils.createActionButton(
+        icon = ChatAppIcons.Prompt.send,
+        tooltip = OpencodeFrontendBundle.message("chat.prompt.send.tooltip"),
+        size = ChatUIConstants.Button.SEND_BUTTON_SIZE
+    ) { handleButtonClick() }.apply { isEnabled = false }
 
     private fun handleTextChange() {
         if (skipInputChangeUpdate) {

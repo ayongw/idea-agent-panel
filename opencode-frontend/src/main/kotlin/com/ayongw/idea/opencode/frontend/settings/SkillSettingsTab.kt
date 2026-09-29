@@ -4,7 +4,6 @@ import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
 import com.ayongw.idea.opencode.shared.SettingsRpcApi
 import com.intellij.platform.project.projectId
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
@@ -50,7 +49,7 @@ internal class SkillSettingsTab : AbstractSettingsTab() {
 
         val dirsBlock = FormBuilder.createFormBuilder()
             .addComponent(JBLabel(OpencodeFrontendBundle.message("settings.opencode.skills.dirs")))
-            .addComponent(JBScrollPane(dirsArea))
+            .addComponent(buildScroll(dirsArea, 80))
             .addComponent(dirsSourceLabel)
             .addComponent(
                 JPanel(BorderLayout()).apply {
@@ -71,7 +70,7 @@ internal class SkillSettingsTab : AbstractSettingsTab() {
                 },
                 BorderLayout.NORTH
             )
-            add(JBScrollPane(loadedTable), BorderLayout.CENTER)
+            add(buildScroll(loadedTable, 240), BorderLayout.CENTER)
         }
 
         return JPanel(BorderLayout()).apply {

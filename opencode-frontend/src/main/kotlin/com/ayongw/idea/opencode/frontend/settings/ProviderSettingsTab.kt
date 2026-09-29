@@ -6,7 +6,6 @@ import com.ayongw.idea.opencode.shared.ProviderDto
 import com.ayongw.idea.opencode.shared.SettingsRpcApi
 import com.intellij.platform.project.projectId
 import com.intellij.ui.components.JBPasswordField
-import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
 import java.awt.BorderLayout
@@ -40,12 +39,12 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
         0
     )
     private val table = buildTable(tableModel, listOf(120, 140, 180, 200, 200, 100, 80))
-    private val idField = JBTextField()
-    private val nameField = JBTextField()
-    private val packageField = JBTextField()
-    private val baseUrlField = JBTextField()
-    private val modelsField = JBTextField()
-    private val apiKeyField = JBPasswordField()
+    private val idField = JBTextField(20)
+    private val nameField = JBTextField(24)
+    private val packageField = JBTextField(28)
+    private val baseUrlField = JBTextField(32)
+    private val modelsField = JBTextField(36)
+    private val apiKeyField = JBPasswordField().apply { columns = 28 }
     private val scopeCombo = JComboBox<String>()
     private val defaultModelCombo = JComboBox<String>()
     private val defaultModelNone = OpencodeFrontendBundle.message("settings.opencode.model.default.none")
@@ -100,7 +99,7 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
             add(
                 JPanel(BorderLayout()).apply {
                     add(buildScopeRow(scopeCombo), BorderLayout.NORTH)
-                    add(JBScrollPane(table), BorderLayout.CENTER)
+                    add(buildScroll(table, 150), BorderLayout.CENTER)
                     add(detail, BorderLayout.SOUTH)
                 },
                 BorderLayout.CENTER

@@ -11,7 +11,6 @@ import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ModelDto
 import javax.swing.Box
 import javax.swing.BoxLayout
-import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JMenuItem
 import javax.swing.JPanel
@@ -114,16 +113,10 @@ class InputToolbar(
         updateLabels()
     }
 
-    private fun createMenuButton() = JButton().apply {
-        isFocusable = false
-        isRequestFocusEnabled = false
-        isBorderPainted = false
-        isContentAreaFilled = false
-        isOpaque = false
-        border = JBUI.Borders.empty(JBUI.scale(2), JBUI.scale(6))
+    private fun createMenuButton() = ButtonUtils.ToolbarButton().apply {
+        border = JBUI.Borders.empty(JBUI.scale(3), JBUI.scale(8))
         font = JBFont.small()
         foreground = ChatAppColors.Text.disabled
-        ButtonUtils.applyHoverEffect(this)
     }
 
     private fun updateLabels() {

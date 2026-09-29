@@ -8,7 +8,6 @@ import com.ayongw.idea.opencode.shared.SettingsRpcApi
 import com.intellij.platform.project.projectId
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
@@ -49,16 +48,16 @@ internal class McpSettingsTab : AbstractSettingsTab() {
     )
     private val serverTable = buildTable(serverModel, listOf(140, 80, 260, 160, 130, 70))
 
-    private val nameField = JBTextField()
+    private val nameField = JBTextField(20)
     private val typeCombo = JComboBox<String>()
-    private val commandField = JBTextField()
-    private val urlField = JBTextField()
+    private val commandField = JBTextField(30)
+    private val urlField = JBTextField(32)
     private val environmentArea = JBTextArea().apply { rows = 3 }
     private val enabledCheck = JBCheckBox(OpencodeFrontendBundle.message("settings.opencode.mcp.enabled"), true)
 
-    private val startupField = JBTextField()
-    private val catalogField = JBTextField()
-    private val executionField = JBTextField()
+    private val startupField = JBTextField(12)
+    private val catalogField = JBTextField(12)
+    private val executionField = JBTextField(12)
 
     private val localLabel = OpencodeFrontendBundle.message("settings.opencode.mcp.type.local")
     private val remoteLabel = OpencodeFrontendBundle.message("settings.opencode.mcp.type.remote")
@@ -76,7 +75,7 @@ internal class McpSettingsTab : AbstractSettingsTab() {
 
         val listBlock = JPanel(BorderLayout()).apply {
             add(sourceLabel, BorderLayout.NORTH)
-            add(JBScrollPane(serverTable), BorderLayout.CENTER)
+            add(buildScroll(serverTable, 200), BorderLayout.CENTER)
         }
 
         val detailBlock = FormBuilder.createFormBuilder()
@@ -86,7 +85,7 @@ internal class McpSettingsTab : AbstractSettingsTab() {
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.mcp.command"), commandField)
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.mcp.url"), urlField)
             .addComponent(JBLabel(OpencodeFrontendBundle.message("settings.opencode.mcp.environment")))
-            .addComponent(JBScrollPane(environmentArea))
+            .addComponent(buildScroll(environmentArea, 70))
             .addComponent(enabledCheck)
             .addComponent(
                 JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {

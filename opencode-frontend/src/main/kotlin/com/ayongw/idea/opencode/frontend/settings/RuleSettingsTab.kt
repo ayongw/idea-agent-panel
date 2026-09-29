@@ -5,7 +5,6 @@ import com.ayongw.idea.opencode.shared.RuleFileDto
 import com.ayongw.idea.opencode.shared.SettingsRpcApi
 import com.intellij.platform.project.projectId
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
@@ -62,7 +61,7 @@ internal class RuleSettingsTab : AbstractSettingsTab() {
 
         val instructions = FormBuilder.createFormBuilder()
             .addComponent(buildHint(OpencodeFrontendBundle.message("settings.opencode.rules.instructions.hint")))
-            .addComponent(JBScrollPane(instructionsArea))
+            .addComponent(buildScroll(instructionsArea, 90))
             .panel
 
         return JPanel(BorderLayout()).apply {
@@ -70,7 +69,7 @@ internal class RuleSettingsTab : AbstractSettingsTab() {
             add(
                 JPanel(BorderLayout()).apply {
                     add(head, BorderLayout.NORTH)
-                    add(JBScrollPane(editor), BorderLayout.CENTER)
+                    add(buildScroll(editor, 200), BorderLayout.CENTER)
                     add(instructions, BorderLayout.SOUTH)
                 },
                 BorderLayout.CENTER
