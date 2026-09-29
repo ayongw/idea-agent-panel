@@ -70,15 +70,21 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 # 编译
 ./gradlew compileKotlin --no-daemon --no-configuration-cache
 
-# 打包插件 (生成 build/distributions/opencode-idea-panel-0.1.0.zip)
+# 打包插件
+# 版本形如 0.1.0.<构建号>，构建号默认取 git 提交数，产物：build/distributions/opencode-idea-panel-0.1.0.<构建号>.zip
 ./gradlew buildPlugin --no-daemon --no-configuration-cache
+
+# 指定构建号（覆盖 git 提交数）
+./gradlew buildPlugin -PbuildNumber=42 --no-daemon --no-configuration-cache
 ```
+
+> 插件版本号与产出的 zip 名都会带上构建号，便于区分每次打包；插件的变更说明取自根目录 `CHANGELOG.md`，打包时自动转成 `plugin.xml` 的 `<change-notes>`（显示在 IDEA 的 Plugins → What's New）。
 
 ### 安装插件
 
 1. 打开 IntelliJ IDEA
 2. `Settings` → `Plugins` → ⚙️ → `Install Plugin from Disk`
-3. 选择 `build/distributions/opencode-idea-panel-0.1.0.zip`
+3. 选择 `build/distributions/opencode-idea-panel-0.1.0.<构建号>.zip`
 4. 重启 IDE
 
 ### 运行沙箱调试 (开发用)

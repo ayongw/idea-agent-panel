@@ -1,10 +1,34 @@
+import org.jetbrains.changelog.Changelog
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.tasks.aware.SplitModeAware
 import java.io.File
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 
 group = "com.ayongw.idea"
-version = "0.1.0"
+
+/** 基础版本号，需与 CHANGELOG.md 的版本标题一致 */
+val baseVersion = "0.1.0"
+
+/**
+ * 构建号：-PbuildNumber=N 优先，其次 git 提交数，无 .git 时回退时间戳。
+ * 用于区分每次打出的包（zip 名与 IDE 插件列表显示的版本都会带上）。
+ */
+val buildNumber: String = providers.gradleProperty("buildNumber")
+    .orElse(
+        providers.provider {
+            runCatching {
+                providers.exec { commandLine("git", "rev-list", "--count", "HEAD") }
+                    .standardOutput.asText.get().trim()
+            }.getOrNull()?.takeIf { it.toIntOrNull() != null }
+                ?: DateTimeFormatter.ofPattern("yyyyMMddHHmm").format(LocalDateTime.now())
+        }
+    )
+    .get()
+
+// 传 -PbuildNumber=（留空）可打出不带构建号的正式版本 0.1.0
+version = buildNumber.trim().let { if (it.isEmpty()) baseVersion else "$baseVersion.$it" }
 
 // IDEA 安装路径配置 - 支持通过 gradle.properties 或环境变量配置
 val ideaHome: String = project.findProperty("ideaHome")?.toString() 
@@ -15,6 +39,7 @@ plugins {
     application
     id("org.jetbrains.intellij.platform")
     id("org.jetbrains.kotlin.jvm")
+    id("org.jetbrains.changelog") version "2.5.0"
     id("rpc") apply false
     id("org.jetbrains.kotlin.plugin.serialization") apply false
 }
@@ -99,4 +124,17 @@ intellijPlatform {
 intellijPlatform {
     splitMode = true
     pluginInstallationTarget = SplitModeAware.PluginInstallationTarget.BOTH
+}
+
+// 从 CHANGELOG.md 生成插件变更说明（显示在 IDEA 的 Plugins → What's New）
+val changelog = project.changelog // 配置缓存兼容：先取到本地变量
+tasks.patchPluginXml {
+    changeNotes = providers.provider {
+        with(changelog) {
+            renderItem(
+                (getOrNull(baseVersion) ?: getUnreleased()).withHeader(false).withEmptySections(false),
+                Changelog.OutputType.HTML
+            )
+        }
+    }
 }
