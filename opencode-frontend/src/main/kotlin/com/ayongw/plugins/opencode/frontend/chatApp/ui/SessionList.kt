@@ -15,6 +15,8 @@ import com.ayongw.plugins.opencode.frontend.chatApp.ui.utils.ChatAppColors
 import com.ayongw.plugins.opencode.frontend.chatApp.ui.utils.ChatAppIcons
 import com.ayongw.plugins.opencode.frontend.chatApp.ui.utils.ChatUIConstants
 import com.ayongw.plugins.opencode.shared.SessionState
+import com.ayongw.plugins.opencode.shared.SessionStateDto
+import com.ayongw.plugins.opencode.shared.toSessionState
 import com.intellij.icons.AllIcons
 import java.awt.BorderLayout
 import java.awt.Color
@@ -251,14 +253,14 @@ class SessionList(
     /**
      * 更新会话列表
      */
-    fun updateSessions(newSessions: List<SessionState>, activeSessionId: String?) {
+    fun updateSessions(newSessions: List<com.ayongw.plugins.opencode.shared.SessionStateDto>, activeSessionId: String?) {
         sessions.clear()
-        sessions.addAll(newSessions)
+        sessions.addAll(newSessions.map { it.toSessionState() })
         currentSessionId = activeSessionId
 
         val listModel = sessionList.model as DefaultListModel<SessionItem>
         listModel.clear()
-        newSessions.forEach { listModel.addElement(SessionItem(it)) }
+        newSessions.forEach { listModel.addElement(SessionItem(it.toSessionState())) }
 
         if (sessions.isEmpty()) {
             showEmptyState()

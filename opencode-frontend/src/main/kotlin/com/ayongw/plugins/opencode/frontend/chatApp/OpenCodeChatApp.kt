@@ -1,7 +1,8 @@
 package com.ayongw.plugins.opencode.frontend.chatApp
 
-import com.intellij.openapi.application.EDT
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.ui.JBSplitter
 import kotlinx.coroutines.*
 import com.ayongw.plugins.opencode.frontend.CoroutineScopeHolder
 import com.ayongw.plugins.opencode.frontend.chatApp.ui.*
@@ -16,15 +17,25 @@ class OpenCodeChatApp(
 ) : JPanel() {
 
     private val toolbar: ChatToolbar
+    private val sessionList: SessionList
     private val chatList: ChatList
     private val contextChipBar: ContextChipBar
     private val promptInput: PromptInput
+
+    private val splitter = JBSplitter(false, 0.22f)
 
     init {
         setupAppearance()
 
         contextChipBar = ContextChipBar()
         toolbar = ChatToolbar(viewModel)
+        sessionList = SessionList(
+            project = project,
+            onSessionClick = { sessionId -> viewModel.switchSession(sessionId) },
+            onNewSession = { viewModel.createSession() },
+            onRenameSession = { sessionId, newTitle -> viewModel.renameSession(sessionId, newTitle) },
+            onDeleteSession = { sessionId -> viewModel.deleteSession(sessionId) }
+        )
         chatList = ChatList(project)
         promptInput = PromptInput(
             onInputChanged = { text -> viewModel.onPromptInputChanged(text) },
@@ -33,9 +44,23 @@ class OpenCodeChatApp(
             contextChipBar = contextChipBar
         )
 
-        add(toolbar, BorderLayout.NORTH)
-        add(chatList, BorderLayout.CENTER)
-        add(promptInput, BorderLayout.SOUTH)
+        // 右侧面板：工具栏 + 消息列表 + 输入区
+        val rightPanel = JPanel(BorderLayout()).apply {
+            add(toolbar, BorderLayout.NORTH)
+            add(chatList, BorderLayout.CENTER)
+            add(promptInput, BorderLayout.SOUTH)
+        }
+
+        // 左侧面板：会话列表
+        val leftPanel = JPanel(BorderLayout()).apply {
+            add(sessionList, BorderLayout.CENTER)
+        }
+
+        splitter.firstComponent = leftPanel
+        splitter.secondComponent = rightPanel
+        splitter.setHonorComponentsMinimumSize(true)
+
+        add(splitter, BorderLayout.CENTER)
 
         subscribeToViewModelUpdates()
     }
@@ -50,7 +75,7 @@ class OpenCodeChatApp(
 
         coroutineScope.launch {
             viewModel.chatMessagesFlow.collect { messages ->
-                withContext(Dispatchers.EDT) {
+                ApplicationManager.getApplication().invokeLater {
                     chatList.setMessages(messages)
                 }
             }
@@ -64,7 +89,7 @@ class OpenCodeChatApp(
 
         coroutineScope.launch {
             viewModel.searchChatMessagesHandler().searchStateFlow.collect { searchState ->
-                withContext(Dispatchers.EDT) {
+                ApplicationManager.getApplication().invokeLater {
                     toolbar.updateSearchState(searchState)
                     chatList.updateSearchHighlights(searchState)
 
@@ -73,6 +98,22 @@ class OpenCodeChatApp(
                         chatList.scrollToMessage(currentResultId)
                     }
                 }
+            }
+        }
+
+        // 同步会话列表
+        coroutineScope.launch {
+            viewModel.allSessionsFlow.collect { sessions ->
+                ApplicationManager.getApplication().invokeLater {
+                    sessionList.updateSessions(sessions, viewModel.currentSessionId.value)
+                }
+            }
+        }
+
+        // 同步服务器连接状态
+        coroutineScope.launch {
+            viewModel.serverConnectedFlow.collect { connected ->
+                // TODO: 显示连接状态指示器
             }
         }
     }

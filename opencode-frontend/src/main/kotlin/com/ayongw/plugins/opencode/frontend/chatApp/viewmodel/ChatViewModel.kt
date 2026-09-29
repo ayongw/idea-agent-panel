@@ -4,9 +4,13 @@ import com.intellij.openapi.Disposable
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import com.ayongw.plugins.opencode.shared.ChatMessage
+import com.ayongw.plugins.opencode.shared.SessionStateDto
 
 interface ChatViewModelApi : Disposable {
     val chatMessagesFlow: StateFlow<List<ChatMessage>>
+    val allSessionsFlow: StateFlow<List<SessionStateDto>>
+    val serverConnectedFlow: StateFlow<Boolean>
+    val currentSessionId: StateFlow<String?>
 
     fun onPromptInputChanged(input: String)
 
@@ -17,6 +21,15 @@ interface ChatViewModelApi : Disposable {
     fun searchChatMessagesHandler(): SearchChatMessagesHandler
 
     val promptInputState: StateFlow<MessageInputState>
+
+    // 会话管理
+    fun createSession(initialTitle: String? = null)
+
+    fun switchSession(sessionId: String)
+
+    fun deleteSession(sessionId: String)
+
+    fun renameSession(sessionId: String, newTitle: String)
 }
 
 class ChatViewModel(
@@ -31,26 +44,34 @@ class ChatViewModel(
     private val _promptInputState = MutableStateFlow<MessageInputState>(MessageInputState.Disabled)
     override val promptInputState: StateFlow<MessageInputState> = _promptInputState.asStateFlow()
 
+    override val allSessionsFlow: StateFlow<List<SessionStateDto>> = repository.allSessionsFlow
+
+    override val serverConnectedFlow: StateFlow<Boolean> = repository.serverConnectedFlow
+
+    override val currentSessionId: StateFlow<String?> = repository.currentSessionId
+
     private val searchChatMessagesHandler: SearchChatMessagesHandler = SearchChatMessagesHandlerImpl(
         coroutineScope = coroutineScope,
         messagesFlow = repository.messagesFlow
     )
 
-    /**
-     * A nullable [Job] instance used to manage the coroutine responsible for sending a message.
-     * This property holds a reference to the currently active job related to the `onSendMessage`
-     * operation in the [ChatViewModel]. It enables tracking, cancellation, and lifecycle management
-     * of the send message process.
-     */
     private var currentSendMessageJob: Job? = null
 
     init {
-        // Emit all messages from the repository to the UI
         repository
             .messagesFlow
             .onEach { messages -> _chatMessagesFlow.value = messages }
             .launchIn(coroutineScope)
+
+        // 同步当前会话 ID
+        coroutineScope.launch {
+            repository.currentSessionId.onEach { sessionId ->
+                _currentSessionId.value = sessionId
+            }.launchIn(coroutineScope)
+        }
     }
+
+    private val _currentSessionId = MutableStateFlow<String?>(null)
 
     override fun onPromptInputChanged(input: String) {
         val currentPromptInputState = _promptInputState.value
@@ -92,6 +113,30 @@ class ChatViewModel(
                 else -> MessageInputState.Enabled(currentPromptInput)
             }
         )
+    }
+
+    override fun createSession(initialTitle: String?) {
+        coroutineScope.launch {
+            repository.createSession(initialTitle)
+        }
+    }
+
+    override fun switchSession(sessionId: String) {
+        coroutineScope.launch {
+            repository.switchSession(sessionId)
+        }
+    }
+
+    override fun deleteSession(sessionId: String) {
+        coroutineScope.launch {
+            repository.deleteSession(sessionId)
+        }
+    }
+
+    override fun renameSession(sessionId: String, newTitle: String) {
+        coroutineScope.launch {
+            repository.renameSession(sessionId, newTitle)
+        }
     }
 
     override fun searchChatMessagesHandler(): SearchChatMessagesHandler = searchChatMessagesHandler

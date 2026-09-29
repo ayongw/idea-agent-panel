@@ -4,6 +4,7 @@ package com.ayongw.plugins.opencode.backend
 
 import com.ayongw.plugins.opencode.backend.repository.AIResponseGenerator
 import com.ayongw.plugins.opencode.backend.repository.ChatMessageFactory
+import com.ayongw.plugins.opencode.backend.repository.OpenCodeRestClient
 import com.ayongw.plugins.opencode.shared.ChatMessage
 import com.ayongw.plugins.opencode.shared.ChatMessageDto
 import com.ayongw.plugins.opencode.shared.toChatMessageDto
@@ -28,61 +29,204 @@ class BackendChatRepositoryModel {
 
     private val chatMessageFactory = ChatMessageFactory("AI Buddy", "Super Engineer")
     private val aiResponseGenerator = AIResponseGenerator()
-    private val _messages = MutableStateFlow(
-        listOf(
-            chatMessageFactory.createAIMessage(
-                content = "Hello! I'm your AI Buddy. I'm here to help and chat with you about anything you'd like to discuss. How are you doing today?",
-                timestamp = LocalDateTime.now().minusMinutes(30),
-            ),
-            chatMessageFactory.createAIMessage(
-                content = "Feel free to ask me questions, share your thoughts, or just have a casual conversation. I'm designed to provide helpful and engaging responses!",
-                timestamp = LocalDateTime.now().minusMinutes(25),
-            ),
-            chatMessageFactory.createAIMessage(
-                content = "I can help with a wide variety of topics - from coding and technical questions to creative writing, analysis, math problems, or just friendly chat. What interests you?",
-                timestamp = LocalDateTime.now().minusMinutes(20),
-            )
-        )
-    )
+
+    /** 当前活跃会话 ID */
+    private var currentSessionId: String? = null
+
+    /** OpenCode REST 客户端 */
+    private val restClient = OpenCodeRestClient(getServerUrl())
+
+    /** 本地消息缓存（当前会话的消息） */
+    private val _messages = MutableStateFlow(emptyList<ChatMessage>())
+
+    /** 所有会话列表缓存 */
+    private val _allSessions = MutableStateFlow(emptyList<OpenCodeRestClient.OpenCodeSession>())
+
+    /** 服务器连接状态 */
+    private val _serverConnected = MutableStateFlow(false)
+
+    init {
+        // 启动时加载会话列表
+        loadSessions()
+    }
 
     fun getMessagesFlow(): Flow<List<ChatMessageDto>> {
         return _messages.map { messagesList -> messagesList.map(ChatMessage::toChatMessageDto) }
     }
 
+    fun getAllSessionsFlow(): Flow<List<OpenCodeRestClient.OpenCodeSession>> {
+        return _allSessions
+    }
+
+    fun getServerConnectedFlow(): Flow<Boolean> {
+        return _serverConnected
+    }
+
+    fun getCurrentSessionId(): String? = currentSessionId
+
+    /**
+     * 发送消息 - 优先使用 OpenCode Server，失败时回退到模拟模式
+     */
     suspend fun sendMessage(messageContent: String) {
         withContext(Dispatchers.IO) {
             try {
-                // Emits the user message to a chat list
-                _messages.value += chatMessageFactory.createUserMessage(messageContent)
-
-                // Simulate AI responding with streaming
-                simulateAIStreamingResponse(messageContent)
-            } catch (e: Exception) {
-                if (e is CancellationException) {
-                    // In case the message sending is canceled before a response is generated,
-                    // we remove a loading placeholder message
-                    _messages.value = _messages.value.filter { !it.isAIThinkingMessage() }
-
-                    throw e
-
+                val sessionId = currentSessionId ?: createNewSession()
+                if (sessionId == null) {
+                    // 无法连接到服务器，使用模拟模式
+                    simulateLocalResponse(messageContent)
+                    return@withContext
                 }
 
-                e.printStackTrace()
+                // 发送用户消息到本地缓存
+                _messages.value += chatMessageFactory.createUserMessage(messageContent)
+
+                // 调用 OpenCode Server 发送消息（流式）
+                val result = restClient.sendPromptAsync(sessionId, messageContent)
+                if (result.isFailure()) {
+                    // 服务器调用失败，回退到模拟模式
+                    simulateLocalResponse(messageContent)
+                }
+                // 流式响应通过 SSE 单独处理（在 BackendChatRepositoryRpcApi 中）
+            } catch (e: Exception) {
+                if (e is CancellationException) {
+                    _messages.value = _messages.value.filter { !it.isAIThinkingMessage() }
+                    throw e
+                }
+                // 任何异常都回退到模拟模式
+                simulateLocalResponse(messageContent)
             }
         }
     }
 
     /**
-     * 模拟 AI 流式响应
-     * 先发送 thinking 消息，然后逐字符流式输出最终回复
+     * 创建新会话
      */
+    suspend fun createNewSession(title: String? = null): String? {
+        val result = restClient.createSession(title)
+        if (result.isSuccess()) {
+            val sessionId = result.getOrThrow()
+            currentSessionId = sessionId
+            loadSessions()
+            loadMessages(sessionId)
+            return sessionId
+        }
+        return null
+    }
+
+    /**
+     * 切换会话
+     */
+    suspend fun switchSession(sessionId: String) {
+        val result = restClient.getSession(sessionId)
+        if (result.isSuccess()) {
+            currentSessionId = sessionId
+            loadMessages(sessionId)
+            loadSessions()
+        }
+    }
+
+    /**
+     * 删除会话
+     */
+    suspend fun deleteSession(sessionId: String) {
+        val result = restClient.deleteSession(sessionId)
+        if (result.isSuccess()) {
+            if (currentSessionId == sessionId) {
+                currentSessionId = null
+                _messages.value = emptyList()
+            }
+            loadSessions()
+        }
+    }
+
+    /**
+     * 重命名会话
+     */
+    suspend fun renameSession(sessionId: String, newTitle: String) {
+        val result = restClient.renameSession(sessionId, newTitle)
+        if (result.isSuccess()) {
+            loadSessions()
+        }
+    }
+
+    /**
+     * 获取所有会话
+     */
+    suspend fun loadSessions() {
+        val result = restClient.getAllSessions()
+        if (result.isSuccess()) {
+            _allSessions.value = result.getOrThrow()
+            _serverConnected.value = true
+        } else {
+            _serverConnected.value = false
+        }
+    }
+
+    /**
+     * 加载指定会话的消息
+     */
+    suspend fun loadMessages(sessionId: String) {
+        val result = restClient.getMessages(sessionId)
+        if (result.isSuccess()) {
+            val messages = result.getOrThrow().map { openCodeMsg ->
+                val isMy = openCodeMsg.role == "user"
+                ChatMessage(
+                    id = openCodeMsg.id,
+                    content = openCodeMsg.content,
+                    author = if (isMy) "Me" else "AI Buddy",
+                    isMyMessage = isMy,
+                    timestamp = LocalDateTime.parse(openCodeMsg.timestamp),
+                    type = if (openCodeMsg.type == "thinking") ChatMessage.ChatMessageType.AI_THINKING else ChatMessage.ChatMessageType.TEXT
+                )
+            }
+            _messages.value = messages
+            currentSessionId = sessionId
+        } else {
+            _messages.value = emptyList()
+        }
+    }
+
+    /**
+     * 回复权限请求
+     */
+    suspend fun replyPermission(permissionId: String, allow: Boolean) {
+        currentSessionId?.let { sessionId ->
+            restClient.replyPermission(sessionId, permissionId, allow)
+        }
+    }
+
+    /**
+     * 中止执行
+     */
+    suspend fun abortExecution() {
+        currentSessionId?.let { sessionId ->
+            restClient.abortExecution(sessionId)
+            _messages.value = _messages.value.filter { !it.isAIThinkingMessage() }
+        }
+    }
+
+    /**
+     * 获取服务器 URL（从配置读取，默认 localhost:8080）
+     */
+    private fun getServerUrl(): String {
+        // TODO: 从配置读取，暂时硬编码
+        return "http://localhost:8080"
+    }
+
+    /**
+     * 本地模拟模式（服务器不可用时的 fallback）
+     */
+    private suspend fun simulateLocalResponse(messageContent: String) {
+        _messages.value += chatMessageFactory.createUserMessage(messageContent)
+        simulateAIStreamingResponse(messageContent)
+    }
+
+    // 保留原有的模拟流式响应逻辑作为 fallback
     private suspend fun simulateAIStreamingResponse(userMessage: String) {
-        // 1. 创建 thinking 消息（推理过程）
         val thinkingMessage = chatMessageFactory
             .createAIThinkingMessage("Hmm, let me think about this...")
         _messages.value += thinkingMessage
 
-        // 模拟推理过程流式输出
         val reasoningSteps = listOf(
             "Analyzing the user's question...",
             "Considering relevant context and knowledge...",
@@ -97,32 +241,26 @@ class BackendChatRepositoryModel {
                 .map { if (it.id == thinkingMessage.id) updatedThinking else it }
         }
 
-        // 2. 创建最终回复消息（初始为空，准备流式填充）
         val responseContent = aiResponseGenerator.generateAIResponse(userMessage)
         val aiMessage = chatMessageFactory.createAIMessage(content = "")
         _messages.value = _messages.value
             .map { if (it.id == thinkingMessage.id) aiMessage else it }
 
-        // 3. 流式输出最终回复 - 按字符/词分块
         val chunks = chunkText(responseContent, 3..8)
         var accumulated = ""
 
         for (chunk in chunks) {
-            delay(50 + (0..100).random().toLong()) // 模拟网络延迟
+            delay(50 + (0..100).random().toLong())
             accumulated += chunk
             val updatedMessage = aiMessage.copy(content = accumulated)
             _messages.value = _messages.value
                 .map { if (it.id == aiMessage.id) updatedMessage else it }
         }
 
-        // 4. 最终确保完整内容
         _messages.value = _messages.value
             .map { if (it.id == aiMessage.id) aiMessage.copy(content = responseContent) else it }
     }
 
-    /**
-     * 将文本按随机长度分块，模拟真实流式输出
-     */
     private fun chunkText(text: String, chunkSizeRange: IntRange): List<String> {
         val chunks = mutableListOf<String>()
         var index = 0
