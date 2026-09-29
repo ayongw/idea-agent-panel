@@ -26,4 +26,10 @@ object ChatAppIcons {
     object Context {
         val remove: Icon = AllIcons.Actions.Cancel
     }
+
+    object Session {
+        val rename: Icon = AllIcons.Actions.EditSource
+        val delete: Icon = AllIcons.General.Remove
+        val duplicate: Icon = AllIcons.Actions.Copy
+    }
 }

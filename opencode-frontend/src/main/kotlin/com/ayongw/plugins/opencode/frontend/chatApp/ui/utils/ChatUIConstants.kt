@@ -55,4 +55,10 @@ object ChatUIConstants {
         const val FIELD_MAX_WIDTH = 400
         const val FIELD_COLUMNS = 32
     }
+
+    object SessionList {
+        const val ITEM_HEIGHT = 56
+        const val MIN_WIDTH = 240
+        const val PREF_WIDTH = 280
+    }
 }
