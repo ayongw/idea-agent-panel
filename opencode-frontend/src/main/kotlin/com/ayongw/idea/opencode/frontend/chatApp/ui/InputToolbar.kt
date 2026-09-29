@@ -116,8 +116,11 @@ class InputToolbar(
 
     private fun createMenuButton() = JButton().apply {
         isFocusable = false
+        isRequestFocusEnabled = false
         isBorderPainted = false
         isContentAreaFilled = false
+        isOpaque = false
+        border = JBUI.Borders.empty(JBUI.scale(2), JBUI.scale(6))
         font = JBFont.small()
         foreground = ChatAppColors.Text.disabled
         ButtonUtils.applyHoverEffect(this)
@@ -125,13 +128,8 @@ class InputToolbar(
 
     private fun updateLabels() {
         approvalButton.text = "${message(approvalMode.labelKey)} ▾"
-        approvalButton.toolTipText = message("chat.input.approval")
-
         modeButton.text = "${agents.firstOrNull { it.id == selectedAgentId }?.name ?: message("chat.input.mode")} ▾"
-        modeButton.toolTipText = message("chat.input.mode")
-
         modelButton.text = "${selectedModel?.name ?: message("chat.input.model")} ▾"
-        modelButton.toolTipText = message("chat.input.model")
 
         revalidate()
         repaint()
@@ -145,17 +143,20 @@ class InputToolbar(
     ) {
         val menu = JPopupMenu()
         if (items.isEmpty()) {
-            menu.add(JMenuItem(message("chat.input.mode")).apply { isEnabled = false })
-        }
-        items.forEach { (value, label) ->
-            menu.add(
-                JRadioButtonMenuItem(label, value == selected).apply {
-                    addActionListener { onSelect(value) }
-                }
-            )
+            menu.add(JMenuItem(message("chat.input.loading")).apply { isEnabled = false })
+        } else {
+            items.forEach { (value, label) ->
+                menu.add(
+                    JRadioButtonMenuItem(label, value == selected).apply {
+                        addActionListener { onSelect(value) }
+                    }
+                )
+            }
         }
         // 工具条在底部，菜单向上弹出
-        menu.show(anchor, 0, -menu.preferredSize.height)
+        menu.setSize(menu.preferredSize)
+        menu.setLocation(anchor.locationOnScreen.x, anchor.locationOnScreen.y - menu.height)
+        menu.isVisible = true
     }
 
     private fun message(key: String): String = OpencodeFrontendBundle.message(key)

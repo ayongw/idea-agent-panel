@@ -62,20 +62,28 @@ class PromptInput(
         sendButton = createSendButton()
 
         add(contextChipBar, BorderLayout.NORTH)
-        add(scrollPane, BorderLayout.CENTER)
-        add(createBottomBar(), BorderLayout.SOUTH)
+        add(createInputRow(), BorderLayout.CENTER)
+        add(createToolbarRow(), BorderLayout.SOUTH)
 
         setupKeyBindings()
     }
 
     /**
-     * 底部一行：左「审核类型 / 模式 / 模型」，右「发送」
+     * 输入框一行：文本区在左，发送按钮在右
      */
-    private fun createBottomBar() = JPanel(BorderLayout()).apply {
+    private fun createInputRow() = JPanel(BorderLayout(ChatUIConstants.Spacing.MEDIUM, 0)).apply {
+        isOpaque = false
+        add(scrollPane, BorderLayout.CENTER)
+        add(sendButton, BorderLayout.EAST)
+    }
+
+    /**
+     * 底部工具条一行：审核类型 / 模式 / 模型
+     */
+    private fun createToolbarRow() = JPanel(BorderLayout()).apply {
         isOpaque = false
         border = JBUI.Borders.emptyTop(JBUI.scale(ChatUIConstants.Spacing.MEDIUM))
         add(inputToolbar, BorderLayout.WEST)
-        add(sendButton, BorderLayout.EAST)
     }
 
     private fun setupAppearance() {
