@@ -20,6 +20,7 @@
 | v1.8 | 2026-09-29 | S4b 落地：`PendingPermissionDto` + `getPendingPermissionFlow` + 输入区权限确认条（三态回复闭环）；`replyPermission` 改为 `PermissionResponse`；ITest 补权限用例（本机未触发则跳过）；§6/§7/§9 回填 | agent |
 | v1.9 | 2026-09-29 | S4c：核对打包产物（`0.1.0.28.zip`：okhttp/okhttp-sse/okio 已打包、无 gson、`since-build=261`、新增类齐备）；README 依赖表与权限确认描述同步；S1–S5 全部阶段收口 | agent |
 | v1.10 | 2026-09-29 | S6 落地：工具调用/结果卡片化 —— 补抓 REST 工具部件实测契约（§4.7）；shared 新增 `ToolCallDto`；后端解析 `content[]` 的 `text`/`tool` 部件并一消息多气泡；`SessionStreamState` 消费 `session.tool.*` 就地更新卡片、执行终态收尾；前端工具卡片渲染与统一就地刷新；§2/§5.5/§5.7/§5.9/§6/§7/§9/§10 回填 | agent |
+| v1.11 | 2026-09-30 | S6b：实测 `GET /api/session/{id}/message` 的 `data[]` 为**最新在前**，对账/加载统一反转为「最早在前」（修复收到回复后列表看似被清空）；新增运行日志（事件流状态、REST 失败、会话加载与对账结果、流式入列），见 §5.10；消息区渲染稳定性修复见《TSD-07-主界面布局设计》§3.4 | agent |
 
 ---
 
@@ -357,6 +358,21 @@ sealed class OpenCodeEvent {
 | 用户中断（实测） | 本地先置 false 让「停止」即时生效；服务端随后补 `step.failed(aborted)` + `execution.interrupted`，不弹失败气泡，正文由 `reasoning/text.ended` 补全 |
 | permission 到达但 UI 未响应 | 由对账兜底补齐（事件可能丢）；回复后本地先收起卡片，UI 不会重复回复 |
 | 401/403 | 事件客户端标记 `UNAUTHORIZED` 并停止重连，交由设置页（凭据配置处）处理 |
+| **REST 消息顺序（实测）** | `GET /api/session/{id}/message` 的 `data[]` 为**最新在前**（下标 0 最新），而面板要求「最早在前」（与 SSE 追加顺序一致）→ 对账与 `loadMessages` 统一反转后再映射气泡（`toBubbles`） |
+| **本地回声气泡 id（实测）** | `POST /api/session/{id}/prompt` 返回 `Session.Inbox.User`，其 `data.id`（必填、`^msg_`）**与 `GET /message` 中该 user 消息的 id 是同一个**（已用 openapi + 抓包核对）→ 发送时就用它作为本地回声气泡 id，对账后无需换 key，消除「删掉重建」的闪烁。`/command` 的 200 响应未声明 schema，解析失败时回退本地 id |
+
+### 5.10 运行日志
+
+面板此前**无任何日志**（`idea.log` 中 `#com.ayongw` 计数为 0），线上问题只能靠猜。本阶段补齐关键节点日志（`com.intellij.openapi.diagnostic.Logger`，只记状态与数量，**不记账号密码**）：
+
+| 位置 | 级别 | 内容 |
+|---|---|---|
+| `OpenCodeEventClient` | INFO | 启动连接、连接成功（含 HTTP 码）、服务端断开、重连退避时长 |
+| `OpenCodeEventClient` | WARN | 认证失败（只记状态码 401/403）、连接失败（码 + 原因） |
+| `OpenCodeRestClient` | WARN | 非 2xx 与 IO 异常（method + path + code + 响应体前 200 字） |
+| `BackendChatRepositoryModel` | INFO | 事件流启动/重建、事件流状态变更、执行终态触发对账、发送消息（session/长度/命令名）、流式消息入列（新增条数 + 类型）、新建/切换/删除会话、加载会话消息与对账结果（REST 条数 → 气泡条数） |
+| `BackendChatRepositoryModel` | WARN | REST 失败（对账/加载/发送/会话操作，含失败原因）、无可用会话回退模拟响应 |
+| `ChatList` / `MessageItem`（**临时诊断，定位后移除**） | INFO | `[diag]` 前缀：`setMessages` 消息清单、布局后的容器/视口几何与各气泡 `bounds`、气泡创建信息、代码块高度换算 |
 
 ## 6. 变更文件清单
 
