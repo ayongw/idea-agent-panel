@@ -3,7 +3,9 @@
 package com.ayongw.idea.opencode.backend
 
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
+import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessageDto
+import com.ayongw.idea.opencode.shared.ModelDto
 import com.ayongw.idea.opencode.shared.ChatRepositoryRpcApi
 import com.ayongw.idea.opencode.shared.ContextFileDto
 import com.ayongw.idea.opencode.shared.ContextSelectionDto
@@ -83,7 +85,8 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
                     pendingPermission = null,
                     createdAt = toLocalDateTime(session.createdAtMillis),
                     updatedAt = toLocalDateTime(session.updatedAtMillis),
-                    contextFiles = emptyList()
+                    contextFiles = emptyList(),
+                    directory = session.directory
                 )
             }
         }
@@ -171,8 +174,36 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
         BackendChatRepositoryModel.getInstance(backendProject).updateServerConfig(serverUrl, username, password)
     }
 
+    override suspend fun listAgents(projectId: ProjectId): List<AgentDto> {
+        val backendProject = projectId.findProjectOrNull() ?: return emptyList()
+        return BackendChatRepositoryModel.getInstance(backendProject).listAgents()
+            .filter { !it.hidden && it.mode == PRIMARY_AGENT_MODE }
+            .map { AgentDto(id = it.id, name = it.name, description = it.description, mode = it.mode) }
+    }
+
+    override suspend fun listModels(projectId: ProjectId): List<ModelDto> {
+        val backendProject = projectId.findProjectOrNull() ?: return emptyList()
+        return BackendChatRepositoryModel.getInstance(backendProject).listModels()
+            .map { ModelDto(id = it.id, modelID = it.modelID, providerID = it.providerID, name = it.name) }
+    }
+
+    override suspend fun switchAgent(projectId: ProjectId, sessionId: String, agentId: String) {
+        val backendProject = projectId.findProjectOrNull() ?: return
+        BackendChatRepositoryModel.getInstance(backendProject).switchAgent(sessionId, agentId)
+    }
+
+    override suspend fun switchModel(projectId: ProjectId, sessionId: String, providerID: String, modelID: String) {
+        val backendProject = projectId.findProjectOrNull() ?: return
+        BackendChatRepositoryModel.getInstance(backendProject).switchModel(sessionId, providerID, modelID)
+    }
+
     private fun parsePort(serverUrl: String): Int? =
         runCatching { java.net.URI(serverUrl).port }.getOrNull()?.takeIf { it > 0 }
+
+    private companion object {
+        /** 仅暴露可作为「模式」切换的 primary agent（subagent 由 @ 调用，不适合作为模式） */
+        const val PRIMARY_AGENT_MODE = "primary"
+    }
 
     private fun toLocalDateTime(epochMillis: Long): java.time.LocalDateTime =
         java.time.Instant.ofEpochMilli(epochMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()

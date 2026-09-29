@@ -135,6 +135,44 @@ class OpenCodeRestClient(
         return executeRequest("POST", "/session/${encodePath(sessionId)}/interrupt", "{}") { Unit }
     }
 
+    /**
+     * 列出可用 Agent（模式）
+     * GET /api/agent
+     */
+    suspend fun listAgents(): Result<List<OpenCodeAgent>> {
+        return executeRequest("GET", "/agent") { json ->
+            parseDataObjects(json).map { parseAgent(it) }
+        }
+    }
+
+    /**
+     * 列出可用模型
+     * GET /api/model
+     */
+    suspend fun listModels(): Result<List<OpenCodeModel>> {
+        return executeRequest("GET", "/model") { json ->
+            parseDataObjects(json).map { parseModel(it) }
+        }
+    }
+
+    /**
+     * 切换会话 Agent（模式）
+     * POST /api/session/{sessionID}/agent
+     */
+    suspend fun switchAgent(sessionId: String, agentId: String): Result<Unit> {
+        val body = gson.toJson(mapOf("agent" to agentId))
+        return executeRequest("POST", "/session/${encodePath(sessionId)}/agent", body) { Unit }
+    }
+
+    /**
+     * 切换会话模型
+     * POST /api/session/{sessionID}/model
+     */
+    suspend fun switchModel(sessionId: String, providerId: String, modelId: String): Result<Unit> {
+        val body = gson.toJson(mapOf("model" to mapOf("providerID" to providerId, "id" to modelId)))
+        return executeRequest("POST", "/session/${encodePath(sessionId)}/model", body) { Unit }
+    }
+
     // ==================== 认证与请求 ====================
 
     /**
@@ -240,6 +278,21 @@ class OpenCodeRestClient(
             .joinToString("\n")
     }
 
+    private fun parseAgent(agent: JsonObject): OpenCodeAgent = OpenCodeAgent(
+        id = agent.string("id").orEmpty(),
+        name = agent.string("name").orEmpty(),
+        description = agent.string("description"),
+        mode = agent.string("mode"),
+        hidden = agent.get("hidden")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false
+    )
+
+    private fun parseModel(model: JsonObject): OpenCodeModel = OpenCodeModel(
+        id = model.string("id").orEmpty(),
+        modelID = model.string("modelID").orEmpty(),
+        providerID = model.string("providerID").orEmpty(),
+        name = model.string("name").orEmpty()
+    )
+
     private fun encodePath(segment: String): String = URLEncoder.encode(segment, "UTF-8")
 
     private fun JsonObject.string(name: String): String? =
@@ -272,6 +325,23 @@ class OpenCodeRestClient(
         val role: String,
         val content: String,
         val createdMillis: Long
+    )
+
+    /** Agent（模式），对应 v2 Agent.Info */
+    data class OpenCodeAgent(
+        val id: String,
+        val name: String,
+        val description: String? = null,
+        val mode: String? = null,
+        val hidden: Boolean = false
+    )
+
+    /** 模型，对应 v2 Model.Info */
+    data class OpenCodeModel(
+        val id: String,
+        val modelID: String,
+        val providerID: String,
+        val name: String
     )
 
     sealed class Result<out T> {

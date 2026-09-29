@@ -1,7 +1,9 @@
 package com.ayongw.idea.opencode.frontend.chatApp.viewmodel
 
 import kotlinx.coroutines.flow.StateFlow
+import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessage
+import com.ayongw.idea.opencode.shared.ModelDto
 import com.ayongw.idea.opencode.shared.SessionStateDto
 
 /**
@@ -79,4 +81,24 @@ interface ChatRepositoryApi {
      * Aborts the current execution.
      */
     suspend fun abortExecution()
+
+    /**
+     * Lists available agents (modes) from the server.
+     */
+    suspend fun listAgents(): List<AgentDto>
+
+    /**
+     * Lists available models from the server.
+     */
+    suspend fun listModels(): List<ModelDto>
+
+    /**
+     * Switches the agent (mode) of the current session.
+     */
+    suspend fun switchAgent(agentId: String)
+
+    /**
+     * Switches the model of the current session.
+     */
+    suspend fun switchModel(providerID: String, modelID: String)
 }

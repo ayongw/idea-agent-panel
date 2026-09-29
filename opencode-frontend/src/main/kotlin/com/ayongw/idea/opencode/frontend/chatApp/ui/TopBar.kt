@@ -2,11 +2,12 @@ package com.ayongw.idea.opencode.frontend.chatApp.ui
 
 import com.intellij.util.ui.JBUI
 import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
+import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ButtonUtils
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppColors
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppIcons
-import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ButtonUtils
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatUIConstants
 import com.ayongw.idea.opencode.frontend.chatApp.viewmodel.ChatViewModel
+import java.awt.Component
 import java.awt.Dimension
 import java.awt.event.ActionEvent
 import java.awt.event.InputEvent
@@ -24,13 +25,29 @@ import javax.swing.border.CompoundBorder
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 
-class ChatToolbar(private val viewModel: ChatViewModel) : JPanel() {
+/**
+ * 顶部区域：会话 tab 栏 + 可展开的搜索栏
+ */
+class TopBar(
+    private val viewModel: ChatViewModel,
+    onShowAllSessions: (Component) -> Unit,
+    onOpenSettings: () -> Unit
+) : JPanel() {
+
     private val searchBar: ChatSearchBar
+    val sessionTabs: SessionTabs
 
     init {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
 
-        val headerPanel = ChatHeader(onToggleSearch = { visible -> toggleSearch(visible) })
+        sessionTabs = SessionTabs(
+            onSelect = { sessionId -> viewModel.switchSession(sessionId) },
+            onClose = { sessionId -> viewModel.closeSessionTab(sessionId) },
+            onNewSession = { viewModel.createSession(null) },
+            onShowAllSessions = onShowAllSessions,
+            onToggleSearch = { visible -> toggleSearch(visible) },
+            onOpenSettings = onOpenSettings
+        )
 
         searchBar = ChatSearchBar(
             onSearchQueryChange = { query -> viewModel.searchChatMessagesHandler().onSearchQuery(query) },
@@ -42,7 +59,7 @@ class ChatToolbar(private val viewModel: ChatViewModel) : JPanel() {
             }
         )
 
-        add(headerPanel)
+        add(sessionTabs)
         add(searchBar)
     }
 

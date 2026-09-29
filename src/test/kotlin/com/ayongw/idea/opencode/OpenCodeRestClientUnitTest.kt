@@ -143,6 +143,64 @@ class OpenCodeRestClientUnitTest {
     }
 
     @Test
+    fun agentsAreParsedFromDataEnvelope() = runBlocking {
+        routes["/api/agent"] = """
+            {"location":{"directory":"/tmp/proj"},"data":[
+              {"id":"build","name":"Build","description":"默认 agent","mode":"primary","hidden":false},
+              {"id":"plan","name":"Plan","mode":"primary","hidden":true}]}
+        """.trimIndent()
+
+        val agents = client().listAgents().getOrThrow()
+
+        assertEquals("/api/agent", lastPath)
+        assertEquals("opencode:secret", decodeBasic(lastAuthHeader!!))
+        assertEquals(2, agents.size)
+        assertEquals("build", agents[0].id)
+        assertEquals("Build", agents[0].name)
+        assertEquals("primary", agents[0].mode)
+        assertTrue("hidden 字段应被解析", agents[1].hidden)
+    }
+
+    @Test
+    fun modelsAreParsedFromDataEnvelope() = runBlocking {
+        routes["/api/model"] = """
+            {"data":[{"id":"claude-sonnet-5.5","modelID":"claude-sonnet-5.5",
+            "providerID":"github-copilot","name":"Claude Sonnet 5.5"}]}
+        """.trimIndent()
+
+        val models = client().listModels().getOrThrow()
+
+        assertEquals("/api/model", lastPath)
+        assertEquals(1, models.size)
+        assertEquals("claude-sonnet-5.5", models[0].modelID)
+        assertEquals("github-copilot", models[0].providerID)
+        assertEquals("Claude Sonnet 5.5", models[0].name)
+    }
+
+    @Test
+    fun switchAgentPostsAgentId() = runBlocking {
+        routes["/api/session/ses_1/agent"] = """{"data":{}}"""
+
+        client().switchAgent("ses_1", "plan")
+
+        assertEquals("POST", lastMethod)
+        assertEquals("/api/session/ses_1/agent", lastPath)
+        assertTrue(lastBody!!.contains("\"agent\":\"plan\""))
+    }
+
+    @Test
+    fun switchModelPostsModelRef() = runBlocking {
+        routes["/api/session/ses_1/model"] = """{"data":{}}"""
+
+        client().switchModel("ses_1", "github-copilot", "claude-sonnet-5.5")
+
+        assertEquals("POST", lastMethod)
+        assertEquals("/api/session/ses_1/model", lastPath)
+        assertTrue(lastBody!!.contains("\"providerID\":\"github-copilot\""))
+        assertTrue(lastBody!!.contains("\"id\":\"claude-sonnet-5.5\""))
+    }
+
+    @Test
     fun messagesAreParsedFromUnionTypes() = runBlocking {
         routes["/api/session/ses_1/message"] = """
             {"data":[

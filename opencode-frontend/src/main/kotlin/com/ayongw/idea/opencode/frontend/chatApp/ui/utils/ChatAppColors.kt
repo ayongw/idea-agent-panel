@@ -82,6 +82,11 @@ object ChatAppColors {
         val border: Color = JBColor.border()
     }
 
+    object Tab {
+        val selectedBackground: Color = JBColor(Color(232, 241, 254), Color(45, 55, 70))
+        val selectedIndicator: Color = JBColor(Color(66, 165, 245), Color(100, 181, 246))
+    }
+
     object Context {
         val autoFile: Color = JBColor(Color(200, 230, 255), Color(40, 60, 80))
         val explicitFile: Color = JBColor(Color(255, 230, 200), Color(80, 60, 40))

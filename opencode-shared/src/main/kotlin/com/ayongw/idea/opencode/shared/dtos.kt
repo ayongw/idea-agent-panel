@@ -88,7 +88,9 @@ data class SessionStateDto(
     val createdAt: LocalDateTime,
     @Serializable(with = LocalDateTimeSerializer::class)
     val updatedAt: LocalDateTime,
-    val contextFiles: List<ContextFileDto>
+    val contextFiles: List<ContextFileDto>,
+    /** 会话所属工作目录（opencode v2 session.location.directory），用于按工作区过滤 */
+    val directory: String? = null
 )
 
 fun SessionStateDto.toSessionState(): SessionState {

@@ -1,66 +1,70 @@
 package com.ayongw.idea.opencode.frontend.chatApp
 
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
-import com.intellij.ui.JBSplitter
+import com.intellij.openapi.ui.popup.JBPopup
+import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.combine
 import com.ayongw.idea.opencode.frontend.CoroutineScopeHolder
+import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
 import com.ayongw.idea.opencode.frontend.chatApp.ui.*
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppColors
+import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatUIConstants
+import com.ayongw.idea.opencode.frontend.chatApp.viewmodel.ApprovalMode
 import com.ayongw.idea.opencode.frontend.chatApp.viewmodel.ChatViewModel
-import java.awt.*
-import javax.swing.*
+import com.ayongw.idea.opencode.frontend.settings.OpenCodeSettingsConfigurable
+import com.ayongw.idea.opencode.shared.AgentDto
+import com.ayongw.idea.opencode.shared.ModelDto
+import com.ayongw.idea.opencode.shared.SessionStateDto
+import java.awt.BorderLayout
+import java.awt.Component
+import java.awt.Dimension
+import javax.swing.JPanel
 
 class OpenCodeChatApp(
     private val viewModel: ChatViewModel,
     private val project: Project
 ) : JPanel() {
 
-    private val toolbar: ChatToolbar
-    private val sessionList: SessionList
+    private val topBar: TopBar
     private val chatList: ChatList
     private val contextChipBar: ContextChipBar
+    private val inputToolbar: InputToolbar
     private val promptInput: PromptInput
 
-    private val splitter = JBSplitter(false, 0.22f)
+    private var allSessions: List<SessionStateDto> = emptyList()
+    private var allSessionsPopup: JBPopup? = null
 
     init {
         setupAppearance()
 
         contextChipBar = ContextChipBar()
-        toolbar = ChatToolbar(viewModel)
-        sessionList = SessionList(
-            project = project,
-            onSessionClick = { sessionId -> viewModel.switchSession(sessionId) },
-            onNewSession = { viewModel.createSession() },
-            onRenameSession = { sessionId, newTitle -> viewModel.renameSession(sessionId, newTitle) },
-            onDeleteSession = { sessionId -> viewModel.deleteSession(sessionId) }
+        topBar = TopBar(
+            viewModel = viewModel,
+            onShowAllSessions = { anchor -> showAllSessionsPopup(anchor) },
+            onOpenSettings = { openSettings() }
+        )
+        inputToolbar = InputToolbar(
+            onApprovalModeSelected = { mode -> viewModel.setApprovalMode(mode) },
+            onAgentSelected = { agent -> viewModel.switchAgent(agent.id) },
+            onModelSelected = { model -> viewModel.switchModel(model) },
+            onBeforeMenuOpen = { viewModel.loadAgentsAndModels() }
         )
         chatList = ChatList(project)
         promptInput = PromptInput(
             onInputChanged = { text -> viewModel.onPromptInputChanged(text) },
             onSend = { _ -> viewModel.onSendMessage() },
             onStop = { _ -> viewModel.onAbortSendingMessage() },
-            contextChipBar = contextChipBar
+            contextChipBar = contextChipBar,
+            inputToolbar = inputToolbar
         )
 
-        // 右侧面板：工具栏 + 消息列表 + 输入区
-        val rightPanel = JPanel(BorderLayout()).apply {
-            add(toolbar, BorderLayout.NORTH)
-            add(chatList, BorderLayout.CENTER)
-            add(promptInput, BorderLayout.SOUTH)
-        }
-
-        // 左侧面板：会话列表
-        val leftPanel = JPanel(BorderLayout()).apply {
-            add(sessionList, BorderLayout.CENTER)
-        }
-
-        splitter.firstComponent = leftPanel
-        splitter.secondComponent = rightPanel
-        splitter.setHonorComponentsMinimumSize(true)
-
-        add(splitter, BorderLayout.CENTER)
+        add(topBar, BorderLayout.NORTH)
+        add(chatList, BorderLayout.CENTER)
+        add(promptInput, BorderLayout.SOUTH)
 
         subscribeToViewModelUpdates()
     }
@@ -68,6 +72,60 @@ class OpenCodeChatApp(
     private fun setupAppearance() {
         layout = BorderLayout()
         background = ChatAppColors.Panel.background
+    }
+
+    /**
+     * 当前工作区内的会话（按 opencode session.location.directory 过滤）
+     */
+    private fun workspaceSessions(): List<SessionStateDto> {
+        val basePath = project.basePath
+        return allSessions.filter { it.directory == null || basePath == null || it.directory == basePath }
+    }
+
+    /**
+     * 「全部会话」弹窗：查看当前工作区内的所有会话
+     */
+    private fun showAllSessionsPopup(anchor: Component) {
+        allSessionsPopup?.cancel()
+        allSessionsPopup = null
+
+        val sessionList = SessionList(
+            project = project,
+            onSessionClick = { sessionId ->
+                allSessionsPopup?.cancel()
+                viewModel.switchSession(sessionId)
+            },
+            onNewSession = {
+                allSessionsPopup?.cancel()
+                viewModel.createSession(null)
+            },
+            onRenameSession = { sessionId, newTitle -> viewModel.renameSession(sessionId, newTitle) },
+            onDeleteSession = { sessionId -> viewModel.deleteSession(sessionId) }
+        )
+        sessionList.updateSessions(workspaceSessions(), viewModel.currentSessionId.value)
+
+        val content = JPanel(BorderLayout()).apply {
+            preferredSize = Dimension(
+                JBUI.scale(ChatUIConstants.AllSessionsPopup.WIDTH),
+                JBUI.scale(ChatUIConstants.AllSessionsPopup.HEIGHT)
+            )
+            add(sessionList, BorderLayout.CENTER)
+        }
+
+        allSessionsPopup = JBPopupFactory.getInstance()
+            .createComponentPopupBuilder(content, null)
+            .setTitle(OpencodeFrontendBundle.message("chat.topbar.all.sessions"))
+            .setRequestFocus(true)
+            .setResizable(false)
+            .setMovable(false)
+            .setCancelOnClickOutside(true)
+            .createPopup()
+
+        allSessionsPopup?.showUnderneathOf(anchor)
+    }
+
+    private fun openSettings() {
+        ShowSettingsUtil.getInstance().showSettingsDialog(project, OpenCodeSettingsConfigurable::class.java)
     }
 
     private fun subscribeToViewModelUpdates() {
@@ -90,7 +148,7 @@ class OpenCodeChatApp(
         coroutineScope.launch {
             viewModel.searchChatMessagesHandler().searchStateFlow.collect { searchState ->
                 ApplicationManager.getApplication().invokeLater {
-                    toolbar.updateSearchState(searchState)
+                    topBar.updateSearchState(searchState)
                     chatList.updateSearchHighlights(searchState)
 
                     val currentResultId = searchState.currentSelectedSearchResultId
@@ -101,20 +159,51 @@ class OpenCodeChatApp(
             }
         }
 
-        // 同步会话列表
+        // 顶部：已打开会话 tab
         coroutineScope.launch {
-            viewModel.allSessionsFlow.collect { sessions ->
+            combine(
+                viewModel.allSessionsFlow,
+                viewModel.openedSessionIds,
+                viewModel.currentSessionId
+            ) { sessions, openedIds, currentSessionId ->
+                Triple(sessions, openedIds, currentSessionId)
+            }.collect { (sessions, openedIds, currentSessionId) ->
+                allSessions = sessions
                 ApplicationManager.getApplication().invokeLater {
-                    sessionList.updateSessions(sessions, viewModel.currentSessionId.value)
+                    topBar.sessionTabs.update(sessions, openedIds, currentSessionId)
                 }
             }
         }
 
-        // 同步服务器连接状态
+        // 底部：审核类型 / 模式 / 模型
         coroutineScope.launch {
-            viewModel.serverConnectedFlow.collect { connected ->
-                // TODO: 显示连接状态指示器
+            combine(
+                viewModel.approvalMode,
+                viewModel.agentsFlow,
+                viewModel.selectedAgentId,
+                viewModel.modelsFlow,
+                viewModel.selectedModel
+            ) { approvalMode, agents, selectedAgentId, models, selectedModel ->
+                InputToolbarState(approvalMode, agents, selectedAgentId, models, selectedModel)
+            }.collect { state ->
+                ApplicationManager.getApplication().invokeLater {
+                    inputToolbar.update(
+                        approvalMode = state.approvalMode,
+                        agents = state.agents,
+                        selectedAgentId = state.selectedAgentId,
+                        models = state.models,
+                        selectedModel = state.selectedModel
+                    )
+                }
             }
         }
     }
+
+    private data class InputToolbarState(
+        val approvalMode: ApprovalMode,
+        val agents: List<AgentDto>,
+        val selectedAgentId: String?,
+        val models: List<ModelDto>,
+        val selectedModel: ModelDto?
+    )
 }

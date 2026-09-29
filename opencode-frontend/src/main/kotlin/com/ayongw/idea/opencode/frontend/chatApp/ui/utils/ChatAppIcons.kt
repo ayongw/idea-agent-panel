@@ -13,6 +13,13 @@ object ChatAppIcons {
         val close: Icon = AllIcons.Actions.Cancel
     }
 
+    object TopBar {
+        val newSession: Icon = AllIcons.General.Add
+        val allSessions: Icon = AllIcons.Vcs.History
+        val settings: Icon = AllIcons.General.Settings
+        val closeTab: Icon = AllIcons.Actions.Close
+    }
+
     object Search {
         val previous: Icon = AllIcons.Actions.PreviousOccurence
         val next: Icon = AllIcons.Actions.NextOccurence

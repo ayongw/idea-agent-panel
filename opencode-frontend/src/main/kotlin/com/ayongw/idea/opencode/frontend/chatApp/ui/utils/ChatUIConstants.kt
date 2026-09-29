@@ -62,6 +62,19 @@ object ChatUIConstants {
         const val PREF_WIDTH = 280
     }
 
+    object TopBar {
+        const val TAB_HEIGHT = 30
+        const val TAB_MAX_WIDTH = 220
+        const val TAB_TITLE_MAX_CHARS = 24
+        const val TAB_INDICATOR_THICKNESS = 2
+        const val TAB_CLOSE_BUTTON_SIZE = 18
+    }
+
+    object AllSessionsPopup {
+        const val WIDTH = 400
+        const val HEIGHT = 460
+    }
+
     object LargeContent {
         const val MAX_TEXT_LENGTH = 10 * 1024 // 10KB
         const val LINES_PER_PAGE = 200

@@ -3,7 +3,9 @@ package com.ayongw.idea.opencode.frontend.chatApp.viewmodel
 import com.intellij.openapi.Disposable
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessage
+import com.ayongw.idea.opencode.shared.ModelDto
 import com.ayongw.idea.opencode.shared.SessionStateDto
 
 interface ChatViewModelApi : Disposable {
@@ -30,6 +32,36 @@ interface ChatViewModelApi : Disposable {
     fun deleteSession(sessionId: String)
 
     fun renameSession(sessionId: String, newTitle: String)
+
+    /** 顶部已打开会话（tab）顺序 */
+    val openedSessionIds: StateFlow<List<String>>
+
+    /** 关闭会话 tab（仅关闭视图，不删除会话） */
+    fun closeSessionTab(sessionId: String)
+
+    /** 可用 Agent（模式）列表 */
+    val agentsFlow: StateFlow<List<AgentDto>>
+
+    /** 可用模型列表 */
+    val modelsFlow: StateFlow<List<ModelDto>>
+
+    /** 当前选中的 Agent（模式） */
+    val selectedAgentId: StateFlow<String?>
+
+    /** 当前选中的模型 */
+    val selectedModel: StateFlow<ModelDto?>
+
+    /** 审核类型（本地状态） */
+    val approvalMode: StateFlow<ApprovalMode>
+
+    /** 拉取 Agent/模型列表（打开底部下拉时调用） */
+    fun loadAgentsAndModels()
+
+    fun switchAgent(agentId: String)
+
+    fun switchModel(model: ModelDto)
+
+    fun setApprovalMode(mode: ApprovalMode)
 }
 
 class ChatViewModel(
@@ -72,6 +104,24 @@ class ChatViewModel(
     }
 
     private val _currentSessionId = MutableStateFlow<String?>(null)
+
+    private val _openedSessionIds = MutableStateFlow(emptyList<String>())
+    override val openedSessionIds: StateFlow<List<String>> = _openedSessionIds.asStateFlow()
+
+    private val _agentsFlow = MutableStateFlow(emptyList<AgentDto>())
+    override val agentsFlow: StateFlow<List<AgentDto>> = _agentsFlow.asStateFlow()
+
+    private val _modelsFlow = MutableStateFlow(emptyList<ModelDto>())
+    override val modelsFlow: StateFlow<List<ModelDto>> = _modelsFlow.asStateFlow()
+
+    private val _selectedAgentId = MutableStateFlow<String?>(null)
+    override val selectedAgentId: StateFlow<String?> = _selectedAgentId.asStateFlow()
+
+    private val _selectedModel = MutableStateFlow<ModelDto?>(null)
+    override val selectedModel: StateFlow<ModelDto?> = _selectedModel.asStateFlow()
+
+    private val _approvalMode = MutableStateFlow(ApprovalMode.AUTO)
+    override val approvalMode: StateFlow<ApprovalMode> = _approvalMode.asStateFlow()
 
     override fun onPromptInputChanged(input: String) {
         val currentPromptInputState = _promptInputState.value
@@ -117,14 +167,61 @@ class ChatViewModel(
 
     override fun createSession(initialTitle: String?) {
         coroutineScope.launch {
-            repository.createSession(initialTitle)
+            val sessionId = repository.createSession(initialTitle)
+            openTab(sessionId)
         }
     }
 
     override fun switchSession(sessionId: String) {
         coroutineScope.launch {
             repository.switchSession(sessionId)
+            openTab(sessionId)
         }
+    }
+
+    override fun closeSessionTab(sessionId: String) {
+        _openedSessionIds.value = _openedSessionIds.value - sessionId
+    }
+
+    private fun openTab(sessionId: String) {
+        val opened = _openedSessionIds.value
+        if (opened.contains(sessionId)) return
+        _openedSessionIds.value = opened + sessionId
+    }
+
+    override fun loadAgentsAndModels() {
+        coroutineScope.launch {
+            runCatching { repository.listAgents() }.onSuccess { agents ->
+                _agentsFlow.value = agents
+                if (_selectedAgentId.value == null) {
+                    _selectedAgentId.value = agents.firstOrNull()?.id
+                }
+            }
+            runCatching { repository.listModels() }.onSuccess { models ->
+                _modelsFlow.value = models
+                if (_selectedModel.value == null) {
+                    _selectedModel.value = models.firstOrNull()
+                }
+            }
+        }
+    }
+
+    override fun switchAgent(agentId: String) {
+        coroutineScope.launch {
+            runCatching { repository.switchAgent(agentId) }
+                .onSuccess { _selectedAgentId.value = agentId }
+        }
+    }
+
+    override fun switchModel(model: ModelDto) {
+        coroutineScope.launch {
+            runCatching { repository.switchModel(model.providerID, model.modelID) }
+                .onSuccess { _selectedModel.value = model }
+        }
+    }
+
+    override fun setApprovalMode(mode: ApprovalMode) {
+        _approvalMode.value = mode
     }
 
     override fun deleteSession(sessionId: String) {

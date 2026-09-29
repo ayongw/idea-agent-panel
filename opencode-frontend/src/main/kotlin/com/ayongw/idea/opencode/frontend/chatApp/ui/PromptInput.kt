@@ -39,7 +39,8 @@ class PromptInput(
     private val onSend: (String) -> Unit,
     private val onStop: (String) -> Unit,
     private val onHistorySelect: (String) -> Unit = {},
-    private val contextChipBar: ContextChipBar
+    private val contextChipBar: ContextChipBar,
+    private val inputToolbar: InputToolbar
 ) : JPanel() {
 
     private val textArea: JBTextArea
@@ -60,11 +61,21 @@ class PromptInput(
         scrollPane = createScrollPane(textArea)
         sendButton = createSendButton()
 
-        add(scrollPane, BorderLayout.CENTER)
         add(contextChipBar, BorderLayout.NORTH)
-        add(sendButton, BorderLayout.EAST)
+        add(scrollPane, BorderLayout.CENTER)
+        add(createBottomBar(), BorderLayout.SOUTH)
 
         setupKeyBindings()
+    }
+
+    /**
+     * 底部一行：左「审核类型 / 模式 / 模型」，右「发送」
+     */
+    private fun createBottomBar() = JPanel(BorderLayout()).apply {
+        isOpaque = false
+        border = JBUI.Borders.emptyTop(JBUI.scale(ChatUIConstants.Spacing.MEDIUM))
+        add(inputToolbar, BorderLayout.WEST)
+        add(sendButton, BorderLayout.EAST)
     }
 
     private fun setupAppearance() {

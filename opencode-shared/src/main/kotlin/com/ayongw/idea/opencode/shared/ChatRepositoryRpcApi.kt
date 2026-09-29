@@ -118,6 +118,26 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
      * @param password Basic 认证密码，为空表示不鉴权
      */
     suspend fun updateServerConfig(projectId: ProjectId, serverUrl: String, username: String, password: String)
+
+    /**
+     * 列出可用 Agent（模式），对应 v2 GET /api/agent
+     */
+    suspend fun listAgents(projectId: ProjectId): List<AgentDto>
+
+    /**
+     * 列出可用模型，对应 v2 GET /api/model
+     */
+    suspend fun listModels(projectId: ProjectId): List<ModelDto>
+
+    /**
+     * 切换当前会话的 Agent（模式），对应 v2 POST /api/session/{sessionID}/agent
+     */
+    suspend fun switchAgent(projectId: ProjectId, sessionId: String, agentId: String)
+
+    /**
+     * 切换当前会话的模型，对应 v2 POST /api/session/{sessionID}/model
+     */
+    suspend fun switchModel(projectId: ProjectId, sessionId: String, providerID: String, modelID: String)
 }
 
 /** Server 连接信息 */

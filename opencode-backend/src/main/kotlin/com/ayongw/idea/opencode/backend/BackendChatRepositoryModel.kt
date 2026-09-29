@@ -253,6 +253,30 @@ class BackendChatRepositoryModel {
     fun getServerUrl(): String = serverUrl
 
     /**
+     * 列出可用 Agent（模式）
+     */
+    suspend fun listAgents(): List<OpenCodeRestClient.OpenCodeAgent> = restClient.listAgents().getOrThrow()
+
+    /**
+     * 列出可用模型
+     */
+    suspend fun listModels(): List<OpenCodeRestClient.OpenCodeModel> = restClient.listModels().getOrThrow()
+
+    /**
+     * 切换指定会话的 Agent（模式）
+     */
+    suspend fun switchAgent(sessionId: String, agentId: String) {
+        restClient.switchAgent(sessionId, agentId).getOrThrow()
+    }
+
+    /**
+     * 切换指定会话的模型
+     */
+    suspend fun switchModel(sessionId: String, providerId: String, modelId: String) {
+        restClient.switchModel(sessionId, providerId, modelId).getOrThrow()
+    }
+
+    /**
      * 本地模拟模式（服务器不可用时的 fallback）
      */
     private suspend fun simulateLocalResponse(messageContent: String) {

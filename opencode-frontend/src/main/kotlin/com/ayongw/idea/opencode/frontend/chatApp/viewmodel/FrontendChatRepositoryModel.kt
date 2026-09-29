@@ -16,8 +16,10 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import com.ayongw.idea.opencode.frontend.settings.OpenCodeSettingsState
+import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ChatRepositoryRpcApi
+import com.ayongw.idea.opencode.shared.ModelDto
 import com.ayongw.idea.opencode.shared.PermissionResponse
 import com.ayongw.idea.opencode.shared.SessionStateDto
 import com.ayongw.idea.opencode.shared.toChatMessage
@@ -92,6 +94,24 @@ class FrontendChatRepositoryModel(
     override suspend fun abortExecution() {
         _currentSessionId.value?.let { sessionId ->
             ChatRepositoryRpcApi.getInstance().abortExecution(project.projectId(), sessionId)
+        }
+    }
+
+    override suspend fun listAgents(): List<AgentDto> =
+        ChatRepositoryRpcApi.getInstance().listAgents(project.projectId())
+
+    override suspend fun listModels(): List<ModelDto> =
+        ChatRepositoryRpcApi.getInstance().listModels(project.projectId())
+
+    override suspend fun switchAgent(agentId: String) {
+        _currentSessionId.value?.let { sessionId ->
+            ChatRepositoryRpcApi.getInstance().switchAgent(project.projectId(), sessionId, agentId)
+        }
+    }
+
+    override suspend fun switchModel(providerID: String, modelID: String) {
+        _currentSessionId.value?.let { sessionId ->
+            ChatRepositoryRpcApi.getInstance().switchModel(project.projectId(), sessionId, providerID, modelID)
         }
     }
 
