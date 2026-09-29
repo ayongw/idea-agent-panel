@@ -9,6 +9,7 @@ import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ButtonUtils
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppColors
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppIcons
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatUIConstants
+import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.SessionTitles
 import com.ayongw.idea.opencode.shared.SessionStateDto
 import java.awt.BorderLayout
 import java.awt.Component
@@ -129,7 +130,7 @@ class SessionTabs(
      */
     fun update(sessions: List<SessionStateDto>, openedIds: List<String>, currentSessionId: String?) {
         openedSessionIds = openedIds
-        val titleById = sessions.associate { it.sessionId to it.title }
+        val titleById = sessions.associate { it.sessionId to SessionTitles.display(it.title) }
 
         tabStrip.removeAll()
         if (openedIds.isEmpty()) {

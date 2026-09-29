@@ -14,6 +14,7 @@ import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ButtonUtils
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppColors
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppIcons
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatUIConstants
+import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.SessionTitles
 import com.ayongw.idea.opencode.shared.SessionState
 import com.ayongw.idea.opencode.shared.SessionStateDto
 import com.ayongw.idea.opencode.shared.toSessionState
@@ -306,7 +307,7 @@ data class SessionItem(
     val sessionState: SessionState
 ) {
     val sessionId: String = sessionState.sessionId
-    val title: String = sessionState.title
+    val title: String = SessionTitles.display(sessionState.title)
     val preview: String = sessionState.lastUserMessagePreview ?: sessionState.parts.lastOrNull()?.content ?: ""
     val timestamp: String = sessionState.updatedAt.format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))
     val messageCount: Int = sessionState.messageCount
