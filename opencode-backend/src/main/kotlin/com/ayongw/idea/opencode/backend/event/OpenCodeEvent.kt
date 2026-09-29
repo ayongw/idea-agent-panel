@@ -42,6 +42,9 @@ sealed class OpenCodeEvent {
 
     data class ExecutionFailed(val sessionId: String, val error: OpenCodeError) : OpenCodeEvent()
 
+    /** 用户中断（`session.interrupt`）触发，实测为中断链路的**终态事件**（不会有 `execution.failed/succeeded`） */
+    data class ExecutionInterrupted(val sessionId: String) : OpenCodeEvent()
+
     data class StepStarted(val sessionId: String, val assistantMessageId: String) : OpenCodeEvent()
 
     /** 仅表示「有流式活动」，不含文本 */

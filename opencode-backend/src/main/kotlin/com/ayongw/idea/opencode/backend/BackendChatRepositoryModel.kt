@@ -37,6 +37,9 @@ class BackendChatRepositoryModel : Disposable {
         /** 默认 Server 地址 */
         const val DEFAULT_SERVER_URL = "http://127.0.0.1:4096"
 
+        /** 助手消息展示名（与本地模拟模式一致） */
+        const val AI_AUTHOR = "AI Buddy"
+
         fun getInstance(project: Project): BackendChatRepositoryModel {
             return project.getService(BackendChatRepositoryModel::class.java)
         }
@@ -84,7 +87,7 @@ class BackendChatRepositoryModel : Disposable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** 消息工厂（用于本地模拟模式） */
-    private val chatMessageFactory = ChatMessageFactory("AI Buddy", "Super Engineer")
+    private val chatMessageFactory = ChatMessageFactory(AI_AUTHOR, "Super Engineer")
     private val aiResponseGenerator = AIResponseGenerator()
 
     init {
@@ -125,7 +128,8 @@ class BackendChatRepositoryModel : Disposable {
             baseUrl = serverUrl,
             username = username,
             password = password,
-            onEvent = ::handleOpenCodeEvent
+            onEvent = ::handleOpenCodeEvent,
+            onStateChanged = ::handleEventClientState
         )
         eventClient = client
         client.start()
@@ -152,7 +156,37 @@ class BackendChatRepositoryModel : Disposable {
         val shouldPublish = streamState.onEvent(event)
         _sessionRunning.value = streamState.isRunning
         if (shouldPublish) publishStreamMessages()
+        if (event.isExecutionTerminal()) reconcile(sessionId)
     }
+
+    /**
+     * 连接建立（含重连成功）：以服务端为准对账一次，补齐断线期间漏掉的事件。
+     */
+    private fun handleEventClientState(state: OpenCodeEventClient.State) {
+        if (state != OpenCodeEventClient.State.CONNECTED) return
+        currentSessionId?.let { reconcile(it) }
+    }
+
+    /**
+     * 对账兜底：拉服务端权威消息覆盖本地，并清空流式缓冲（执行已终结，内容已由 `ended` 校准）。
+     *
+     * 触发点：执行终态事件、重连成功。事件可能丢，REST 不会。
+     */
+    private fun reconcile(sessionId: String) {
+        scope.launch {
+            val messages = restClient.getMessages(sessionId).getOrNull() ?: return@launch
+            if (sessionId != currentSessionId) return@launch
+            streamState.reset()
+            _messages.value = messages.map(::toChatMessage)
+            loadSessions()
+        }
+    }
+
+    /** 执行终态：`succeeded` / `failed` / `interrupted` */
+    private fun OpenCodeEvent.isExecutionTerminal(): Boolean =
+        this is OpenCodeEvent.ExecutionSucceeded ||
+            this is OpenCodeEvent.ExecutionFailed ||
+            this is OpenCodeEvent.ExecutionInterrupted
 
     /**
      * 把流式消息按 id 合并进消息列表（新气泡追加、已有气泡就地更新），
@@ -175,6 +209,7 @@ class BackendChatRepositoryModel : Disposable {
         is OpenCodeEvent.ExecutionStarted -> sessionId
         is OpenCodeEvent.ExecutionSucceeded -> sessionId
         is OpenCodeEvent.ExecutionFailed -> sessionId
+        is OpenCodeEvent.ExecutionInterrupted -> sessionId
         is OpenCodeEvent.StepStarted -> sessionId
         is OpenCodeEvent.StepStreamed -> sessionId
         is OpenCodeEvent.StepEnded -> sessionId
@@ -308,24 +343,26 @@ class BackendChatRepositoryModel : Disposable {
         _sessionRunning.value = false
         val result = restClient.getMessages(sessionId)
         if (result.isSuccess()) {
-            val messages = result.getOrThrow().map { openCodeMsg ->
-                val isMy = openCodeMsg.role == "user"
-                ChatMessage(
-                    id = openCodeMsg.id,
-                    content = openCodeMsg.content,
-                    author = if (isMy) "Me" else "AI Buddy",
-                    isMyMessage = isMy,
-                    timestamp = Instant.ofEpochMilli(openCodeMsg.createdMillis)
-                        .atZone(ZoneId.systemDefault())
-                        .toLocalDateTime(),
-                    type = ChatMessage.ChatMessageType.TEXT
-                )
-            }
-            _messages.value = messages
+            _messages.value = result.getOrThrow().map(::toChatMessage)
             currentSessionId = sessionId
         } else {
             _messages.value = emptyList()
         }
+    }
+
+    /** opencode 消息 → 面板消息（user 与 assistant 的文本正文） */
+    private fun toChatMessage(openCodeMsg: OpenCodeRestClient.OpenCodeMessage): ChatMessage {
+        val isMy = openCodeMsg.role == "user"
+        return ChatMessage(
+            id = openCodeMsg.id,
+            content = openCodeMsg.content,
+            author = if (isMy) "Me" else AI_AUTHOR,
+            isMyMessage = isMy,
+            timestamp = Instant.ofEpochMilli(openCodeMsg.createdMillis)
+                .atZone(ZoneId.systemDefault())
+                .toLocalDateTime(),
+            type = ChatMessage.ChatMessageType.TEXT
+        )
     }
 
     /**
@@ -343,10 +380,9 @@ class BackendChatRepositoryModel : Disposable {
     suspend fun abortExecution() {
         currentSessionId?.let { sessionId ->
             restClient.interruptSession(sessionId)
-            // 中断：清空流式缓冲并立即退出「执行中」，避免事件缺失时 UI 卡在「停止」态
-            streamState.reset()
+            // 事件到达前先退出「执行中」，让「停止」立即生效；
+            // 缓冲不清空 —— 实测中断链路会补发 reasoning/text.ended 全文，由它校准即可
             _sessionRunning.value = false
-            _messages.value = _messages.value.filter { !it.isAIThinkingMessage() }
         }
     }
 

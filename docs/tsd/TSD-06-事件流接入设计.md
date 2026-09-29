@@ -16,6 +16,7 @@
 | v1.4 | 2026-09-29 | S3a 落地：新增 `SessionStreamState`（累积/校准/75 ms 节流/失败可见）与事件客户端生命周期；新增 `getSessionRunningFlow`；§5.5/§5.9 按实际实现收敛（放弃 delta DTO 与 `StreamingRenderController` 分发方案）；§1/§3/§6/§7/§9 同步 | agent |
 | v1.5 | 2026-09-29 | S3b 落地：`ChatList` 按消息 id 就地重渲染气泡、`MessageBubble.renderedContent`、`sessionRunningFlow` 接线（发送/停止切换 + 结束后刷新用量）、「停止」真实中断服务端执行；§6/§7/§9 回填 | agent |
 | v1.6 | 2026-09-29 | 补 `OpenCodeEventRealServerITest`（真实连接）；根 `build.gradle.kts` 的 `test` 默认排除 `*ITest`、`-Pit=true` 纳入；回填 §9.1 实跑结果（通过） | agent |
+| v1.7 | 2026-09-29 | S4a 落地：对账兜底（执行终态 + 重连成功触发 REST 覆盖）；实测中断收尾契约（`step.failed(aborted)` + `session.execution.interrupted`）并据此新增 `ExecutionInterrupted`、把 `aborted` 视为用户中断（不弹失败气泡）；关闭 §10 遗留 1 | agent |
 
 ---
 
@@ -113,7 +114,8 @@
 | `session.step.ended` | `sessionID`、`assistantMessageID`、`finish`、`rawFinish`、`cost`、`tokens{input,output,reasoning,cache{read,write}}`、`snapshot`、`files[]` | 有 |
 | `session.usage.updated` | `sessionID`、`cost`、`tokens{...}` | **无** |
 | `session.execution.succeeded` | `sessionID` | 有 |
-| `session.step.failed` | `sessionID`、`assistantMessageID`、`error{type,message,status}`、`snapshot`、`files[]` | 有 |
+| `session.execution.interrupted` | `sessionID` | 有（实测：用户中断的**终态事件**，不会再有 `execution.failed/succeeded`） |
+| `session.step.failed` | `sessionID`、`assistantMessageID`、`error{type,message,status}`、`snapshot`、`files[]` | 有（用户中断时 `error.type=aborted`、`message=Step interrupted`） |
 | `session.execution.failed` | `sessionID`、`error{type,message,status}` | 有 |
 | `session.tool.input.started` | `sessionID`、`assistantMessageID`、`id`（工具调用 ID，`call_` 前缀）、`name`（工具名，如 `shell`） | 有 |
 | `session.tool.input.ended` | 同上 + `text`（入参原始 JSON 字符串，如 `{"command": "echo hello"}`） | 有 |
@@ -266,7 +268,8 @@ sealed class OpenCodeEvent {
 - **气泡类型**：正文 → `ChatMessageType.TEXT`；推理 → `ChatMessageType.AI_THINKING`（复用既有推理样式）。**空内容气泡不产出**，避免出现空气泡（失败流因此只剩失败气泡）。
 - **刷新节流**：聚合间隔 75 ms（与前端渲染节奏对齐）。delta 事件仅在距上次发布 ≥75 ms 时发布；内容不丢（每次发布都从缓冲重算全文），`ended` 等里程碑恒发布以补齐尾帧。
 - **执行态**：`isRunning` —— `execution.started` / `step.started` 置 true，`execution.succeeded` / `execution.failed` / `step.failed` 置 false；经 `getSessionRunningFlow` 推到前端切换「发送 / 停止」态。
-- **失败可见**：`step.failed` / `execution.failed` 把 `error.type: error.message` 落成一条正文气泡（id `opencode-failure:<assistantMessageID|execution>`），避免面板卡在「响应中」。
+- **失败可见**：`step.failed` / `execution.failed` 把 `error.type: error.message` 落成一条正文气泡（id `opencode-failure:<assistantMessageID|execution>`），避免面板卡在「响应中」。**例外**：用户中断（`error.type == "aborted"`）不算失败，不弹失败气泡。
+- **用户中断**（实测契约，见 §4.3）：`reasoning/text.ended`（补全文）→ `step.streamed` → `step.failed(type=aborted)` → **`session.execution.interrupted`**；`ExecutionInterrupted` 与 `aborted` 都只把运行态置 false，正文保留。
 - **会话路由**：只处理 `sessionID == 当前会话` 的事件；`shell.exited` 等无 sessionID 的事件本阶段忽略。
 - **工具与权限**：`session.tool.*` / `permission.asked` 本阶段不产出消息部件，留待 S4 联调（权限卡片 + 工具卡片）。
 - 会话切换 / 新建 / 删除时重置状态机（缓冲、运行态、失败气泡），避免串值。
@@ -313,13 +316,14 @@ sealed class OpenCodeEvent {
 
 | 场景 | 处理 |
 |---|---|
-| 重连成功 | 立即 `GET /api/session/{id}/message` 覆盖本地状态，并重置 `durableSeq` 基线 |
-| `durable.seq` 跳变/缺口 | 触发一次对账，补齐后再继续增量 |
+| 重连成功（含首次连接） | 事件客户端 `CONNECTED` 回调触发一次对账：`GET /api/session/{id}/message` 覆盖本地并清空流式缓冲 |
+| 执行终态（`execution.succeeded` / `failed` / `interrupted`） | 同上触发一次对账（事件可能丢，REST 不会）；`step.failed` 不触发（多步执行仍在继续） |
 | delta 丢帧（无 seq 可校验） | 由 `session.text.ended` 的全文覆盖兜底 |
-| 心跳超时 | 判定链路已死 → 主动重建连接 → 对账 |
-| permission 到达但 UI 未响应 | 由对账兜底补齐（事件可能丢） |
-| `abortExecution`/`session.interrupt` 后 | 清空该会话缓冲与 `isStreaming`，避免残留半截消息 |
-| 401/403 | 标记「凭据无效」，停止重连，交由设置页处理 |
+| `durable.seq` 跳变/缺口 | 不做序号校验（本轮不落地 `durableSeq`），由上述「终态 + 重连对账」覆盖 |
+| 心跳超时 | 判定链路已死 → 主动重建连接 → 重连成功即对账 |
+| 用户中断（实测） | 本地先置 false 让「停止」即时生效；服务端随后补 `step.failed(aborted)` + `execution.interrupted`，不弹失败气泡，正文由 `reasoning/text.ended` 补全 |
+| permission 到达但 UI 未响应 | 由对账兜底补齐（事件可能丢）—— 待 S4b 权限卡片落地后联调 |
+| 401/403 | 事件客户端标记 `UNAUTHORIZED` 并停止重连，交由设置页（凭据配置处）处理 |
 
 ## 6. 变更文件清单
 
@@ -334,10 +338,11 @@ sealed class OpenCodeEvent {
 | `src/test/.../OpenCodeEventParserUnitTest.kt` | 新增：回放三个真实 fixture 的解析契约用例 | **已实施** |
 | `src/test/.../OpenCodeEventClientUnitTest.kt` | 新增：MockWebServer 回放（连接+鉴权、心跳不产事件、断线重连、401 不重连、stop 释放） | **已实施** |
 | `opencode-backend/.../event/SessionStreamState.kt` | 新增：事件驱动流式状态机（按 `(messageID, ordinal)` 累积、`ended` 全文校准、75 ms 节流发布、失败可见） | **已实施（S3a）** |
-| `opencode-backend/.../BackendChatRepositoryModel.kt` | 修改：事件客户端生命周期（init / 配置变更重建 / Project 销毁释放）、事件→消息合并（按 id 就地更新）、`getSessionRunningFlow`、会话切换重置；对账兜底留 S4 | **已实施（S3a）** |
+| `opencode-backend/.../BackendChatRepositoryModel.kt` | 修改：事件客户端生命周期（init / 配置变更重建 / Project 销毁释放）、事件→消息合并（按 id 就地更新）、`getSessionRunningFlow`、会话切换重置；**对账兜底**（执行终态 + 重连成功触发 REST 覆盖）；中断不弹失败气泡 | **已实施（S3a + S4a）** |
+| `opencode-backend/.../event/OpenCodeEvent.kt`、`OpenCodeEventParser.kt`、`SessionStreamState.kt` | 修改：新增 `ExecutionInterrupted`（`session.execution.interrupted`）；`aborted` 视为用户中断（不弹失败气泡） | **已实施（S4a）** |
 | `opencode-shared/.../ChatRepositoryRpcApi.kt` | 修改：新增 `getSessionRunningFlow(projectId, sessionId)`（非当前会话恒 false） | **已实施（S3a）** |
 | `opencode-backend/.../BackendChatRepositoryRpcApi.kt` | 修改：`getSessionRunningFlow` 透传 | **已实施（S3a）** |
-| `src/test/.../SessionStreamStateUnitTest.kt` | 新增：回放三个真实 fixture，覆盖累积/校准/多段拼接/节流/运行态/失败可见/重置（11 例） | **已实施（S3a）** |
+| `src/test/.../SessionStreamStateUnitTest.kt` | 新增：回放三个真实 fixture，覆盖累积/校准/多段拼接/节流/运行态/失败可见/中断（aborted 不弹失败气泡）/重置（13 例） | **已实施（S3a + S4a）** |
 | `opencode-shared/.../SessionState.kt` | 原计划为 `SessionStateDto` 增加 `delta`、`durableSeq` | **不再需要**（改为后端合并累计全文，见 §5.5） |
 | `opencode-frontend/.../chatApp/ui/ChatList.kt` | 修改：`syncExistingMessages` 对已存在 id 的消息按内容变化就地重渲染（TEXT → `updateStreamingText`，AI_THINKING → `updateReasoningContent`）；删除原「疑似流式」启发式 | **已实施（S3b）** |
 | `opencode-frontend/.../chatApp/ui/MessageItem.kt` | 修改：暴露 `renderedContent`（供上游比对是否需要重渲染；思考消息初始为动画故为空串） | **已实施（S3b）** |
@@ -345,7 +350,7 @@ sealed class OpenCodeEvent {
 | `opencode-event 前端 delta 分发`（原 `StreamingRenderController` 方案） | 该方案未落地：`StreamingRenderController` 仅保留 `cancelStreaming` 用于清空 | **已收敛** |
 | `src/test/.../OpenCodeEventParserUnitTest.kt` | 新增：解析纯函数用例（含心跳、未知类型、缺字段、非 JSON） | **已实施** |
 | `src/test/.../OpenCodeEventClientUnitTest.kt` | 新增：MockWebServer 回放 fixture（正常流、重复、断线重连、401、半途关闭） | **已实施** |
-| `src/test/.../OpenCodeEventRealServerITest.kt` | 新增：真实服务集成验证（`*ITest`，`-Pit=true` 才跑，实跑通过） | **已实施（S3 验证）** |
+| `src/test/.../OpenCodeEventRealServerITest.kt` | 新增：真实服务集成验证（`*ITest`，`-Pit=true` 才跑）——① 流式逐次上屏 + 终态校准；② 中断收尾（`outcome=interrupted`、不弹失败气泡） | **已实施**（2 例实跑通过） |
 | `build.gradle.kts`（根） | 修改：`test` 默认 `exclude("**/*ITest.class")`，`-Pit=true` 时纳入并把开关透给测试 JVM | **已实施** |
 | `opencode-shared/.../SessionUsage.kt` | 新增：`TokenUsageDto` / `SessionUsageDto` + `ContextUsageFormatter`（紧凑格式、千分位、占比与超窗截断，纯函数） | **已实施（S5）** |
 | `opencode-shared/.../AgentModelDto.kt` | 修改：`ModelDto` 增加 `contextWindow`（`Model.Info.limit.context`） | **已实施（S5）** |
@@ -368,7 +373,7 @@ sealed class OpenCodeEvent {
 | **S1 抓帧定契约** | 起真实实例抓取成功流、失败流、工具调用流（含权限请求）的帧，确认事件名/payload/心跳/鉴权；固化 fixture；回填 §4 | §4 待确认项有实测答案，fixture 入库 | **已完成（2026-09-29）** |
 | **S2 客户端** | 依赖接入 + `OpenCodeEventParser` + `OpenCodeEventClient`（重连/读超时存活/停止） | MockWebServer 回放 fixture 单测全绿 | **已完成（2026-09-29）**：12 例事件单测通过 |
 | **S3 通路打通** | 事件 → 流式状态机 → 消息列表（75 ms 节流）→ RPC Flow → 前端就地刷新气泡；运行态驱动「发送/停止」 | 真实连接集成验证通过：面板逐字输出、思考过程可见、首 token 明显提前 | **已完成（2026-09-29）**：S3a 后端 + S3b 前端；真实连接 ITest 实跑通过（§9.1）；面板侧手工验收见 §9.3（待装机执行） |
-| **S4 容错收口** | 对账兜底、权限卡片联调、中断清理、401 处理、包体与 README 同步 | 断开 server 重连自愈；权限允许/拒绝闭环；包体核对完成 | 待实施 |
+| **S4 容错收口** | 对账兜底、权限卡片联调、中断清理、401 处理、包体与 README 同步 | 断开 server 重连自愈；权限允许/拒绝闭环；包体核对完成 | **S4a 已完成（2026-09-29）**：对账兜底（终态 + 重连）+ 中断契约实测与收口；S4b 权限卡片、S4c 包体核对待实施 |
 | **S5 用量与占比** | 输入框下方展示当前会话 token 用量与上下文占比（REST 拉取：会话累计用量 + 最近一次 step 的 input + 模型上下文窗口） | 切换/发送/中止/切模型后指示器更新；无窗口不显占比、无数据整块隐藏；`ContextUsageFormatter` 单测全绿 | **已完成（2026-09-29）** |
 
 ## 8. 风险与对策
@@ -398,7 +403,7 @@ sealed class OpenCodeEvent {
 | 为什么必要 | mock 只能验证"解析与重连逻辑"；真实链路才能发现鉴权、模型未授权、心跳时序、真实帧字段差异等只有真机才暴露的问题 |
 | 手工兜底 | 保留 §4.5 的 curl 复现步骤，作为无 IDE 环境时的对证手段 |
 
-**验证结果（2026-09-29，opencode v2.0.18 本机 4097 受控实例）**：`-Pit=true` 实跑通过（`tests=1 skipped=0 failures=0`，6.4s）——创建会话、切免费模型、真实事件流驱动下正文/思考逐次上屏并以终态校准为 `PONG`、执行态正确回落。命令：
+**验证结果（2026-09-29，opencode v2.0.18 本机 4097 受控实例）**：`-Pit=true` 实跑通过（`tests=2 skipped=0 failures=0`）——① 创建会话、切免费模型、真实事件流驱动下正文/思考逐次上屏并以终态校准为 `PONG`、执行态正确回落；② 长回答中途 `interrupt`，服务端 `outcome=interrupted`、本地执行态回落且不出现失败气泡。命令：
 
 ```bash
 OPENCODE_SERVER_PASSWORD=itest-oc-panel opencode serve --port 4097 &
@@ -431,7 +436,7 @@ OPENCODE_SERVER_PASSWORD=itest-oc-panel opencode serve --port 4097 &
 5. 真实验证与集成测试基准模型固定为 `opencode/mimo-v2.6-flash-free`（OpenCode Zen 免费模型）。
 
 **遗留**
-1. **中断/取消链路未实测**：`session.interrupt` 调用后事件流如何收尾（是否有专属事件，或只表现为 `step.failed`/`execution.failed`）需再抓一次确认。
+1. ~~**中断/取消链路未实测**~~ —— **已实测（2026-09-29）**：`session.interrupt` 后事件序列为 `reasoning.ended`（补全文）→ `step.streamed` → `step.failed(error.type=aborted, message="Step interrupted")` → `session.execution.interrupted`；**没有** `execution.failed/succeeded`。实现据此把 `aborted` 视为用户中断（不弹失败气泡），并以 `session.execution.interrupted` 作为执行态收尾依据（§4.3/§5.5），ITest 已覆盖。
 2. 外部实例（桌面端启动）凭据不在 `service.json`，用该文件密码访问 401 —— 需在设置页显式配置凭据（观察项，见 §4.6）。
 3. 工具输出已由 `session.tool.success.content[].text` 提供；`shell.created.info.file`（host 上 `~/.local/share/opencode/shell/<projectID>/sh_*.out`）仅作超大输出截断后的补充读取参考，暂不实现。
 

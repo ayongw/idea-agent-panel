@@ -67,13 +67,19 @@ class SessionStreamState(
 
             is OpenCodeEvent.ExecutionFailed -> {
                 running = false
-                applyFailure(event.error, null)
+                if (!event.error.isUserInterruption()) applyFailure(event.error, null)
                 true
             }
 
             is OpenCodeEvent.StepFailed -> {
                 running = false
-                applyFailure(event.error, event.assistantMessageId)
+                if (!event.error.isUserInterruption()) applyFailure(event.error, event.assistantMessageId)
+                true
+            }
+
+            // 用户中断的终态事件（实测：中断链路只会来这个，不会有 execution.failed/succeeded）
+            is OpenCodeEvent.ExecutionInterrupted -> {
+                running = false
                 true
             }
 
@@ -178,6 +184,9 @@ class SessionStreamState(
     private fun kindOf(bubbleId: String): Kind =
         if (bubbleId.endsWith(REASONING_ID_SUFFIX)) Kind.REASONING else Kind.TEXT
 
+    /** 用户主动中断（实测 `step.failed.error.type == "aborted"`）：不是失败，不应弹失败气泡 */
+    private fun OpenCodeError.isUserInterruption(): Boolean = type == ABORT_ERROR_TYPE
+
     private fun joinParts(parts: Map<Int, String>): String =
         parts.toSortedMap().values.filter { it.isNotEmpty() }.joinToString("\n")
 
@@ -198,6 +207,9 @@ class SessionStreamState(
         const val REASONING_ID_SUFFIX = "#reasoning"
 
         const val FAILURE_ID = "opencode-failure"
+
+        /** 实测：用户中断时 `step.failed.error.type` 为该值 */
+        const val ABORT_ERROR_TYPE = "aborted"
 
         private const val FAILURE_ID_PREFIX = "opencode-failure:"
 

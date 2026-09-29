@@ -9,6 +9,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -92,12 +93,42 @@ class OpenCodeEventRealServerITest {
     private fun ChatMessageDto.isAssistantText(expected: String): Boolean =
         !isMyMessage && type == ChatMessage.ChatMessageType.TEXT && content == expected
 
+    /** 中断链路（实测契约）：`step.failed(aborted)` + `session.execution.interrupted`，且不产生失败气泡 */
+    @Test
+    fun interruptEndsRunningWithoutFailureBubble() = runBlocking {
+        val sessionId = requireNotNull(withTimeout(CREATE_TIMEOUT_MS) { model.createNewSession("itest interrupt") }) {
+            "应能创建会话（检查 $baseUrl 是否可达、密码是否正确）"
+        }
+        withTimeout(REST_TIMEOUT_MS) { model.switchModel(sessionId, "opencode", FREE_MODEL_ID) }
+
+        withTimeout(REST_TIMEOUT_MS) { model.sendMessage("Write a 2000-word essay about the history of computing.") }
+        withTimeout(REST_TIMEOUT_MS) { model.getSessionRunningFlow().first { it } }
+
+        delay(INTERRUPT_AFTER_MS)
+        withTimeout(REST_TIMEOUT_MS) { model.abortExecution() }
+
+        // 服务端把会话标成 interrupted 才算真的中断成功
+        withTimeout(STREAM_TIMEOUT_MS) {
+            while (model.getRestClient().getSession(sessionId).getOrNull()?.outcome != INTERRUPTED_OUTCOME) {
+                delay(POLL_INTERVAL_MS)
+            }
+        }
+        withTimeout(REST_TIMEOUT_MS) { model.getSessionRunningFlow().first { !it } }
+        assertFalse("中断后应退出执行态", model.getSessionRunningFlow().first())
+        assertTrue(
+            "用户中断不应出现失败气泡（实际：${model.getMessagesFlow().first().map { it.content }}）",
+            model.getMessagesFlow().first().none { it.content.contains("Step interrupted") }
+        )
+    }
+
     private companion object {
         const val FREE_MODEL_ID = "mimo-v2.6-flash-free"
         const val EXPECTED_TEXT = "PONG"
+        const val INTERRUPTED_OUTCOME = "interrupted"
         const val CREATE_TIMEOUT_MS = 20_000L
         const val REST_TIMEOUT_MS = 30_000L
         const val STREAM_TIMEOUT_MS = 60_000L
+        const val INTERRUPT_AFTER_MS = 3_000L
         const val POLL_INTERVAL_MS = 100L
     }
 }

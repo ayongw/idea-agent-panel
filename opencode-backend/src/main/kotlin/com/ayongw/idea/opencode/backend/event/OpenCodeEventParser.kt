@@ -60,6 +60,8 @@ object OpenCodeEventParser {
                 error = data.error() ?: OpenCodeError("unknown", "", null)
             )
 
+            "session.execution.interrupted" -> OpenCodeEvent.ExecutionInterrupted(sid)
+
             "session.step.started" -> OpenCodeEvent.StepStarted(
                 sessionId = sid,
                 assistantMessageId = data.str("assistantMessageID").orEmpty()

@@ -107,6 +107,15 @@ class OpenCodeEventParserUnitTest {
     }
 
     @Test
+    fun executionInterruptedIsMapped() {
+        val event = OpenCodeEventParser.parse(
+            """{"type":"session.execution.interrupted","data":{"sessionID":"ses_1"}}"""
+        )
+
+        assertEquals(OpenCodeEvent.ExecutionInterrupted("ses_1"), event)
+    }
+
+    @Test
     fun malformedFramesAreDropped() {
         assertNull("空帧应丢弃", OpenCodeEventParser.parse(""))
         assertNull("非 JSON 应丢弃", OpenCodeEventParser.parse("not-json"))

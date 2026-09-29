@@ -153,6 +153,31 @@ class SessionStreamStateUnitTest {
         assertEquals("请求失败", stream.messages().single().content)
     }
 
+    // ==================== 用户中断（实测契约） ====================
+
+    @Test
+    fun executionInterruptedStopsRunningWithoutFailureBubble() {
+        val stream = state()
+        stream.onEvent(OpenCodeEvent.ExecutionStarted("ses_1"))
+        stream.onEvent(OpenCodeEvent.TextStarted("ses_1", "msg_1", 0))
+        stream.onEvent(OpenCodeEvent.TextEnded("ses_1", "msg_1", 0, "半截回答"))
+        stream.onEvent(OpenCodeEvent.ExecutionInterrupted("ses_1"))
+
+        assertFalse("中断后应结束执行态", stream.isRunning)
+        assertEquals("中断只应保留已产出的正文，不弹失败气泡", 1, stream.messages().size)
+        assertEquals("半截回答", stream.messages().single().content)
+    }
+
+    @Test
+    fun abortedStepFailureIsInterruptionNotFailure() {
+        val stream = state()
+        stream.onEvent(OpenCodeEvent.ExecutionStarted("ses_1"))
+        stream.onEvent(OpenCodeEvent.StepFailed("ses_1", "msg_1", OpenCodeError("aborted", "Step interrupted", null)))
+
+        assertFalse("aborted 也应结束执行态", stream.isRunning)
+        assertTrue("aborted 是用户主动中断，不应出现失败气泡", stream.messages().isEmpty())
+    }
+
     // ==================== 无关事件与重置 ====================
 
     @Test
