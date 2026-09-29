@@ -21,7 +21,8 @@ import javax.swing.JPanel
 /**
  * 连接面板：Server 地址与 Basic 认证凭据（原设置页内容）+ shell 选择
  *
- * 凭据写入插件自身设置并下发后端；shell 走 `PATCH /api/experimental/config`（失败回退配置文件）。
+ * Server 地址/用户名写入插件自身设置，密码写入 IDE 凭据存储（[OpenCodePasswordStore]），均下发后端；
+ * shell 走 `PATCH /api/experimental/config`（失败回退配置文件）。
  */
 internal class ConnectionSettingsTab : AbstractSettingsTab() {
 
@@ -65,7 +66,7 @@ internal class ConnectionSettingsTab : AbstractSettingsTab() {
         val state = OpenCodeSettingsState.getInstance()
         serverUrlField.text = state.serverUrl
         usernameField.text = state.username
-        passwordField.text = state.password
+        passwordField.text = OpenCodePasswordStore.load()
         loadSnapshot { snapshot ->
             currentShell = snapshot.shell
             val model = DefaultComboBoxModel<String>()
@@ -80,7 +81,7 @@ internal class ConnectionSettingsTab : AbstractSettingsTab() {
         val state = OpenCodeSettingsState.getInstance()
         return normalizedUrl() != state.serverUrl ||
             inputUsername() != state.username ||
-            inputPassword() != state.password ||
+            inputPassword() != OpenCodePasswordStore.load() ||
             inputShell() != currentShell
     }
 
@@ -91,7 +92,8 @@ internal class ConnectionSettingsTab : AbstractSettingsTab() {
         val password = inputPassword()
         state.serverUrl = serverUrl
         state.username = username
-        state.password = password
+        // 密码存 IDE 凭据存储（不进插件设置文件）
+        OpenCodePasswordStore.save(password)
 
         // 下发到后端，使新配置即时生效
         ProjectManager.getInstance().openProjects.forEach { project ->

@@ -3,7 +3,7 @@
 > 插件：OpenCode AI Assistant Panel（`com.ayongw.idea.opencode-idea-panel`）
 > 目标：在插件内管理 opencode 的设置参数（自定义模型、规则目录、技能、MCP），设置项能走接口的走接口，接口不满足的直接改 opencode 配置文件。
 > 关联文档：整体架构见《技术方案》（`docs/tech/技术方案.md`，对应 TSD-01 段位）。
-> 状态：**实施完成**（五个 Tab 全部落地；v1.5 已按手测反馈修复 401 与布局），待再次手测与提交。
+> 状态：**实施完成**（五个 Tab 全部落地；v1.5 已按手测反馈修复 401 与布局，v1.6 修复凭据明文落盘报错并收口内容宽度），待再次手测与提交。
 
 ## 修订历史
 
@@ -15,6 +15,7 @@
 | v1.3 | 2026-09-29 | 阶段一落地：新增 `JsoncEditor`（JSONC 定点编辑器）与 `OpenCodeConfigStore`（配置定位 / 读取 / 写入 / 备份 / 原子写 / 并发校验），配套 23 个单测通过；前端相关阶段暂缓以避让并行会话 | agent |
 | v1.4 | 2026-09-29 | 实施完成：设置类接口（12 个）、`SettingsDtos`/`SettingsRpcApi`、`BackendSettingsRpcApi` + `SettingsMapping`、前端 5 个 Tab；52 个单测全绿、`buildPlugin` 通过。过程中修复两处既有缺陷：`HttpURLConnection` 不支持 PATCH（导致 `setShell` 与既有 `renameSession` 请求发不出去）、`JsonObject.get()` 缺键 NPE | agent |
 | v1.5 | 2026-09-29 | 手测反馈修复：① 新增 `OpenCodeCredentials`，密码留空时按「显式值 → `OPENCODE_SERVER_PASSWORD` → `~/.config/opencode/service.json`」兜底，消除设置页 401；② 错误体截断为 200 字符 + 前端按 401/403/不可达转友好文案（原样贴整段 JSON 的写法移除）；③ 全部面板改 `BorderLayout` 自适应布局、去掉固定 `columns`/`preferredSize`，内容不再超宽；④ 技能页改为「加载目录 + 已加载技能列表」，MCP 页改为「配置来源 + 服务器列表 + 详情/超时」；⑤ 测试连接改走后端真实凭据探测，不再由前端自行拼 Basic 误判；⑥ 新增 `OpenCodeCredentialsUnitTest`（4 例），单测合计 56 例全绿 | agent |
+| v1.6 | 2026-09-29 | 修复安装后报错 `Element component@OpenCodeSettings.option.@name=password probably contains sensitive information`：密码从插件设置文件（明文）迁到 IDE 凭据存储 —— 新增 `OpenCodePasswordStore`（`PasswordSafe` + 内存缓存），`OpenCodeSettingsState` 不再持有密码字段，连接页与启动时的配置下发改从凭据存储取值。另：设置页内容宽度收口（表格/多行文本 preferred 宽度上限 560、文本框限定 `columns`、状态行截断 100 字），容器实现 `Scrollable`（`tracksViewportWidth`）使页面宽度跟随对话框、不再横向溢出 | agent |
 
 ---
 
@@ -150,7 +151,7 @@ backend   ├─ OpenCodeConfigStore    配置文件定位 / JSONC 读 / 路径 
 
 | Tab | 内容 | 读来源 | 写目标 |
 |-----|------|--------|--------|
-| 连接【已落地】 | 标题 + 刷新；Server URL、Basic 用户名（默认 `opencode`）、密码（附「留空即回退环境变量 / `service.json`」提示）、测试连接；`shell` 选择 | 快照（`settings` 作用域）取 `shell`/`shells`；测试连接走后端 `updateServerConfig` + `getAllSessions` + `getServerInfo` | 插件自身设置（`opencode-settings.xml`）；`shell` 优先走 `PATCH /api/experimental/config` |
+| 连接【已落地】 | 标题 + 刷新；Server URL、Basic 用户名（默认 `opencode`）、密码（附「留空即回退环境变量 / `service.json`」提示）、测试连接；`shell` 选择 | 快照（`settings` 作用域）取 `shell`/`shells`；测试连接走后端 `updateServerConfig` + `getAllSessions` + `getServerInfo` | 插件自身设置（`opencode-settings.xml`）存 URL/用户名；**密码存 IDE 凭据存储**（`OpenCodePasswordStore`，v1.6）；`shell` 优先走 `PATCH /api/experimental/config` |
 | 模型 | provider 列表（id / name / package / `settings.baseURL` / models）增删改；默认模型下拉；每个 provider 的 apiKey | `/api/provider`、`/api/model` | 配置文件 `providers.*`、`model`；apiKey 走 `connect/key` |
 | 规则 | 标题 + 刷新；`AGENTS.md` 列表（全局 + 项目，标注存在性，可编辑保存，编辑器随窗口拉伸）；`instructions` 只读展示（标注“V2 不生效”） | 文件系统 | `AGENTS.md` 文本读写；`instructions` 兼容增删 |
 | 技能 | 标题 + 说明 + 刷新；上：**加载目录**（一行一个目录/URL，可编辑保存，显示写入的全局/项目配置文件路径）；下：**已加载技能**只读列表（名称/ID/路径 + 数量） | 配置 `skills` + `/api/skill` | 配置文件 `skills` |
@@ -230,11 +231,12 @@ backend   ├─ OpenCodeConfigStore    配置文件定位 / JSONC 读 / 路径 
 | `opencode-backend/.../BackendRpcApiProvider.kt` | 修改：注册 `SettingsRpcApi` | ✅ 已完成 |
 | `opencode-frontend/.../settings/OpenCodeSettingsConfigurable.kt` | 改为 Tab 容器（5 个 Tab） | ✅ 已完成 |
 | `opencode-frontend/.../settings/SettingsTab.kt` | Tab 接口 + 面板基类：标题/说明行、作用域行、统一表格样式、**状态行（友好文案 + tooltip 明细）**、401/403/不可达文案转换、异步读取/写入骨架 | ✅ 已完成 |
-| `opencode-frontend/.../settings/ConnectionSettingsTab.kt` | 连接面板（原表单迁入 + shell 选择 + 密码留空提示）；测试连接改走后端真实凭据探测 | ✅ 已完成 |
+| `opencode-frontend/.../settings/ConnectionSettingsTab.kt` | 连接面板（原表单迁入 + shell 选择 + 密码留空提示）；测试连接改走后端真实凭据探测；密码读写改走 `OpenCodePasswordStore`（v1.6） | ✅ 已完成 |
 | `opencode-frontend/.../settings/{Provider,Rule}SettingsTab.kt` | 模型 / 规则面板：改自适应布局，写操作统一 `currentProject()` 守卫 | ✅ 已完成 |
 | `opencode-frontend/.../settings/SkillSettingsTab.kt` | 技能面板：加载目录（可编辑 + 来源提示）+ 已加载技能列表（只读） | ✅ 已完成 |
 | `opencode-frontend/.../settings/McpSettingsTab.kt` | MCP 面板：配置来源 + 服务器列表 + 详情/超时 | ✅ 已完成 |
-| `opencode-frontend/.../settings/OpenCodeSettingsState.kt` | 未改动：`username`/`password` 由 `9f1b2fc` 落地；作用域默认全局在面板内置（不持久化上次选择） | — |
+| `opencode-frontend/.../settings/OpenCodeSettingsState.kt` | 修改（v1.6）：移除密码字段 —— 明文凭据落 `opencode-settings.xml` 会被 IDE 判为敏感信息并报 error；`username` 由 `9f1b2fc` 落地；作用域默认全局在面板内置（不持久化上次选择） | ✅ 已完成 |
+| `opencode-frontend/.../settings/OpenCodePasswordStore.kt` | 新增（v1.6）：Basic 密码存取（`PasswordSafe` 凭据存储 + 内存缓存，读写失败不阻塞），供连接页与启动配置下发使用 | ✅ 已完成 |
 | `opencode-frontend/src/main/resources/messages/OpencodeFrontendBundle.properties` | 新增 `settings.opencode.*` 面板文案 | ✅ 已完成 |
 | `opencode-frontend/src/main/resources/opencode-idea-panel.opencode-frontend.xml` | 无需改动（Configurable 类名与注册项不变） | — |
 | `src/test/.../JsoncEditorUnitTest`、`OpenCodeConfigStoreUnitTest`、`OpenCodeSettingsApiUnitTest`、`SettingsMappingUnitTest`、`OpenCodeCredentialsUnitTest` | 新增：56 个单测（其中设置相关 44 个） | ✅ 已完成 |

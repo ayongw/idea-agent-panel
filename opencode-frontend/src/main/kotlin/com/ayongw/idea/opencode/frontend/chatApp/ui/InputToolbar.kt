@@ -146,10 +146,10 @@ class InputToolbar(
                 )
             }
         }
-        // 工具条在底部，菜单向上弹出
-        menu.setSize(menu.preferredSize)
-        menu.setLocation(anchor.locationOnScreen.x, anchor.locationOnScreen.y - menu.height)
-        menu.isVisible = true
+        // 工具条在底部，菜单向上弹出（y 取负的菜单高度）。
+        // 必须走 show(invoker, x, y)：直接 setVisible(true) 时 JPopupMenu 没有 invoker，
+        // IDE 的 OurPopupFactory.getPopup 的 owner 参数为非空，会抛 NPE。
+        menu.show(anchor, 0, -menu.preferredSize.height)
     }
 
     private fun message(key: String): String = OpencodeFrontendBundle.message(key)

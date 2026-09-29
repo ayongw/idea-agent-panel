@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import com.ayongw.idea.opencode.frontend.settings.OpenCodePasswordStore
 import com.ayongw.idea.opencode.frontend.settings.OpenCodeSettingsState
 import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessage
@@ -134,7 +135,7 @@ class FrontendChatRepositoryModel(
                         project.projectId(),
                         settings.serverUrl,
                         settings.username,
-                        settings.password
+                        OpenCodePasswordStore.load()
                     )
             }
             refreshSessions()

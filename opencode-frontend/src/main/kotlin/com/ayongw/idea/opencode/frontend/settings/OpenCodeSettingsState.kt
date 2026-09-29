@@ -6,7 +6,9 @@ import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 
 /**
- * OpenCode 连接配置（应用级）：Server 地址与 Basic 认证凭据
+ * OpenCode 连接配置（应用级）：Server 地址与 Basic 认证用户名
+ *
+ * 密码不在此持久化（明文凭据会被 IDE 判为敏感信息），见 [OpenCodePasswordStore]。
  */
 @State(
     name = "OpenCodeSettings",
@@ -20,15 +22,11 @@ class OpenCodeSettingsState : PersistentStateComponent<OpenCodeSettingsState> {
     /** Basic 认证用户名，opencode serve 默认 opencode */
     var username: String = DEFAULT_USERNAME
 
-    /** Basic 认证密码（opencode serve 启动时打印），为空表示不鉴权 */
-    var password: String = ""
-
     override fun getState(): OpenCodeSettingsState = this
 
     override fun loadState(state: OpenCodeSettingsState) {
         serverUrl = state.serverUrl
         username = state.username
-        password = state.password
     }
 
     companion object {
