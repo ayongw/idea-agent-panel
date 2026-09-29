@@ -61,4 +61,10 @@ object ChatUIConstants {
         const val MIN_WIDTH = 240
         const val PREF_WIDTH = 280
     }
+
+    object LargeContent {
+        const val MAX_TEXT_LENGTH = 10 * 1024 // 10KB
+        const val LINES_PER_PAGE = 200
+        const val MAX_CODE_LINES = 500
+    }
 }
