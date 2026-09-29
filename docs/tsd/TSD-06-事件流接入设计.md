@@ -18,6 +18,7 @@
 | v1.6 | 2026-09-29 | 补 `OpenCodeEventRealServerITest`（真实连接）；根 `build.gradle.kts` 的 `test` 默认排除 `*ITest`、`-Pit=true` 纳入；回填 §9.1 实跑结果（通过） | agent |
 | v1.7 | 2026-09-29 | S4a 落地：对账兜底（执行终态 + 重连成功触发 REST 覆盖）；实测中断收尾契约（`step.failed(aborted)` + `session.execution.interrupted`）并据此新增 `ExecutionInterrupted`、把 `aborted` 视为用户中断（不弹失败气泡）；关闭 §10 遗留 1 | agent |
 | v1.8 | 2026-09-29 | S4b 落地：`PendingPermissionDto` + `getPendingPermissionFlow` + 输入区权限确认条（三态回复闭环）；`replyPermission` 改为 `PermissionResponse`；ITest 补权限用例（本机未触发则跳过）；§6/§7/§9 回填 | agent |
+| v1.9 | 2026-09-29 | S4c：核对打包产物（`0.1.0.28.zip`：okhttp/okhttp-sse/okio 已打包、无 gson、`since-build=261`、新增类齐备）；README 依赖表与权限确认描述同步；S1–S5 全部阶段收口 | agent |
 
 ---
 
@@ -382,7 +383,7 @@ sealed class OpenCodeEvent {
 | **S1 抓帧定契约** | 起真实实例抓取成功流、失败流、工具调用流（含权限请求）的帧，确认事件名/payload/心跳/鉴权；固化 fixture；回填 §4 | §4 待确认项有实测答案，fixture 入库 | **已完成（2026-09-29）** |
 | **S2 客户端** | 依赖接入 + `OpenCodeEventParser` + `OpenCodeEventClient`（重连/读超时存活/停止） | MockWebServer 回放 fixture 单测全绿 | **已完成（2026-09-29）**：12 例事件单测通过 |
 | **S3 通路打通** | 事件 → 流式状态机 → 消息列表（75 ms 节流）→ RPC Flow → 前端就地刷新气泡；运行态驱动「发送/停止」 | 真实连接集成验证通过：面板逐字输出、思考过程可见、首 token 明显提前 | **已完成（2026-09-29）**：S3a 后端 + S3b 前端；真实连接 ITest 实跑通过（§9.1）；面板侧手工验收见 §9.3（待装机执行） |
-| **S4 容错收口** | 对账兜底、权限卡片联调、中断清理、401 处理、包体与 README 同步 | 断开 server 重连自愈；权限允许/拒绝闭环；包体核对完成 | **S4a + S4b 已完成（2026-09-29）**：对账兜底、中断契约收口、权限确认条闭环；S4c 包体/文档核对与面板手工验收待执行 |
+| **S4 容错收口** | 对账兜底、权限卡片联调、中断清理、401 处理、包体与 README 同步 | 断开 server 重连自愈；权限允许/拒绝闭环；包体核对完成 | **已完成（2026-09-29）**：S4a 对账 + 中断收口、S4b 权限确认条、S4c 包体核对（`0.1.0.28.zip`：okhttp/okhttp-sse/okio 已打包、无 gson、`since-build=261`、新增类齐备）；面板侧手工验收见 §9.3（待装机执行） |
 | **S5 用量与占比** | 输入框下方展示当前会话 token 用量与上下文占比（REST 拉取：会话累计用量 + 最近一次 step 的 input + 模型上下文窗口） | 切换/发送/中止/切模型后指示器更新；无窗口不显占比、无数据整块隐藏；`ContextUsageFormatter` 单测全绿 | **已完成（2026-09-29）** |
 
 ## 8. 风险与对策
