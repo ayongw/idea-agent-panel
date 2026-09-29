@@ -15,7 +15,6 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
-import java.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -293,12 +292,8 @@ class OpenCodeRestClient(
         authHeaderValue()?.let { connection.setRequestProperty("Authorization", it) }
     }
 
-    /** Basic 认证头取值，密码为空时返回 null */
-    private fun authHeaderValue(): String? {
-        val secret = password?.takeIf { it.isNotBlank() } ?: return null
-        val credentials = "$username:$secret".toByteArray(Charsets.UTF_8)
-        return "Basic ${Base64.getEncoder().encodeToString(credentials)}"
-    }
+    /** Basic 认证头取值，密码为空时返回 null（与事件流客户端共用 [OpenCodeAuth]） */
+    private fun authHeaderValue(): String? = OpenCodeAuth.basicHeader(username, password)
 
     private suspend fun <T> executeRequest(
         method: String,
@@ -512,7 +507,7 @@ class OpenCodeRestClient(
     }
 
     companion object {
-        const val DEFAULT_USERNAME = "opencode"
+        const val DEFAULT_USERNAME = OpenCodeAuth.DEFAULT_USERNAME
 
         /** 连接超时（毫秒） */
         const val CONNECT_TIMEOUT_MS = 10_000

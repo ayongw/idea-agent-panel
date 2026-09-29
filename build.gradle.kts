@@ -109,21 +109,27 @@ dependencies {
 
     // 单元测试（JUnit 4）
     testImplementation("junit:junit:4.13.2")
+    // 事件流单测：用 MockWebServer 回放真实抓帧 fixture
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }
 
 intellijPlatform {
     splitMode = true
     pluginInstallationTarget = SplitModeAware.PluginInstallationTarget.BOTH
-}
 
-// pluginVerification {
-//     ides {
-//         create(IntelliJPlatformType.IntellijIdeaUltimate, "2026.2.3")
-//     }
-// }
-intellijPlatform {
-    splitMode = true
-    pluginInstallationTarget = SplitModeAware.PluginInstallationTarget.BOTH
+    pluginConfiguration {
+        ideaVersion {
+            // 最低支持 2026.1（build 261）；不设 until-build，保持向上兼容
+            sinceBuild = "261"
+        }
+    }
+
+    // 针对最低支持版本做 API 兼容性校验（首次执行会下载对应 IDE 发行版）
+    pluginVerification {
+        ides {
+            create(IntelliJPlatformType.IntellijIdeaUltimate, "2026.1")
+        }
+    }
 }
 
 // 从 CHANGELOG.md 生成插件变更说明（显示在 IDEA 的 Plugins → What's New）

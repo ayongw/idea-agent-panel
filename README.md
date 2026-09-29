@@ -44,7 +44,7 @@ opencode-idea-panel/
                             ↓
               Backend 事件处理 → Frontend StateFlow → UI 渲染
                             ↑
-              REST 对账 (GET /session/{id}/message) ──┘
+              REST 对账 (GET /api/session/{id}/message) ─┘
 ```
 
 ---
@@ -52,7 +52,7 @@ opencode-idea-panel/
 ## 🚀 快速开始
 
 ### 环境要求
-- IntelliJ IDEA 2026.2.3+ (Ultimate/Community)
+- IntelliJ IDEA 2026.1+（构建与验证目标为 2026.2.3，`since-build=261`）
 - JDK 21 (系统默认)
 - **JBR 25** (项目自动使用 IDE 內建，路径: `/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home/`)
 - 已安装并可在 PATH 中找到 `opencode` CLI
@@ -101,11 +101,13 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 
 | 依赖 | 版本 | 用途 |
 |------|------|------|
-| IntelliJ Platform | 2026.2.3 | 插件开发框架 |
+| IntelliJ Platform | 2026.2.3（最低支持 2026.1） | 插件开发框架 |
 | Kotlin | 2.3.20 | 主开发语言 |
-| OkHttp | 4.12.0 | HTTP 客户端 |
-| okhttp-sse | 4.12.0 | SSE 事件流客户端 |
-| Gson | 2.11.0 | JSON 序列化 |
+| Gson | IDE 自带（2026.1 起为 2.13.x） | JSON 序列化，`compileOnly` 不随插件打包 |
+| kotlinx-serialization | 1.9.0 | RPC DTO 序列化 |
+| HTTP 客户端（REST） | JDK `HttpClient` / `HttpURLConnection`（内置） | 当前实现的 OpenCode Server REST 调用 |
+| OkHttp | 4.12.0 | 方案既定，事件流接入时启用（当前未打包） |
+| okhttp-sse | 4.12.0 | 方案既定，事件流（`/api/event`）接入时启用（当前未打包） |
 | JetBrains Markdown | 0.7.3 | Markdown → HTML 渲染 |
 
 ---
@@ -152,7 +154,7 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 | 场景 | 实现方案 |
 |------|----------|
 | Server 进程管理 | `OSProcessHandler` + 随机端口 + 健康检查轮询 |
-| SSE 连接 | `okhttp-sse` EventSource + 后台线程 + 自动重连 |
+| SSE 事件流 | 待接入：`okhttp-sse` EventSource + 后台线程 + 自动重连（端点 `/api/event`） |
 | 流式渲染 | `ConcurrentHashMap` 缓冲区 + 75ms `javax.swing.Timer` 批量刷新 |
 | 代码块渲染 | `EditorTextField` (真实编辑器) + `JBHtmlPane` (文本) |
 | 跨进程通信 | Fleet RPC (`@Rpc` 接口 + `RemoteApiProvider`) |
@@ -165,6 +167,10 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 - [环境初始化指南](docs/tasks/001%20%E7%8E%AF%E5%A2%83%E5%88%9D%E5%A7%8B%E5%8C%96.md)
 - [产品需求文档 (PRD)](docs/prd/%E4%BA%A7%E5%93%81%E8%AF%B4%E6%98%8E.md)
 - [技术方案设计 (TSD)](docs/tech/%E6%8A%80%E6%9C%AF%E6%96%B9%E6%A1%88.md)
+- [设置管理设计 (TSD-05)](docs/tsd/TSD-05-%E8%AE%BE%E7%BD%AE%E7%AE%A1%E7%90%86%E8%AE%BE%E8%AE%A1.md)
+- [事件流接入设计 (TSD-06)](docs/tsd/TSD-06-%E4%BA%8B%E4%BB%B6%E6%B5%81%E6%8E%A5%E5%85%A5%E8%AE%BE%E8%AE%A1.md)
+- [主界面布局设计 (TSD-07)](docs/tsd/TSD-07-%E4%B8%BB%E7%95%8C%E9%9D%A2%E5%B8%83%E5%B1%80%E8%AE%BE%E8%AE%A1.md)
+- [已归档：M1–M4 历史任务分解](docs/archived/)
 
 ---
 

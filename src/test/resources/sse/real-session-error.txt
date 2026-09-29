@@ -1,0 +1,96 @@
+data: {"id":"evt_0ed21472c001QULliG7OjxVu8q","type":"server.connected","data":{}}
+
+: heartbeat
+
+data: {"id":"evt_0ed21798c001yjOy06V6ICvfs7","created":1790684789132,"type":"session.inbox.enqueued","location":{"directory":"/tmp/opencode-itest-project"},"data":{"inboxID":"msg_0ed217988001C4cDMQyxjcHjOT","sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","item":{"type":"user","payload":{"text":"Reply with exactly: PONG"},"delivery":"steer"}},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":9,"version":1}}
+
+data: {"id":"evt_0ed217991001UqUk22BtqtaOME","created":1790684789137,"type":"session.execution.started","data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB"},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":10,"version":1}}
+
+data: {"id":"evt_0ed2179bc001Nmu8uDhCHcp4zZ","created":1790684789180,"type":"session.inbox.delivered","location":{"directory":"/tmp/opencode-itest-project"},"data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","inboxID":"msg_0ed217988001C4cDMQyxjcHjOT"},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":12,"version":1}}
+
+data: {"id":"evt_0ed217a100013qLcmlBqyMiDwf","created":1790684789264,"type":"session.step.started","location":{"directory":"/tmp/opencode-itest-project"},"data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","agent":"build","model":{"id":"claude-sonnet-5.5","providerID":"github-copilot"},"assistantMessageID":"msg_0ed2179c7001iGzoR8BKqNz1ZP","snapshot":"3b3e3c5c7e61781c32003aea4571b5dd62793f5e","started":1790684789263},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":13,"version":1}}
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+data: {"id":"evt_0ed2235f60016GtgGZQaj90rsq","created":1790684837367,"type":"session.step.streamed","location":{"directory":"/tmp/opencode-itest-project"},"data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","assistantMessageID":"msg_0ed2179c7001iGzoR8BKqNz1ZP"},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":14,"version":1}}
+
+data: {"id":"evt_0ed22362c001xK9uHaNIvOb17W","created":1790684837420,"type":"session.step.failed","location":{"directory":"/tmp/opencode-itest-project"},"data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","assistantMessageID":"msg_0ed2179c7001iGzoR8BKqNz1ZP","error":{"type":"provider.invalid-request","message":"Provider request failed with HTTP 400","status":400},"snapshot":"3b3e3c5c7e61781c32003aea4571b5dd62793f5e","files":[]},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":15,"version":1}}
+
+data: {"id":"evt_0ed22362f001js1GY756i8rEuA","created":1790684837423,"type":"session.execution.failed","data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","error":{"type":"provider.invalid-request","message":"Provider request failed with HTTP 400","status":400}},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":16,"version":1}}
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+

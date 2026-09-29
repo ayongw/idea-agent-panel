@@ -1,0 +1,110 @@
+data: {"id":"evt_0ed21472c001QULliG7OjxVu8q","type":"server.connected","data":{}}
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+data: {"id":"evt_0ed26a92d001T7U9aYQlM4pBag","created":1790685129005,"type":"session.tool.input.started","location":{"directory":"/tmp/opencode-itest-project"},"data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","assistantMessageID":"msg_0ed269298001cNlL5h3G0Ep7ak","id":"call_412055883536419c994c0105","name":"shell"},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":34,"version":1}}
+
+data: {"id":"evt_0ed26a969001Uouf4OOPc5X0PO","created":1790685129065,"type":"session.tool.input.ended","location":{"directory":"/tmp/opencode-itest-project"},"data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","assistantMessageID":"msg_0ed269298001cNlL5h3G0Ep7ak","id":"call_412055883536419c994c0105","text":"{\"command\": \"echo hello\"}"},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":36,"version":1}}
+
+data: {"id":"evt_0ed26a96b0016UFeFQf1L8WUhS","created":1790685129067,"type":"session.tool.called","location":{"directory":"/tmp/opencode-itest-project"},"data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","assistantMessageID":"msg_0ed269298001cNlL5h3G0Ep7ak","id":"call_412055883536419c994c0105","input":{"command":"echo hello"},"executed":false},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":37,"version":1}}
+
+data: {"id":"evt_0ed26a9ab001rOOOkyZdYpyCI7","created":1790685129131,"type":"shell.created","location":{"directory":"/tmp/opencode-itest-project"},"data":{"info":{"id":"sh_0ed26a9a70015Ktn3iPpKEo7PT","status":"running","command":"echo hello","cwd":"/tmp/opencode-itest-project","shell":"/bin/zsh","file":"/Users/jiangguangtao/.local/share/opencode/shell/e1d08eaf73714392bd0d2b6b4254ba6175773dce/sh_0ed26a9a70015Ktn3iPpKEo7PT.out","metadata":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB"},"time":{"started":1790685129127}}}}
+
+data: {"id":"evt_0ed26a9ac0013GRJFhUg050VDM","created":1790685129132,"type":"session.tool.progress","location":{"directory":"/tmp/opencode-itest-project"},"data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","assistantMessageID":"msg_0ed269298001cNlL5h3G0Ep7ak","id":"call_412055883536419c994c0105","metadata":{"shellID":"sh_0ed26a9a70015Ktn3iPpKEo7PT"}}}
+
+data: {"id":"evt_0ed26a9bd001u4bz4Mr2jlFZGh","created":1790685129149,"type":"shell.exited","location":{"directory":"/tmp/opencode-itest-project"},"data":{"id":"sh_0ed26a9a70015Ktn3iPpKEo7PT","exit":0,"status":"exited"}}
+
+data: {"id":"evt_0ed26a9c0001hXrRHhJH3sYB9M","created":1790685129152,"type":"session.tool.success","location":{"directory":"/tmp/opencode-itest-project"},"data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","assistantMessageID":"msg_0ed269298001cNlL5h3G0Ep7ak","id":"call_412055883536419c994c0105","content":[{"type":"text","text":"hello\n"}],"metadata":{"status":"completed","truncated":false,"exit":0},"executed":false},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":39,"version":2}}
+
+data: {"id":"evt_0ed26bae2001Wk601p4NSxegED","created":1790685133538,"type":"session.text.started","location":{"directory":"/tmp/opencode-itest-project"},"data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","assistantMessageID":"msg_0ed26a9fc001cD8a85XckNKNZu","ordinal":0},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":43,"version":1}}
+
+data: {"id":"evt_0ed26baf1001jnV07lO1Lw0jSP","created":1790685133553,"type":"session.text.delta","location":{"directory":"/tmp/opencode-itest-project"},"data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","assistantMessageID":"msg_0ed26a9fc001cD8a85XckNKNZu","ordinal":0,"delta":"DONE"}}
+
+data: {"id":"evt_0ed26baf1002sNo8XiDbZjgtgC","created":1790685133553,"type":"session.text.ended","location":{"directory":"/tmp/opencode-itest-project"},"data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","assistantMessageID":"msg_0ed26a9fc001cD8a85XckNKNZu","ordinal":0,"text":"DONE"},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":45,"version":1}}
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+data: {"id":"evt_0ed27f97c001spEgEIBtHUvv6g","created":1790685215100,"type":"session.tool.input.started","location":{"directory":"/tmp/opencode-itest-project"},"data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","assistantMessageID":"msg_0ed27e64f001Yy5GZtxRWaSt9a","id":"call_1e83b3977f8c4762acfa4ad3","name":"write"},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":54,"version":1}}
+
+data: {"id":"evt_0ed27fa3c001Qydw1HGp3hmlfn","created":1790685215292,"type":"session.tool.input.ended","location":{"directory":"/tmp/opencode-itest-project"},"data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","assistantMessageID":"msg_0ed27e64f001Yy5GZtxRWaSt9a","id":"call_1e83b3977f8c4762acfa4ad3","text":"{\"path\": \"/tmp/oc-perm-probe.txt\", \"content\": \"hi\"}"},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":56,"version":1}}
+
+data: {"id":"evt_0ed27fa3d001rd1klf1O2jFq2W","created":1790685215293,"type":"session.tool.called","location":{"directory":"/tmp/opencode-itest-project"},"data":{"sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","assistantMessageID":"msg_0ed27e64f001Yy5GZtxRWaSt9a","id":"call_1e83b3977f8c4762acfa4ad3","input":{"path":"/tmp/oc-perm-probe.txt","content":"hi"},"executed":false},"durable":{"aggregateID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","seq":57,"version":1}}
+
+data: {"id":"evt_0ed27fa48002Iafw7XS24n5InA","created":1790685215304,"type":"permission.asked","location":{"directory":"/tmp/opencode-itest-project"},"data":{"id":"per_0ed27fa48001rq0KU6nII1EtdB","sessionID":"ses_f12e0e3fcffeLmjKbowhzdB4PB","action":"external_directory","resources":["/tmp/*"],"save":["/tmp/*"],"source":{"type":"tool","messageID":"msg_0ed27e64f001Yy5GZtxRWaSt9a","id":"call_1e83b3977f8c4762acfa4ad3"}}}
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
+: heartbeat
+
