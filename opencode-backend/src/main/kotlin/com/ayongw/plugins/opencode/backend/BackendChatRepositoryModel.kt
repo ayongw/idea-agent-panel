@@ -11,11 +11,13 @@ import com.ayongw.plugins.opencode.shared.toChatMessageDto
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDateTime
 
@@ -26,9 +28,6 @@ class BackendChatRepositoryModel {
             return project.getService(BackendChatRepositoryModel::class.java)
         }
     }
-
-    private val chatMessageFactory = ChatMessageFactory("AI Buddy", "Super Engineer")
-    private val aiResponseGenerator = AIResponseGenerator()
 
     /** 当前活跃会话 ID */
     private var currentSessionId: String? = null
@@ -45,9 +44,15 @@ class BackendChatRepositoryModel {
     /** 服务器连接状态 */
     private val _serverConnected = MutableStateFlow(false)
 
+    /** 消息工厂（用于本地模拟模式） */
+    private val chatMessageFactory = ChatMessageFactory("AI Buddy", "Super Engineer")
+    private val aiResponseGenerator = AIResponseGenerator()
+
     init {
-        // 启动时加载会话列表
-        loadSessions()
+        // 启动时加载会话列表（在后台协程中）
+        CoroutineScope(Dispatchers.IO).launch {
+            loadSessions()
+        }
     }
 
     fun getMessagesFlow(): Flow<List<ChatMessageDto>> {

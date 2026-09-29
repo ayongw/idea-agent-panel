@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 
 class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
     override suspend fun getMessagesFlow(projectId: ProjectId): Flow<List<ChatMessageDto>> {
@@ -159,13 +160,13 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
         )
     }
 
-    private fun getSessionTitle(model: BackendChatRepositoryModel, sessionId: String): String {
+    private suspend fun getSessionTitle(model: BackendChatRepositoryModel, sessionId: String): String {
         // 从会话列表中查找标题
-        try {
+        return try {
             val sessions = model.getAllSessionsFlow().first()
-            return sessions.firstOrNull { it.id == sessionId }?.title ?: "会话 $sessionId"
+            sessions.firstOrNull { it.id == sessionId }?.title ?: "会话 $sessionId"
         } catch (e: Exception) {
-            return "会话 $sessionId"
+            "会话 $sessionId"
         }
     }
 }

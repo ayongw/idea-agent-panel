@@ -59,6 +59,7 @@ subprojects {
                     bundledModule("intellij.platform.backend")
                 }
                 implementation(project(":opencode-shared"))
+                // Dependencies will be resolved from opencode-backend/build.gradle.kts
             }
         }
     }
@@ -77,15 +78,6 @@ dependencies {
         // 如果需要 Java PSI 支持（上下文注入需要）
         bundledPlugin("com.intellij.java")
     }
-    // OkHttp + SSE 扩展（用于与 OpenCode Server 通信）
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.squareup.okhttp3:okhttp-sse:4.12.0")
-
-    // JSON 处理（用于解析 OpenCode 的 REST/SSE 响应）
-    implementation("com.google.code.gson:gson:2.11.0")
-
-    // Markdown 转 HTML（用于 JBHtmlPane 渲染）
-    implementation("org.jetbrains:markdown:0.7.3")
 }
 
 // pluginVerification {

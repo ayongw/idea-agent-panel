@@ -2,23 +2,22 @@ package com.ayongw.plugins.opencode.backend.repository
 
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import com.squareup.okhttp3.*
+import java.io.BufferedReader
 import java.io.IOException
+import java.io.InputStreamReader
+import java.io.OutputStream
 import java.lang.reflect.Type
+import java.net.HttpURLConnection
+import java.net.URL
 import java.time.LocalDateTime
 import java.util.concurrent.TimeUnit
 
 /**
  * OpenCode Server REST API 客户端
- * 对接 OpenCode 内置的会话管理 API
+ * 使用 Java 内置 HttpURLConnection，避免外部依赖
  */
 class OpenCodeRestClient(
-    private val baseUrl: String,
-    private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build()
+    private val baseUrl: String
 ) {
 
     private val gson = Gson()
@@ -29,15 +28,14 @@ class OpenCodeRestClient(
      * 健康检查
      */
     suspend fun healthCheck(): Boolean {
-        val request = Request.Builder()
-            .url("$baseUrl/global/health")
-            .get()
-            .build()
-
         return try {
-            okHttpClient.newCall(request).execute().use { response ->
-                response.isSuccessful
-            }
+            val url = URL("$baseUrl/global/health")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.connectTimeout = 10000
+            connection.readTimeout = 30000
+            connection.requestMethod = "GET"
+            connection.connect()
+            connection.responseCode == 200
         } catch (e: IOException) {
             false
         }
@@ -48,13 +46,8 @@ class OpenCodeRestClient(
      * GET /session
      */
     suspend fun getAllSessions(): Result<List<OpenCodeSession>> {
-        val request = Request.Builder()
-            .url("$baseUrl/session")
-            .get()
-            .build()
-
-        return executeRequest(request) { response ->
-            val json = response.body?.string() ?: "[]"
+        return executeRequest("GET", "/session") { response ->
+            val json = response.body ?: "[]"
             gson.fromJson(json, typeTokenSessionList)
         }
     }
@@ -65,16 +58,9 @@ class OpenCodeRestClient(
      */
     suspend fun createSession(title: String? = null): Result<String> {
         val json = gson.toJson(mapOf("title" to (title ?: "New Session")))
-        val requestBody = RequestBody.create(MediaType.get("application/json; charset=utf-8"), json)
-
-        val request = Request.Builder()
-            .url("$baseUrl/session")
-            .post(requestBody)
-            .build()
-
-        return executeRequest(request) { response ->
-            val json = response.body?.string() ?: "{}"
-            val session = gson.fromJson(json, typeTokenSession)
+        return executeRequest<String>("POST", "/session", json) { response ->
+            val json = response.body ?: "{}"
+            val session = gson.fromJson(json, typeTokenSession) as OpenCodeSession
             session.id
         }
     }
@@ -84,13 +70,8 @@ class OpenCodeRestClient(
      * GET /session/{id}
      */
     suspend fun getSession(sessionId: String): Result<OpenCodeSession> {
-        val request = Request.Builder()
-            .url("$baseUrl/session/$sessionId")
-            .get()
-            .build()
-
-        return executeRequest(request) { response ->
-            val json = response.body?.string() ?: throw IOException("Empty response")
+        return executeRequest("GET", "/session/$sessionId") { response ->
+            val json = response.body ?: throw IOException("Empty response")
             gson.fromJson(json, typeTokenSession)
         }
     }
@@ -100,12 +81,7 @@ class OpenCodeRestClient(
      * DELETE /session/{id}
      */
     suspend fun deleteSession(sessionId: String): Result<Unit> {
-        val request = Request.Builder()
-            .url("$baseUrl/session/$sessionId")
-            .delete()
-            .build()
-
-        return executeRequest(request) { response ->
+        return executeRequest("DELETE", "/session/$sessionId") { response ->
             if (!response.isSuccessful) throw IOException("Failed to delete session: ${response.code}")
             Unit
         }
@@ -117,15 +93,8 @@ class OpenCodeRestClient(
      */
     suspend fun renameSession(sessionId: String, newTitle: String): Result<OpenCodeSession> {
         val json = gson.toJson(mapOf("title" to newTitle))
-        val requestBody = RequestBody.create(MediaType.get("application/json; charset=utf-8"), json)
-
-        val request = Request.Builder()
-            .url("$baseUrl/session/$sessionId")
-            .patch(requestBody)
-            .build()
-
-        return executeRequest(request) { response ->
-            val json = response.body?.string() ?: throw IOException("Empty response")
+        return executeRequest("PATCH", "/session/$sessionId", json) { response ->
+            val json = response.body ?: throw IOException("Empty response")
             gson.fromJson(json, typeTokenSession)
         }
     }
@@ -143,14 +112,7 @@ class OpenCodeRestClient(
             "prompt" to prompt,
             "contextFiles" to contextFiles
         ))
-        val requestBody = RequestBody.create(MediaType.get("application/json; charset=utf-8"), json)
-
-        val request = Request.Builder()
-            .url("$baseUrl/session/$sessionId/prompt_async")
-            .post(requestBody)
-            .build()
-
-        return executeRequest(request) { response ->
+        return executeRequest("POST", "/session/$sessionId/prompt_async", json) { response ->
             if (!response.isSuccessful) throw IOException("Failed to send prompt: ${response.code}")
             Unit
         }
@@ -163,13 +125,8 @@ class OpenCodeRestClient(
     suspend fun getMessages(sessionId: String): Result<List<OpenCodeMessage>> {
         val typeTokenMessageList = object : TypeToken<List<OpenCodeMessage>>() {}.type
 
-        val request = Request.Builder()
-            .url("$baseUrl/session/$sessionId/message")
-            .get()
-            .build()
-
-        return executeRequest(request) { response ->
-            val json = response.body?.string() ?: "[]"
+        return executeRequest("GET", "/session/$sessionId/message") { response ->
+            val json = response.body ?: "[]"
             gson.fromJson(json, typeTokenMessageList)
         }
     }
@@ -184,14 +141,7 @@ class OpenCodeRestClient(
         allow: Boolean
     ): Result<Unit> {
         val json = gson.toJson(mapOf("allow" to allow))
-        val requestBody = RequestBody.create(MediaType.get("application/json; charset=utf-8"), json)
-
-        val request = Request.Builder()
-            .url("$baseUrl/session/$sessionId/permissions/$permissionId")
-            .post(requestBody)
-            .build()
-
-        return executeRequest(request) { response ->
+        return executeRequest("POST", "/session/$sessionId/permissions/$permissionId", json) { response ->
             if (!response.isSuccessful) throw IOException("Failed to reply permission: ${response.code}")
             Unit
         }
@@ -202,30 +152,44 @@ class OpenCodeRestClient(
      * POST /session/{id}/abort
      */
     suspend fun abortExecution(sessionId: String): Result<Unit> {
-        val request = Request.Builder()
-            .url("$baseUrl/session/$sessionId/abort")
-            .post(RequestBody.create(MediaType.get("application/json"), "{}"))
-            .build()
-
-        return executeRequest(request) { response ->
+        return executeRequest("POST", "/session/$sessionId/abort", "{}") { response ->
             if (!response.isSuccessful) throw IOException("Failed to abort: ${response.code}")
             Unit
         }
     }
 
     private suspend fun <T> executeRequest(
-        request: Request,
-        parse: (Response) -> T
+        method: String,
+        path: String,
+        body: String? = null,
+        parse: (HttpResponse) -> T
     ): Result<T> {
         return try {
-            val response = okHttpClient.newCall(request).execute()
-            response.use {
-                if (!it.isSuccessful) {
-                    val errorBody = it.body?.string() ?: "Unknown error"
-                    Result.failure(IOException("HTTP ${it.code}: $errorBody"))
-                } else {
-                    Result.success(parse(it))
-                }
+            val url = URL("$baseUrl$path")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.connectTimeout = 10000
+            connection.readTimeout = 30000
+            connection.requestMethod = method
+            connection.doOutput = body != null
+
+            if (body != null) {
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                connection.outputStream.use { it.write(body.toByteArray()) }
+            }
+
+            val responseCode = connection.responseCode
+            val responseBody = if (connection.responseCode >= 400) {
+                connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+            } else {
+                connection.inputStream.bufferedReader().use { it.readText() }
+            }
+
+            val response = HttpResponse(code = connection.responseCode, body = responseBody)
+
+            if (!response.isSuccessful) {
+                Result.failure(IOException("HTTP ${response.code}: ${response.body}"))
+            } else {
+                Result.success(parse(response))
             }
         } catch (e: IOException) {
             Result.failure(e)
@@ -265,6 +229,13 @@ class OpenCodeRestClient(
         fun isFailure(): Boolean = this is Failure
 
         fun getOrNull(): T? = if (this is Success) value else null
-        fun getOrThrow(): T = if (this is Success) value else throw exception
+        fun getOrThrow(): T = if (this is Success) value else throw (this as Failure).exception
+    }
+
+    private data class HttpResponse(
+        val code: Int,
+        val body: String
+    ) {
+        val isSuccessful: Boolean = code in 200..299
     }
 }
