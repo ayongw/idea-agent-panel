@@ -14,6 +14,7 @@
 | v1.2 | 2026-09-29 | 补齐工具调用链路（`session.tool.*` / `shell.*`）与权限请求（`permission.asked`）实测契约；新增工具流 fixture；确认权限回复枚举与现有 `PermissionDecision` 一致 | agent |
 | v1.3 | 2026-09-29 | S5 落地：按 §5.8 实现 shared DTO/格式化 → backend 解析聚合 → RPC 透传 → 前端指示器；收紧 `formatTokens` 规则（不足 1000 保持原值）；§6/§7 回填实施状态 | agent |
 | v1.4 | 2026-09-29 | S3a 落地：新增 `SessionStreamState`（累积/校准/75 ms 节流/失败可见）与事件客户端生命周期；新增 `getSessionRunningFlow`；§5.5/§5.9 按实际实现收敛（放弃 delta DTO 与 `StreamingRenderController` 分发方案）；§1/§3/§6/§7/§9 同步 | agent |
+| v1.5 | 2026-09-29 | S3b 落地：`ChatList` 按消息 id 就地重渲染气泡、`MessageBubble.renderedContent`、`sessionRunningFlow` 接线（发送/停止切换 + 结束后刷新用量）、「停止」真实中断服务端执行；§6/§7/§9 回填 | agent |
 
 ---
 
@@ -337,8 +338,9 @@ sealed class OpenCodeEvent {
 | `opencode-backend/.../BackendChatRepositoryRpcApi.kt` | 修改：`getSessionRunningFlow` 透传 | **已实施（S3a）** |
 | `src/test/.../SessionStreamStateUnitTest.kt` | 新增：回放三个真实 fixture，覆盖累积/校准/多段拼接/节流/运行态/失败可见/重置（11 例） | **已实施（S3a）** |
 | `opencode-shared/.../SessionState.kt` | 原计划为 `SessionStateDto` 增加 `delta`、`durableSeq` | **不再需要**（改为后端合并累计全文，见 §5.5） |
-| `opencode-frontend/.../chatApp/ui/ChatList.kt` | 修改：已有气泡内容变化时就地刷新（流式可见） | 待实施（S3b） |
-| `opencode-frontend/.../viewmodel/*`（`ChatRepositoryApi` / `FrontendChatRepositoryModel` / `ChatViewModel`） | 修改：`sessionRunningFlow` 接线；运行中切「停止」态、结束后回可发送并刷新用量 | 待实施（S3b） |
+| `opencode-frontend/.../chatApp/ui/ChatList.kt` | 修改：`syncExistingMessages` 对已存在 id 的消息按内容变化就地重渲染（TEXT → `updateStreamingText`，AI_THINKING → `updateReasoningContent`）；删除原「疑似流式」启发式 | **已实施（S3b）** |
+| `opencode-frontend/.../chatApp/ui/MessageItem.kt` | 修改：暴露 `renderedContent`（供上游比对是否需要重渲染；思考消息初始为动画故为空串） | **已实施（S3b）** |
+| `opencode-frontend/.../viewmodel/*`（`ChatRepositoryApi` / `FrontendChatRepositoryModel` / `ChatViewModel`） | 修改：`sessionRunningFlow` 接线（切换/新建/删除会话时重启订阅）；运行中切「停止」、结束后回可发送并刷新用量；`onAbortSendingMessage` 真实调用 `abortExecution` | **已实施（S3b）** |
 | `opencode-event 前端 delta 分发`（原 `StreamingRenderController` 方案） | 该方案未落地：`StreamingRenderController` 仅保留 `cancelStreaming` 用于清空 | **已收敛** |
 | `src/test/.../OpenCodeEventParserUnitTest.kt` | 新增：解析纯函数用例（含心跳、未知类型、缺字段、非 JSON） | **已实施** |
 | `src/test/.../OpenCodeEventClientUnitTest.kt` | 新增：MockWebServer 回放 fixture（正常流、重复、断线重连、401、半途关闭） | **已实施** |
@@ -363,7 +365,7 @@ sealed class OpenCodeEvent {
 |---|---|---|---|
 | **S1 抓帧定契约** | 起真实实例抓取成功流、失败流、工具调用流（含权限请求）的帧，确认事件名/payload/心跳/鉴权；固化 fixture；回填 §4 | §4 待确认项有实测答案，fixture 入库 | **已完成（2026-09-29）** |
 | **S2 客户端** | 依赖接入 + `OpenCodeEventParser` + `OpenCodeEventClient`（重连/读超时存活/停止） | MockWebServer 回放 fixture 单测全绿 | **已完成（2026-09-29）**：12 例事件单测通过 |
-| **S3 通路打通** | 事件 → 流式状态机 → 消息列表（75 ms 节流）→ RPC Flow → 前端就地刷新气泡；运行态驱动「发送/停止」 | 真实连接集成验证通过：面板逐字输出、思考过程可见、首 token 明显提前 | **S3a 后端已完成（2026-09-29）**；S3b 前端接线待实施 |
+| **S3 通路打通** | 事件 → 流式状态机 → 消息列表（75 ms 节流）→ RPC Flow → 前端就地刷新气泡；运行态驱动「发送/停止」 | 真实连接集成验证通过：面板逐字输出、思考过程可见、首 token 明显提前 | **已完成（2026-09-29）**：S3a 后端 + S3b 前端；真实连接验收见 §9.1/§9.3（待手工执行） |
 | **S4 容错收口** | 对账兜底、权限卡片联调、中断清理、401 处理、包体与 README 同步 | 断开 server 重连自愈；权限允许/拒绝闭环；包体核对完成 | 待实施 |
 | **S5 用量与占比** | 输入框下方展示当前会话 token 用量与上下文占比（REST 拉取：会话累计用量 + 最近一次 step 的 input + 模型上下文窗口） | 切换/发送/中止/切模型后指示器更新；无窗口不显占比、无数据整块隐藏；`ContextUsageFormatter` 单测全绿 | **已完成（2026-09-29）** |
 
@@ -401,6 +403,8 @@ sealed class OpenCodeEvent {
 | `OpenCodeEventParserUnitTest` | 单元（JUnit 4） | 回放两个真实 fixture；心跳帧忽略、未知类型计数、字段缺失、非 JSON `data`、多行 `data` 拼接 |
 | `OpenCodeEventClientUnitTest` | 单元（MockWebServer） | 正常流、重复事件、断线重连（校验退避与对账调用）、401、服务端半途关闭、心跳超时触发重建 |
 | `SessionStreamStateUnitTest` | 单元（JUnit 4） | 回放三个真实 fixture：按 `(messageID, ordinal)` 累积、`ended` 全文覆盖校准、多段拼接顺序、75 ms 节流发布、运行态生命周期、失败可见（含缺 message 兜底）、无关事件不发布、`reset` 清空 |
+
+> 前端 `ChatList` 的增量刷新与「发送/停止」切换依赖 Swing 组件，仓库暂无前端测试沙箱，由 §9.3 手工验收覆盖。
 
 ### 9.3 手工验收
 

@@ -14,7 +14,7 @@ IntelliJ IDEA 插件，在 IDE 内集成 [OpenCode](https://opencode.ai/) AI 编
 | 功能 | 说明 |
 |------|------|
 | **原生 Tool Window** | 右侧边栏面板，纯 Swing 实现，零额外依赖，启动极快 |
-| **流式对话** | 75ms 批量刷新，首 token < 100ms，Markdown 实时渲染 |
+| **流式对话** | 回复与思考过程按事件流逐字上屏（后端 75ms 节流），Markdown 实时渲染 |
 | **代码块高亮** | `EditorTextField` 真实编辑器组件，语法高亮与主编辑器一致 |
 | **思考过程** | 可折叠面板展示 AI 推理过程，流式期间自动展开 |
 | **权限确认** | 内联卡片非模态交互：允许一次 / 始终允许 / 拒绝 |
@@ -155,8 +155,8 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 | 场景 | 实现方案 |
 |------|----------|
 | Server 进程管理 | `OSProcessHandler` + 随机端口 + 健康检查轮询 |
-| SSE 事件流 | `okhttp-sse` EventSource 客户端已就绪（端点 `/api/event`，指数退避重连 + 读超时存活判定）；事件到面板状态的接线见 [TSD-06](docs/tsd/TSD-06-事件流接入设计.md) |
-| 流式渲染 | `ConcurrentHashMap` 缓冲区 + 75ms `javax.swing.Timer` 批量刷新 |
+| SSE 事件流 | `okhttp-sse` EventSource 客户端（端点 `/api/event`，指数退避重连 + 读超时存活判定）已接入会话状态：流式内容与执行态经 RPC 推到面板（见 [TSD-06](docs/tsd/TSD-06-事件流接入设计.md)） |
+| 流式渲染 | 后端按事件流累积内容并 75ms 节流推送，前端按消息 id 就地重渲染气泡（气泡内容未变则跳过） |
 | 代码块渲染 | `EditorTextField` (真实编辑器) + `JBHtmlPane` (文本) |
 | 跨进程通信 | Fleet RPC (`@Rpc` 接口 + `RemoteApiProvider`) |
 | 上下文收集 | `Editor`/`PsiFile`/`Project` API + 右键菜单 Action |

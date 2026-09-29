@@ -37,6 +37,10 @@ class MessageBubble(
     /** 当前渲染的内容段落 */
     private var currentSegments: List<MarkdownSegment> = emptyList()
 
+    /** 当前已渲染的内容（供上游按消息 id 判断是否需要重渲染；思考消息初始只渲染动画，故为空） */
+    var renderedContent: String = if (message.isAIThinkingMessage()) "" else message.content
+        private set
+
     init {
         setupAppearance()
 
@@ -132,6 +136,7 @@ class MessageBubble(
             remove(container)
             val newContainer = buildContentContainer(newContent)
             contentContainer = newContainer
+            renderedContent = newContent
             add(newContainer, 2) // Insert after author name and spacer
             revalidate()
             repaint()
@@ -156,6 +161,7 @@ class MessageBubble(
             add(AuthorName(message))
             add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.MEDIUM)))
             contentContainer = buildReasoningContent(content)
+            renderedContent = content
             add(contentContainer!!)
             revalidate()
             repaint()

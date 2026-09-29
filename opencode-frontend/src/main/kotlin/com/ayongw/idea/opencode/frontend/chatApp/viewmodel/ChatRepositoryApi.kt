@@ -34,6 +34,12 @@ interface ChatRepositoryApi {
     val currentSessionId: StateFlow<String?>
 
     /**
+     * Whether the current session is executing (driven by the server event stream).
+     * Drives the input box between "send" and "stop".
+     */
+    val sessionRunningFlow: StateFlow<Boolean>
+
+    /**
      * Sends a message with the provided content.
      *
      * @param messageContent The content of the message to be sent.

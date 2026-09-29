@@ -8,6 +8,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.platform.project.projectId
 import fleet.rpc.client.durable
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -40,6 +41,10 @@ class FrontendChatRepositoryModel(
     private val _allSessionsFlow = MutableStateFlow(emptyList<SessionStateDto>())
     private val _serverConnectedFlow = MutableStateFlow(false)
     private val _currentSessionId = MutableStateFlow<String?>(null)
+    private val _sessionRunningFlow = MutableStateFlow(false)
+
+    /** 当前会话执行状态订阅任务（切换会话时重启） */
+    private var runningJob: Job? = null
 
     override val messagesFlow: StateFlow<List<ChatMessage>> = flow {
         durable {
@@ -56,6 +61,8 @@ class FrontendChatRepositoryModel(
 
     override val currentSessionId: StateFlow<String?> = _currentSessionId
 
+    override val sessionRunningFlow: StateFlow<Boolean> = _sessionRunningFlow
+
     override suspend fun sendMessage(messageContent: String) {
         ChatRepositoryRpcApi.getInstance().sendMessage(project.projectId(), messageContent)
     }
@@ -63,6 +70,7 @@ class FrontendChatRepositoryModel(
     override suspend fun createSession(initialTitle: String?): String {
         val sessionId = ChatRepositoryRpcApi.getInstance().createSession(project.projectId(), initialTitle)
         _currentSessionId.value = sessionId
+        refreshRunning()
         coroutineScope.launch { refreshSessions() }
         return sessionId
     }
@@ -70,6 +78,7 @@ class FrontendChatRepositoryModel(
     override suspend fun switchSession(sessionId: String) {
         ChatRepositoryRpcApi.getInstance().switchSession(project.projectId(), sessionId)
         _currentSessionId.value = sessionId
+        refreshRunning()
         coroutineScope.launch { refreshSessions() }
     }
 
@@ -77,6 +86,7 @@ class FrontendChatRepositoryModel(
         ChatRepositoryRpcApi.getInstance().deleteSession(project.projectId(), sessionId)
         if (_currentSessionId.value == sessionId) {
             _currentSessionId.value = null
+            refreshRunning()
         }
         coroutineScope.launch { refreshSessions() }
     }
@@ -126,6 +136,21 @@ class FrontendChatRepositoryModel(
         coroutineScope.launch {
             ChatRepositoryRpcApi.getInstance().getAllSessions(project.projectId()).collect { sessions ->
                 _allSessionsFlow.value = sessions
+            }
+        }
+    }
+
+    /** 订阅当前会话的执行状态（切换会话时重启，无当前会话时固定为 false） */
+    private fun refreshRunning() {
+        runningJob?.cancel()
+        val sessionId = _currentSessionId.value
+        if (sessionId == null) {
+            _sessionRunningFlow.value = false
+            return
+        }
+        runningJob = coroutineScope.launch {
+            ChatRepositoryRpcApi.getInstance().getSessionRunningFlow(project.projectId(), sessionId).collect {
+                _sessionRunningFlow.value = it
             }
         }
     }

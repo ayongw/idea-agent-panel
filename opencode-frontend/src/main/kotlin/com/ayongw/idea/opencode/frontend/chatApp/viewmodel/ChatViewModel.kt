@@ -15,6 +15,9 @@ interface ChatViewModelApi : Disposable {
     val serverConnectedFlow: StateFlow<Boolean>
     val currentSessionId: StateFlow<String?>
 
+    /** 当前会话是否正在执行（事件流驱动，决定输入框显示「发送」还是「停止」） */
+    val sessionRunningFlow: StateFlow<Boolean>
+
     fun onPromptInputChanged(input: String)
 
     fun onSendMessage()
@@ -89,6 +92,8 @@ class ChatViewModel(
 
     override val currentSessionId: StateFlow<String?> = repository.currentSessionId
 
+    override val sessionRunningFlow: StateFlow<Boolean> = repository.sessionRunningFlow
+
     private val searchChatMessagesHandler: SearchChatMessagesHandler = SearchChatMessagesHandlerImpl(
         coroutineScope = coroutineScope,
         messagesFlow = repository.messagesFlow
@@ -108,7 +113,25 @@ class ChatViewModel(
                 _currentSessionId.value = sessionId
             }.launchIn(coroutineScope)
         }
+
+        // 执行态：运行中切「停止」，结束后回到可发送并刷新用量
+        coroutineScope.launch {
+            repository.sessionRunningFlow.collect { running ->
+                if (running) {
+                    emitPromptInputState(MessageInputState.Sending(""))
+                } else {
+                    emitPromptInputState(idlePromptInputState())
+                    refreshUsage()
+                }
+            }
+        }
     }
+
+    private fun idlePromptInputState(): MessageInputState =
+        when (val input = getCurrentInputTextIfNotEmpty()) {
+            null -> MessageInputState.Disabled
+            else -> MessageInputState.Enabled(input)
+        }
 
     private val _currentSessionId = MutableStateFlow<String?>(null)
 
@@ -149,14 +172,15 @@ class ChatViewModel(
                 emitPromptInputState(MessageInputState.Sending(""))
 
                 repository.sendMessage(currentUserMessage)
-                refreshUsage()
 
-                emitPromptInputState(
-                    when (val currentInputState = getCurrentInputTextIfNotEmpty()) {
-                        null -> MessageInputState.Disabled
-                        else -> MessageInputState.Enabled(currentInputState)
-                    }
-                )
+                if (repository.sessionRunningFlow.value) {
+                    // 事件流已开始：保持「停止」态，结束后由执行态订阅恢复
+                    emitPromptInputState(MessageInputState.Sending(""))
+                } else {
+                    // 事件流不可用（如服务不可达走本地兜底）：立即恢复可发送
+                    emitPromptInputState(idlePromptInputState())
+                    refreshUsage()
+                }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
 
@@ -167,14 +191,10 @@ class ChatViewModel(
 
     override fun onAbortSendingMessage() {
         currentSendMessageJob?.cancel()
+        // 真正中断服务端执行（否则「停止」只停了本地等待）
+        coroutineScope.launch { runCatching { repository.abortExecution() } }
+        emitPromptInputState(idlePromptInputState())
         refreshUsage()
-
-        emitPromptInputState(
-            when (val currentPromptInput = getCurrentInputTextIfNotEmpty()) {
-                null -> MessageInputState.Disabled
-                else -> MessageInputState.Enabled(currentPromptInput)
-            }
-        )
     }
 
     override fun createSession(initialTitle: String?) {

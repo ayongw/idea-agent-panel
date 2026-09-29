@@ -114,8 +114,8 @@ class ChatList(private val project: Project) : JPanel() {
             showMessagesPanel()
         }
 
-        // 检测流式消息并更新控制器
-        detectAndHandleStreaming(messages)
+        // 已有气泡：内容变化时就地重渲染（事件流累积的流式内容）
+        syncExistingMessages(messages)
 
         removeDeletedMessages(messages)
         removeSpaceFillerIfPresent()
@@ -127,26 +127,20 @@ class ChatList(private val project: Project) : JPanel() {
     }
 
     /**
-     * 检测流式消息并同步到 StreamingRenderController
+     * 已存在的气泡：内容变化时就地重渲染。
+     *
+     * 事件流按消息 id 推送累计全文，这里只做「内容是否变化」的比较，
+     * 不做全量 diff（新消息由 [addNewMessages] 负责建气泡）。
      */
-    private fun detectAndHandleStreaming(messages: List<ChatMessage>) {
-        // 查找当前正在流式的消息
-        val streamingMessages = messages.filter { msg ->
-            // 检查消息是否为 AI 且内容正在增长（简单启发式）
-            !msg.isMyMessage && msg.type == ChatMessage.ChatMessageType.TEXT && isLikelyStreaming(msg)
+    private fun syncExistingMessages(messages: List<ChatMessage>) {
+        messages.forEach { message ->
+            val bubble = messageBubbles[message.id] ?: return@forEach
+            if (bubble.renderedContent == message.content) return@forEach
+            when {
+                message.isAIThinkingMessage() -> bubble.updateReasoningContent(message.content)
+                message.isTextMessage() -> bubble.updateStreamingText(message.content)
+            }
         }
-
-        // 这里可以添加更复杂的流式检测逻辑
-        // 目前由后端模拟流式，前端通过消息内容变化检测
-    }
-
-    /**
-     * 简单启发式：判断消息是否可能正在流式传输
-     * 实际项目中应通过事件流或专门字段判断
-     */
-    private fun isLikelyStreaming(message: ChatMessage): Boolean {
-        // 如果消息内容较短且以不完整句子结尾，可能正在流式
-        return message.content.length < 500 && !message.content.endsWith(".") && !message.content.endsWith("。")
     }
 
     fun updateSearchHighlights(searchState: SearchState) {

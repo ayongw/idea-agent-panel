@@ -343,6 +343,9 @@ class BackendChatRepositoryModel : Disposable {
     suspend fun abortExecution() {
         currentSessionId?.let { sessionId ->
             restClient.interruptSession(sessionId)
+            // 中断：清空流式缓冲并立即退出「执行中」，避免事件缺失时 UI 卡在「停止」态
+            streamState.reset()
+            _sessionRunning.value = false
             _messages.value = _messages.value.filter { !it.isAIThinkingMessage() }
         }
     }
