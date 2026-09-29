@@ -23,6 +23,7 @@ import com.ayongw.idea.opencode.shared.ChatRepositoryRpcApi
 import com.ayongw.idea.opencode.shared.ModelDto
 import com.ayongw.idea.opencode.shared.PermissionResponse
 import com.ayongw.idea.opencode.shared.SessionStateDto
+import com.ayongw.idea.opencode.shared.SessionUsageDto
 import com.ayongw.idea.opencode.shared.toChatMessage
 
 @Service(Level.PROJECT)
@@ -114,6 +115,11 @@ class FrontendChatRepositoryModel(
         _currentSessionId.value?.let { sessionId ->
             ChatRepositoryRpcApi.getInstance().switchModel(project.projectId(), sessionId, providerID, modelID)
         }
+    }
+
+    override suspend fun getSessionUsage(): SessionUsageDto? {
+        val sessionId = _currentSessionId.value ?: return null
+        return ChatRepositoryRpcApi.getInstance().getSessionUsage(project.projectId(), sessionId)
     }
 
     private fun refreshSessions() {

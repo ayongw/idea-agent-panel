@@ -8,6 +8,8 @@ import com.ayongw.idea.opencode.backend.repository.OpenCodeCredentials
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ChatMessageDto
+import com.ayongw.idea.opencode.shared.SessionUsageDto
+import com.ayongw.idea.opencode.shared.TokenUsageDto
 import com.ayongw.idea.opencode.shared.toChatMessageDto
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
@@ -280,6 +282,38 @@ class BackendChatRepositoryModel {
     suspend fun switchModel(sessionId: String, providerId: String, modelId: String) {
         restClient.switchModel(sessionId, providerId, modelId).getOrThrow()
     }
+
+    /**
+     * 会话用量快照：累计 tokens/cost + 最近一次 step 的 input（占比分子）+ 当前模型上下文窗口（分母）
+     */
+    suspend fun getSessionUsage(sessionId: String): SessionUsageDto {
+        val session = restClient.getSession(sessionId).getOrThrow()
+        val lastStepInput = restClient.getMessages(sessionId).getOrNull()
+            ?.asReversed()
+            ?.firstOrNull { it.role == "assistant" && it.inputTokens != null }
+            ?.inputTokens
+        return SessionUsageDto(
+            tokens = session.tokens?.toDto() ?: TokenUsageDto(),
+            cost = session.costUsd,
+            lastStepInputTokens = lastStepInput,
+            contextWindow = resolveContextWindow(session.providerId, session.modelId)
+        )
+    }
+
+    /** 按当前会话模型匹配上下文窗口；模型未匹配到或服务不可达时返回 null（UI 不展示占比） */
+    private suspend fun resolveContextWindow(providerId: String?, modelId: String?): Long? {
+        if (providerId.isNullOrBlank() || modelId.isNullOrBlank()) return null
+        val models = runCatching { listModels() }.getOrNull() ?: return null
+        return models.firstOrNull { it.providerID == providerId && it.modelID == modelId }?.limitContext
+    }
+
+    private fun OpenCodeRestClient.OpenCodeTokenUsage.toDto() = TokenUsageDto(
+        input = input,
+        output = output,
+        reasoning = reasoning,
+        cacheRead = cacheRead,
+        cacheWrite = cacheWrite
+    )
 
     /**
      * 本地模拟模式（服务器不可用时的 fallback）

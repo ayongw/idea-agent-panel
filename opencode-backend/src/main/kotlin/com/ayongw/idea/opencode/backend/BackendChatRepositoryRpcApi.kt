@@ -13,6 +13,7 @@ import com.ayongw.idea.opencode.shared.MessagePartDto
 import com.ayongw.idea.opencode.shared.PermissionResponse
 import com.ayongw.idea.opencode.shared.ServerInfoDto
 import com.ayongw.idea.opencode.shared.SessionStateDto
+import com.ayongw.idea.opencode.shared.SessionUsageDto
 import com.intellij.platform.project.ProjectId
 import com.intellij.platform.project.findProjectOrNull
 import kotlinx.coroutines.flow.Flow
@@ -184,7 +185,15 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
     override suspend fun listModels(projectId: ProjectId): List<ModelDto> {
         val backendProject = projectId.findProjectOrNull() ?: return emptyList()
         return BackendChatRepositoryModel.getInstance(backendProject).listModels()
-            .map { ModelDto(id = it.id, modelID = it.modelID, providerID = it.providerID, name = it.name) }
+            .map {
+                ModelDto(
+                    id = it.id,
+                    modelID = it.modelID,
+                    providerID = it.providerID,
+                    name = it.name,
+                    contextWindow = it.limitContext
+                )
+            }
     }
 
     override suspend fun switchAgent(projectId: ProjectId, sessionId: String, agentId: String) {
@@ -195,6 +204,17 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
     override suspend fun switchModel(projectId: ProjectId, sessionId: String, providerID: String, modelID: String) {
         val backendProject = projectId.findProjectOrNull() ?: return
         BackendChatRepositoryModel.getInstance(backendProject).switchModel(sessionId, providerID, modelID)
+    }
+
+    override suspend fun getSessionUsage(projectId: ProjectId, sessionId: String): SessionUsageDto {
+        val backendProject = projectId.findProjectOrNull() ?: return SessionUsageDto()
+        return try {
+            BackendChatRepositoryModel.getInstance(backendProject).getSessionUsage(sessionId)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            SessionUsageDto()
+        }
     }
 
     private fun parsePort(serverUrl: String): Int? =

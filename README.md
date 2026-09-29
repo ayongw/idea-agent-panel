@@ -20,6 +20,7 @@ IntelliJ IDEA 插件，在 IDE 内集成 [OpenCode](https://opencode.ai/) AI 编
 | **权限确认** | 内联卡片非模态交互：允许一次 / 始终允许 / 拒绝 |
 | **上下文注入** | 当前文件、选中代码、光标位置、显式添加文件一键注入 |
 | **会话管理** | 左侧会话列表，支持创建、切换、删除、重命名 |
+| **用量与上下文占比** | 输入框下方展示当前会话 token 用量（含缓存）与上下文占用比例，接近窗口上限时警示 |
 | **本地 Server 管理** | 自动启动/复用 `opencode serve`，健康检查、优雅终止 |
 
 ---
@@ -106,8 +107,8 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 | Gson | IDE 自带（2026.1 起为 2.13.x） | JSON 序列化，`compileOnly` 不随插件打包 |
 | kotlinx-serialization | 1.9.0 | RPC DTO 序列化 |
 | HTTP 客户端（REST） | JDK `HttpClient` / `HttpURLConnection`（内置） | 当前实现的 OpenCode Server REST 调用 |
-| OkHttp | 4.12.0 | 方案既定，事件流接入时启用（当前未打包） |
-| okhttp-sse | 4.12.0 | 方案既定，事件流（`/api/event`）接入时启用（当前未打包） |
+| OkHttp | 4.12.0 | SSE 事件流（`/api/event`）客户端，随 `opencode-backend` 打包 |
+| okhttp-sse | 4.12.0 | 事件流帧解析（`EventSource`），随 `opencode-backend` 打包 |
 | JetBrains Markdown | 0.7.3 | Markdown → HTML 渲染 |
 
 ---
@@ -154,7 +155,7 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 | 场景 | 实现方案 |
 |------|----------|
 | Server 进程管理 | `OSProcessHandler` + 随机端口 + 健康检查轮询 |
-| SSE 事件流 | 待接入：`okhttp-sse` EventSource + 后台线程 + 自动重连（端点 `/api/event`） |
+| SSE 事件流 | `okhttp-sse` EventSource 客户端已就绪（端点 `/api/event`，指数退避重连 + 读超时存活判定）；事件到面板状态的接线见 [TSD-06](docs/tsd/TSD-06-事件流接入设计.md) |
 | 流式渲染 | `ConcurrentHashMap` 缓冲区 + 75ms `javax.swing.Timer` 批量刷新 |
 | 代码块渲染 | `EditorTextField` (真实编辑器) + `JBHtmlPane` (文本) |
 | 跨进程通信 | Fleet RPC (`@Rpc` 接口 + `RemoteApiProvider`) |

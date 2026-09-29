@@ -392,6 +392,7 @@ class OpenCodeRestClient(
     private fun parseSession(session: JsonObject): OpenCodeSession {
         val time = session.getAsJsonObject("time")
         val location = session.getAsJsonObject("location")
+        val model = session.getAsJsonObject("model")
         return OpenCodeSession(
             id = session.string("id").orEmpty(),
             title = session.string("title").orEmpty(),
@@ -399,7 +400,11 @@ class OpenCodeRestClient(
             updatedAtMillis = time?.long("updated") ?: 0L,
             agent = session.string("agent"),
             outcome = session.string("outcome"),
-            directory = location?.string("directory")
+            directory = location?.string("directory"),
+            costUsd = session.doubleOrNull("cost"),
+            tokens = parseTokenUsage(session.getAsJsonObject("tokens")),
+            modelId = model?.string("id"),
+            providerId = model?.string("providerID")
         )
     }
 
@@ -410,9 +415,28 @@ class OpenCodeRestClient(
         val createdMillis = message.getAsJsonObject("time")?.long("created") ?: 0L
         return when (type) {
             "user" -> OpenCodeMessage(id, "user", message.string("text").orEmpty(), createdMillis)
-            "assistant" -> OpenCodeMessage(id, "assistant", assistantText(message.getAsJsonArray("content")), createdMillis)
+            "assistant" -> OpenCodeMessage(
+                id = id,
+                role = "assistant",
+                content = assistantText(message.getAsJsonArray("content")),
+                createdMillis = createdMillis,
+                inputTokens = parseTokenUsage(message.getAsJsonObject("tokens"))?.input
+            )
             else -> null
         }
+    }
+
+    /** `TokenUsage.Info` → 内部模型；字段缺失时按 0 计 */
+    private fun parseTokenUsage(obj: JsonObject?): OpenCodeTokenUsage? {
+        if (obj == null) return null
+        val cache = obj.getAsJsonObject("cache")
+        return OpenCodeTokenUsage(
+            input = obj.long("input"),
+            output = obj.long("output"),
+            reasoning = obj.long("reasoning"),
+            cacheRead = cache?.long("read") ?: 0L,
+            cacheWrite = cache?.long("write") ?: 0L
+        )
     }
 
     private fun assistantText(content: JsonArray?): String {
@@ -436,7 +460,8 @@ class OpenCodeRestClient(
         id = model.string("id").orEmpty(),
         modelID = model.string("modelID").orEmpty(),
         providerID = model.string("providerID").orEmpty(),
-        name = model.string("name").orEmpty()
+        name = model.string("name").orEmpty(),
+        limitContext = model.getAsJsonObject("limit")?.longOrNull("context")
     )
 
     private fun encodePath(segment: String): String = URLEncoder.encode(segment, "UTF-8")
@@ -446,6 +471,12 @@ class OpenCodeRestClient(
 
     private fun JsonObject.long(name: String): Long =
         get(name)?.takeIf { it.isJsonPrimitive }?.asLong ?: 0L
+
+    private fun JsonObject.longOrNull(name: String): Long? =
+        get(name)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asLong
+
+    private fun JsonObject.doubleOrNull(name: String): Double? =
+        get(name)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asDouble
 
     // ==================== 数据模型 ====================
 
@@ -463,14 +494,33 @@ class OpenCodeRestClient(
         val updatedAtMillis: Long,
         val agent: String? = null,
         val outcome: String? = null,
-        val directory: String? = null
+        val directory: String? = null,
+        /** 会话累计花费（USD） */
+        val costUsd: Double? = null,
+        /** 会话累计 token 用量 */
+        val tokens: OpenCodeTokenUsage? = null,
+        /** 当前会话模型 ID（`model.id`），用于匹配上下文窗口 */
+        val modelId: String? = null,
+        /** 当前会话模型供应商（`model.providerID`） */
+        val providerId: String? = null
     )
 
     data class OpenCodeMessage(
         val id: String,
         val role: String,
         val content: String,
-        val createdMillis: Long
+        val createdMillis: Long,
+        /** 助手消息本次 step 的 input tokens（上下文占比分子）；用户消息或字段缺失为 null */
+        val inputTokens: Long? = null
+    )
+
+    /** `TokenUsage.Info`：会话/助手消息的 token 用量 */
+    data class OpenCodeTokenUsage(
+        val input: Long,
+        val output: Long,
+        val reasoning: Long,
+        val cacheRead: Long,
+        val cacheWrite: Long
     )
 
     /** Agent（模式），对应 v2 Agent.Info */
@@ -487,7 +537,9 @@ class OpenCodeRestClient(
         val id: String,
         val modelID: String,
         val providerID: String,
-        val name: String
+        val name: String,
+        /** 上下文窗口（`limit.context`），未知为 null */
+        val limitContext: Long? = null
     )
 
     sealed class Result<out T> {

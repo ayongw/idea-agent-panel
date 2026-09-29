@@ -138,6 +138,12 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
      * 切换当前会话的模型，对应 v2 POST /api/session/{sessionID}/model
      */
     suspend fun switchModel(projectId: ProjectId, sessionId: String, providerID: String, modelID: String)
+
+    /**
+     * 获取指定会话的用量快照（累计 tokens/cost + 最近一次 step 的 input + 模型上下文窗口）
+     * @return 服务不可达或无数据时返回空的 [SessionUsageDto]
+     */
+    suspend fun getSessionUsage(projectId: ProjectId, sessionId: String): SessionUsageDto
 }
 
 /** Server 连接信息 */

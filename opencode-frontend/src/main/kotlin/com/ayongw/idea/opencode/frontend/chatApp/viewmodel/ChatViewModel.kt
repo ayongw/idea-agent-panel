@@ -7,6 +7,7 @@ import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ModelDto
 import com.ayongw.idea.opencode.shared.SessionStateDto
+import com.ayongw.idea.opencode.shared.SessionUsageDto
 
 interface ChatViewModelApi : Disposable {
     val chatMessagesFlow: StateFlow<List<ChatMessage>>
@@ -62,6 +63,12 @@ interface ChatViewModelApi : Disposable {
     fun switchModel(model: ModelDto)
 
     fun setApprovalMode(mode: ApprovalMode)
+
+    /** 当前会话用量（累计 token / 上下文占比）；无数据显示时为 null */
+    val usageFlow: StateFlow<SessionUsageDto?>
+
+    /** 拉取当前会话用量（切换会话 / 发送 / 中止 / 切换模型后调用） */
+    fun refreshUsage()
 }
 
 class ChatViewModel(
@@ -123,6 +130,9 @@ class ChatViewModel(
     private val _approvalMode = MutableStateFlow(ApprovalMode.AUTO)
     override val approvalMode: StateFlow<ApprovalMode> = _approvalMode.asStateFlow()
 
+    private val _usageFlow = MutableStateFlow<SessionUsageDto?>(null)
+    override val usageFlow: StateFlow<SessionUsageDto?> = _usageFlow.asStateFlow()
+
     override fun onPromptInputChanged(input: String) {
         val currentPromptInputState = _promptInputState.value
         _promptInputState.value = when {
@@ -139,6 +149,7 @@ class ChatViewModel(
                 emitPromptInputState(MessageInputState.Sending(""))
 
                 repository.sendMessage(currentUserMessage)
+                refreshUsage()
 
                 emitPromptInputState(
                     when (val currentInputState = getCurrentInputTextIfNotEmpty()) {
@@ -156,6 +167,7 @@ class ChatViewModel(
 
     override fun onAbortSendingMessage() {
         currentSendMessageJob?.cancel()
+        refreshUsage()
 
         emitPromptInputState(
             when (val currentPromptInput = getCurrentInputTextIfNotEmpty()) {
@@ -169,6 +181,8 @@ class ChatViewModel(
         coroutineScope.launch {
             val sessionId = repository.createSession(initialTitle)
             openTab(sessionId)
+            _usageFlow.value = null
+            refreshUsage()
         }
     }
 
@@ -176,6 +190,14 @@ class ChatViewModel(
         coroutineScope.launch {
             repository.switchSession(sessionId)
             openTab(sessionId)
+            _usageFlow.value = null
+            refreshUsage()
+        }
+    }
+
+    override fun refreshUsage() {
+        coroutineScope.launch {
+            _usageFlow.value = runCatching { repository.getSessionUsage() }.getOrNull()
         }
     }
 
@@ -216,7 +238,10 @@ class ChatViewModel(
     override fun switchModel(model: ModelDto) {
         coroutineScope.launch {
             runCatching { repository.switchModel(model.providerID, model.modelID) }
-                .onSuccess { _selectedModel.value = model }
+                .onSuccess {
+                    _selectedModel.value = model
+                    refreshUsage()
+                }
         }
     }
 
@@ -227,6 +252,7 @@ class ChatViewModel(
     override fun deleteSession(sessionId: String) {
         coroutineScope.launch {
             repository.deleteSession(sessionId)
+            if (_currentSessionId.value == null) _usageFlow.value = null
         }
     }
 

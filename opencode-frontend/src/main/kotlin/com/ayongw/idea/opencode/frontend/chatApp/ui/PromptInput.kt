@@ -12,6 +12,7 @@ import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppIcons
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatUIConstants
 import com.ayongw.idea.opencode.frontend.chatApp.viewmodel.MessageInputState
 import com.ayongw.idea.opencode.shared.ContextFile
+import com.ayongw.idea.opencode.shared.SessionUsageDto
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
@@ -46,6 +47,7 @@ class PromptInput(
     private val textArea: JBTextArea
     private val scrollPane: JBScrollPane
     private val sendButton: JButton
+    private val usageIndicator = ContextUsageIndicator()
 
     private var currentState: MessageInputState = MessageInputState.Enabled("")
     private var skipInputChangeUpdate = false
@@ -78,12 +80,18 @@ class PromptInput(
     }
 
     /**
-     * 底部工具条一行：审核类型 / 模式 / 模型
+     * 底部工具条一行：左侧审核类型 / 模式 / 模型，右侧会话用量与上下文占比
      */
     private fun createToolbarRow() = JPanel(BorderLayout()).apply {
         isOpaque = false
         border = JBUI.Borders.emptyTop(JBUI.scale(ChatUIConstants.Spacing.MEDIUM))
         add(inputToolbar, BorderLayout.WEST)
+        add(usageIndicator, BorderLayout.EAST)
+    }
+
+    /** 更新会话用量展示（由外层订阅 ViewModel 状态后调用） */
+    fun updateUsage(usage: SessionUsageDto?) {
+        usageIndicator.updateUsage(usage)
     }
 
     private fun setupAppearance() {

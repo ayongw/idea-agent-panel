@@ -12,6 +12,7 @@
 | v1.0 | 2026-09-29 | 初始版本：现状盘点、选型决议（okhttp + okhttp-sse）、客户端设计、增量语义、阶段计划与测试策略 | agent |
 | v1.1 | 2026-09-29 | 回填真实抓帧实测契约（§4）；修正 v1.0 两处错误假设：SSE 帧无 `event:` 行、delta 事件不带 `durable.seq`；增量改为「delta 累积 + ended 全文校准」；补真实连接集成验证（§9） | agent |
 | v1.2 | 2026-09-29 | 补齐工具调用链路（`session.tool.*` / `shell.*`）与权限请求（`permission.asked`）实测契约；新增工具流 fixture；确认权限回复枚举与现有 `PermissionDecision` 一致 | agent |
+| v1.3 | 2026-09-29 | S5 落地：按 §5.8 实现 shared DTO/格式化 → backend 解析聚合 → RPC 透传 → 前端指示器；收紧 `formatTokens` 规则（不足 1000 保持原值）；§6/§7 回填实施状态 | agent |
 
 ---
 
@@ -283,12 +284,12 @@ sealed class OpenCodeEvent {
 **UI 设计**
 
 - 位置：`PromptInput` 底部工具条行（`createToolbarRow()`）的 **EAST 侧**，与「审核类型 / 模式 / 模型」同排、右对齐，不新增行高。
-- 文本：`↑12.3k ↓0.4k · 缓存 8.1k · 上下文 48%`；占比 ≥ 80% 时用警示色（`JBColor` 双主题）。
+- 文本：`↑12.3k ↓400 · 缓存 8.1k · 上下文 48%`（`formatTokens` 规则：≥100 万 → `1.2M`，≥1000 → `12.3k`，不足 1000 保持原值）；占比 ≥ 80% 时用警示色（`JBColor` 双主题）。
 - 悬浮 tooltip：展开 input / output / reasoning / cache read / cache write / cost / 窗口大小。
 - 无数据或模型窗口未知时：只显示绝对用量、不显示百分比；完全不显示占位而非显示 0，避免误读。
 - 会话切换时立即清空旧会话数值，避免串值。
 
-**变更文件**：见 §6 末尾四行（DTO / REST 解析 / RPC 透传 / 前端指示器）。
+**变更文件**：见 §6 中标注「S5」的十一行（shared DTO/格式化 → backend 解析与聚合 → RPC 透传 → 前端指示器与接线 → 单测）。
 
 **测试**：格式与占比计算抽为纯函数（`ContextUsageFormatter`），单测覆盖千分位、百分比取整、超窗（>100% 截断显示 `100%+`）、无窗口不显百分比、无数据空显示。
 
@@ -330,7 +331,19 @@ sealed class OpenCodeEvent {
 | `src/test/.../OpenCodeEventParserUnitTest.kt` | 新增：解析纯函数用例（含心跳、未知类型、缺字段、非 JSON） | **已实施** |
 | `src/test/.../OpenCodeEventClientUnitTest.kt` | 新增：MockWebServer 回放 fixture（正常流、重复、断线重连、401、半途关闭） | **已实施** |
 | `src/test/.../OpenCodeEventRealServerITest.kt` | 新增：真实服务集成验证（`*ITest`，默认跳过） | 待实施 |
-| `README.md` | 依赖表：okhttp/okhttp-sse 状态由「接入时启用」改为已启用；补事件流说明 | 待实施 |
+| `opencode-shared/.../SessionUsage.kt` | 新增：`TokenUsageDto` / `SessionUsageDto` + `ContextUsageFormatter`（紧凑格式、千分位、占比与超窗截断，纯函数） | **已实施（S5）** |
+| `opencode-shared/.../AgentModelDto.kt` | 修改：`ModelDto` 增加 `contextWindow`（`Model.Info.limit.context`） | **已实施（S5）** |
+| `opencode-shared/.../ChatRepositoryRpcApi.kt` | 修改：新增 `getSessionUsage(projectId, sessionId)` | **已实施（S5）** |
+| `opencode-backend/.../repository/OpenCodeRestClient.kt` | 修改：解析 `Session.Info.cost/tokens/model`、助手消息 `tokens.input`、`Model.Info.limit.context` | **已实施（S5）** |
+| `opencode-backend/.../BackendChatRepositoryModel.kt` | 修改：`getSessionUsage`（累计用量 + 最近一次 step 的 input + 按会话模型匹配上下文窗口） | **已实施（S5）** |
+| `opencode-backend/.../BackendChatRepositoryRpcApi.kt` | 修改：`getSessionUsage` 透传（异常降级为空快照）；`listModels` 带上上下文窗口 | **已实施（S5）** |
+| `opencode-frontend/.../chatApp/ui/ContextUsageIndicator.kt` | 新增：输入框下方右侧用量指示器（≥80% 警示色、无数据整块隐藏、tooltip 明细） | **已实施（S5）** |
+| `opencode-frontend/.../chatApp/ui/PromptInput.kt` | 修改：工具条行 EAST 挂指示器，暴露 `updateUsage` | **已实施（S5）** |
+| `opencode-frontend/.../viewmodel/ChatRepositoryApi.kt`、`FrontendChatRepositoryModel.kt`、`ChatViewModel.kt` | 修改：`getSessionUsage` 透传；`usageFlow` + 切换/新建会话时清空并刷新、发送/中止/切模型后刷新 | **已实施（S5）** |
+| `opencode-frontend/.../chatApp/OpenCodeChatApp.kt` | 修改：订阅 `usageFlow` → EDT 更新指示器 | **已实施（S5）** |
+| `src/test/.../ContextUsageFormatterUnitTest.kt` | 新增：紧凑格式、千分位、占比取整、超窗 `100%+`、无窗口不显占比、空数据隐藏、警示阈值 | **已实施（S5）** |
+| `src/test/.../OpenCodeRestClientUnitTest.kt` | 修改：补 `cost/tokens/model`、助手 `tokens.input`、`limit.context` 的解析断言 | **已实施（S5）** |
+| `README.md` | 依赖表：okhttp/okhttp-sse 状态由「接入时启用」改为已启用；补事件流说明 | **已实施**（S2 客户端 + 用量功能，2026-09-29） |
 
 ## 7. 实施顺序
 
@@ -340,6 +353,7 @@ sealed class OpenCodeEvent {
 | **S2 客户端** | 依赖接入 + `OpenCodeEventParser` + `OpenCodeEventClient`（重连/读超时存活/停止） | MockWebServer 回放 fixture 单测全绿 | **已完成（2026-09-29）**：12 例事件单测通过 |
 | **S3 通路打通** | 事件 → `MutableStateFlow` → RPC Flow → 前端 delta 分发 → 渲染；`isStreaming`/`delta` 生效 | 真实连接集成验证通过：面板逐字输出、思考过程折叠、首 token 明显提前 | 待实施 |
 | **S4 容错收口** | 对账兜底、权限卡片联调、中断清理、401 处理、包体与 README 同步 | 断开 server 重连自愈；权限允许/拒绝闭环；包体核对完成 | 待实施 |
+| **S5 用量与占比** | 输入框下方展示当前会话 token 用量与上下文占比（REST 拉取：会话累计用量 + 最近一次 step 的 input + 模型上下文窗口） | 切换/发送/中止/切模型后指示器更新；无窗口不显占比、无数据整块隐藏；`ContextUsageFormatter` 单测全绿 | **已完成（2026-09-29）** |
 
 ## 8. 风险与对策
 

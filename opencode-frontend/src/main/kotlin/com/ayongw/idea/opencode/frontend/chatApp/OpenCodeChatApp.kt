@@ -197,6 +197,15 @@ class OpenCodeChatApp(
                 }
             }
         }
+
+        // 底部：会话用量与上下文占比
+        coroutineScope.launch {
+            viewModel.usageFlow.collect { usage ->
+                ApplicationManager.getApplication().invokeLater {
+                    promptInput.updateUsage(usage)
+                }
+            }
+        }
     }
 
     private data class InputToolbarState(

@@ -5,6 +5,7 @@ import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ModelDto
 import com.ayongw.idea.opencode.shared.SessionStateDto
+import com.ayongw.idea.opencode.shared.SessionUsageDto
 
 /**
  * Interface defining the contract for managing chat messages and sessions within a chat system.
@@ -101,4 +102,11 @@ interface ChatRepositoryApi {
      * Switches the model of the current session.
      */
     suspend fun switchModel(providerID: String, modelID: String)
+
+    /**
+     * Gets the token usage snapshot of the current session.
+     *
+     * @return null when there is no current session; an empty snapshot when the server is unreachable.
+     */
+    suspend fun getSessionUsage(): SessionUsageDto?
 }

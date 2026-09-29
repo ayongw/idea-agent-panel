@@ -165,7 +165,7 @@ class OpenCodeRestClientUnitTest {
     fun modelsAreParsedFromDataEnvelope() = runBlocking {
         routes["/api/model"] = """
             {"data":[{"id":"claude-sonnet-5.5","modelID":"claude-sonnet-5.5",
-            "providerID":"github-copilot","name":"Claude Sonnet 5.5"}]}
+            "providerID":"github-copilot","name":"Claude Sonnet 5.5","limit":{"context":200000,"output":64000}}]}
         """.trimIndent()
 
         val models = client().listModels().getOrThrow()
@@ -175,6 +175,40 @@ class OpenCodeRestClientUnitTest {
         assertEquals("claude-sonnet-5.5", models[0].modelID)
         assertEquals("github-copilot", models[0].providerID)
         assertEquals("Claude Sonnet 5.5", models[0].name)
+        assertEquals("limit.context 应解析为上下文窗口", 200_000L, models[0].limitContext)
+    }
+
+    @Test
+    fun sessionUsageFieldsAreParsed() = runBlocking {
+        routes["/api/session/ses_1"] = """
+            {"data":{"id":"ses_1","title":"标题","time":{"created":1,"updated":2},
+            "model":{"id":"mimo-v2.6-flash-free","providerID":"opencode"},
+            "cost":0.0123,
+            "tokens":{"input":12300,"output":400,"reasoning":50,"cache":{"read":8100,"write":200}}}}
+        """.trimIndent()
+
+        val session = client().getSession("ses_1").getOrThrow()
+
+        assertEquals(0.0123, session.costUsd!!, 1e-9)
+        assertEquals(12_300L, session.tokens!!.input)
+        assertEquals(50L, session.tokens!!.reasoning)
+        assertEquals(8_100L, session.tokens!!.cacheRead)
+        assertEquals(200L, session.tokens!!.cacheWrite)
+        assertEquals("opencode", session.providerId)
+        assertEquals("mimo-v2.6-flash-free", session.modelId)
+    }
+
+    @Test
+    fun sessionUsageFieldsAreNullWhenAbsent() = runBlocking {
+        routes["/api/session/ses_1"] = """
+            {"data":{"id":"ses_1","title":"无用量","time":{"created":1,"updated":2}}}
+        """.trimIndent()
+
+        val session = client().getSession("ses_1").getOrThrow()
+
+        assertNull(session.costUsd)
+        assertNull(session.tokens)
+        assertNull(session.modelId)
     }
 
     @Test
@@ -206,6 +240,7 @@ class OpenCodeRestClientUnitTest {
             {"data":[
               {"id":"msg_1","type":"user","text":"问题","time":{"created":1000}},
               {"id":"msg_2","type":"assistant","time":{"created":2000},
+               "tokens":{"input":480,"output":20,"reasoning":0,"cache":{"read":0,"write":0}},
                "content":[{"type":"text","text":"答案A"},{"type":"reasoning","text":"思考"},{"type":"text","text":"答案B"}]},
               {"id":"msg_3","type":"system","time":{"created":3000}}
             ],"cursor":{}}
@@ -218,6 +253,8 @@ class OpenCodeRestClientUnitTest {
         assertEquals("问题", messages[0].content)
         assertEquals(2000L, messages[1].createdMillis)
         assertEquals("assistant 应拼接 text 片段并跳过多余类型", "答案A\n答案B", messages[1].content)
+        assertEquals("assistant 的 input tokens 是上下文占比分子", 480L, messages[1].inputTokens)
+        assertNull("user 消息无 input tokens", messages[0].inputTokens)
         assertNotNull(messages[1].id)
     }
 }
