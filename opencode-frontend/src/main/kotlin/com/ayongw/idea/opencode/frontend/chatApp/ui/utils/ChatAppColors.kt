@@ -18,9 +18,17 @@ object ChatAppColors {
         val normal: Color
             get() = UIManager.getColor("Label.foreground") ?: JBColor.foreground()
 
-        val timestamp: Color = JBColor(Gray._192, Gray._160)
+        val timestamp: Color = JBColor(Gray._160, Gray._160)
 
-        val authorName: Color = JBColor(Color(219, 224, 235), Color(180, 200, 220))
+        val authorName: Color = JBColor(Color(0x5A, 0x63, 0x72), Color(180, 200, 220))
+    }
+
+    object Avatar {
+        /** 助手头像底色 */
+        val background: Color = JBColor(Color(66, 165, 245), Color(100, 181, 246))
+
+        /** 助手头像文字色 */
+        val foreground: Color = JBColor(Color.WHITE, Color.WHITE)
     }
 
     object MessageBubble {

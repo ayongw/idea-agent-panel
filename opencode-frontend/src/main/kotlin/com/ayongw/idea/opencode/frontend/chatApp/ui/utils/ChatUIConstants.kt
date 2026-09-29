@@ -22,6 +22,12 @@ object ChatUIConstants {
         const val INNER_PADDING = 16
 
         const val CONTENT_WRAP_WIDTH = MAX_WIDTH - 2 * HORIZONTAL_MARGIN - 2 * INNER_PADDING
+
+        /** 助手消息头部头像边长 */
+        const val AVATAR_SIZE = 18
+
+        /** 头像与名称之间的间距 */
+        const val AVATAR_GAP = 6
     }
 
     object ThinkingIndicator {
@@ -79,5 +85,14 @@ object ChatUIConstants {
         const val MAX_TEXT_LENGTH = 10 * 1024 // 10KB
         const val LINES_PER_PAGE = 200
         const val MAX_CODE_LINES = 500
+
+        /** 代码块折叠预览行数（超出部分需点「显示完整」展开） */
+        const val CODE_PREVIEW_LINES = 12
+
+        /** 代码块展开后的最大高度（超出在块内滚动，避免撑爆消息列表） */
+        const val CODE_MAX_HEIGHT = 320
+
+        /** 代码块单行行高（用于换算预览/展开高度，避免布局自我测量死循环） */
+        const val CODE_LINE_HEIGHT = 18
     }
 }

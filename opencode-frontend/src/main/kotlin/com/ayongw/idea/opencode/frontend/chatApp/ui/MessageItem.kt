@@ -1,5 +1,6 @@
 package com.ayongw.idea.opencode.frontend.chatApp.ui
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -12,6 +13,8 @@ import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppColors
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatUIConstants
 import java.awt.*
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.awt.geom.RoundRectangle2D
 import javax.swing.Box
 import javax.swing.BoxLayout
@@ -25,6 +28,8 @@ import javax.swing.text.html.HTMLEditorKit
 /**
  * 消息气泡 - 支持流式更新
  */
+private val log = Logger.getInstance("com.ayongw.idea.opencode.frontend.chatApp.ui.MessageItem")
+
 class MessageBubble(
     private val message: ChatMessage,
     private var isMatchingSearch: Boolean = false,
@@ -46,13 +51,18 @@ class MessageBubble(
         setupAppearance()
 
         val tool = message.tool
+        log.info(
+            "[diag] new bubble id=${message.id.take(16)} type=${message.type} isMy=${message.isMyMessage} " +
+                "author=${message.author} contentLen=${message.content.length} tool=${tool?.name ?: "-"}"
+        )
         if (message.isToolMessage() && tool != null) {
             // 工具卡片自带标题行，不再显示作者名
             val card = buildToolCard(tool)
             contentContainer = card
             add(card)
         } else {
-            add(AuthorName(message))
+            // 助手消息：头像 + 名称（参考样式），用户消息：仅名称
+            add(if (message.isMyMessage) AuthorName(message) else AuthorRow(message))
             add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.MEDIUM)))
 
             when {
@@ -97,6 +107,10 @@ class MessageBubble(
 
     override fun paintComponent(g: Graphics) {
         super.paintComponent(g)
+
+        // 助手消息按参考样式渲染为「整行块」（无气泡底）：仅用户消息与搜索命中时绘制气泡
+        val paintBubble = isMyMessage || isMatchingSearch || isHighlightedInSearch
+        if (!paintBubble) return
 
         val g2d = g.create() as Graphics2D
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
@@ -274,6 +288,58 @@ private class AuthorName(message: ChatMessage) : JBLabel() {
         font = JBFont.small().asBold()
         foreground = ChatAppColors.Text.authorName
         alignmentX = LEFT_ALIGNMENT
+    }
+}
+
+/**
+ * 助手消息头部：头像 + 名称（对齐参考样式 Agent/Kiro 的标题行）。
+ */
+private class AuthorRow(message: ChatMessage) : JPanel() {
+    init {
+        layout = BoxLayout(this, BoxLayout.X_AXIS)
+        isOpaque = false
+        alignmentX = LEFT_ALIGNMENT
+        maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(ChatUIConstants.MessageBubble.AVATAR_SIZE))
+
+        add(AgentAvatar(message.author))
+        add(Box.createHorizontalStrut(JBUI.scale(ChatUIConstants.MessageBubble.AVATAR_GAP)))
+        add(JBLabel(message.author).apply {
+            font = JBFont.small().asBold()
+            foreground = ChatAppColors.Text.authorName
+        })
+        add(Box.createHorizontalGlue())
+    }
+}
+
+/** 助手头像：圆角方块 + 名称首字母（无需图标资源，随主题取色） */
+private class AgentAvatar(private val name: String) : JComponent() {
+    init {
+        alignmentX = LEFT_ALIGNMENT
+        val side = JBUI.scale(ChatUIConstants.MessageBubble.AVATAR_SIZE)
+        preferredSize = Dimension(side, side)
+        minimumSize = Dimension(side, side)
+        maximumSize = Dimension(side, side)
+        toolTipText = name
+    }
+
+    override fun paintComponent(g: Graphics) {
+        val g2d = g.create() as Graphics2D
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+
+        val corner = JBUI.scale(ChatUIConstants.Spacing.SMALL).toFloat()
+        g2d.color = ChatAppColors.Avatar.background
+        g2d.fill(RoundRectangle2D.Float(0f, 0f, width.toFloat(), height.toFloat(), corner, corner))
+
+        val initial = name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "A"
+        g2d.font = JBFont.small().asBold()
+        g2d.color = ChatAppColors.Avatar.foreground
+        val metrics = g2d.fontMetrics
+        g2d.drawString(
+            initial,
+            (width - metrics.stringWidth(initial)) / 2,
+            (height - metrics.height) / 2 + metrics.ascent
+        )
+        g2d.dispose()
     }
 }
 
@@ -555,19 +621,20 @@ private class CodeBlockPane(
     private val code: String
 ) : JPanel() {
 
+    private val codeLines = code.lines()
+    private val collapsible = codeLines.size > ChatUIConstants.LargeContent.CODE_PREVIEW_LINES
+    private val textArea = JBTextArea()
+    private val scrollPane = JBScrollPane(textArea)
+    private var expanded = false
+    private val toggleLabel = JBLabel()
+
     init {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         isOpaque = false
         alignmentX = LEFT_ALIGNMENT
 
-        val codeLines = code.lines().toList()
-        val isLargeCode = codeLines.size > ChatUIConstants.LargeContent.MAX_CODE_LINES
-
-        val displayLines = if (isLargeCode) codeLines.subList(0, ChatUIConstants.LargeContent.MAX_CODE_LINES) else codeLines
-        val displayCode = displayLines.joinToString("\n")
-
-        val textArea = JBTextArea().apply {
-            text = displayCode
+        textArea.apply {
+            text = previewText()
             font = Font(Font.MONOSPACED, Font.PLAIN, 12)
             isEditable = false
             lineWrap = false
@@ -575,61 +642,103 @@ private class CodeBlockPane(
             border = EmptyBorder(8, 12, 8, 12)
         }
 
-        val scrollPane = JBScrollPane(textArea).apply {
+        scrollPane.apply {
             verticalScrollBarPolicy = JBScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
             horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
             border = EmptyBorder(4, 0, 4, 0)
             isOpaque = false
             viewport.isOpaque = false
         }
+        applyPaneHeight(previewLineCount())
 
-        val header = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.X_AXIS)
-            isOpaque = false
-            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(28))
-            add(Box.createHorizontalGlue())
+        add(buildHeader())
+        add(scrollPane)
 
-            val langLabel = JBLabel(language.uppercase()).apply {
+        log.info(
+            "[diag] codeblock lang=$language lines=${codeLines.size} chars=${code.length} " +
+                "collapsible=$collapsible height=${scrollPane.preferredSize.height}"
+        )
+    }
+
+    private fun previewLineCount(): Int =
+        codeLines.size.coerceAtMost(ChatUIConstants.LargeContent.CODE_PREVIEW_LINES)
+
+    private fun previewText(): String = if (collapsible) {
+        codeLines.take(ChatUIConstants.LargeContent.CODE_PREVIEW_LINES).joinToString("\n")
+    } else {
+        code
+    }
+
+    /**
+     * 固定代码块高度：按行数换算，展开态封顶 [ChatUIConstants.LargeContent.CODE_MAX_HEIGHT]。
+     *
+     * 不设上限时，工具输出（如 275 行的技能文档）会把气泡撑到几千像素高，消息区几乎全是空白。
+     */
+    private fun applyPaneHeight(lines: Int) {
+        val lineHeight = JBUI.scale(ChatUIConstants.LargeContent.CODE_LINE_HEIGHT)
+        val contentHeight = lineHeight * lines + JBUI.scale(16)
+        val height = contentHeight.coerceAtMost(JBUI.scale(ChatUIConstants.LargeContent.CODE_MAX_HEIGHT))
+        scrollPane.preferredSize = Dimension(JBUI.scale(ChatUIConstants.MessageBubble.CONTENT_WRAP_WIDTH), height)
+        scrollPane.maximumSize = Dimension(Int.MAX_VALUE, height)
+    }
+
+    private fun buildHeader() = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.X_AXIS)
+        isOpaque = false
+        alignmentX = LEFT_ALIGNMENT
+        maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(28))
+        add(Box.createHorizontalGlue())
+
+        if (collapsible) {
+            toggleLabel.apply {
+                text = collapsedLabel()
                 font = JBFont.small()
                 foreground = ChatAppColors.Text.disabled
+                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
                 border = EmptyBorder(0, 0, 0, JBUI.scale(8))
+                addMouseListener(object : MouseAdapter() {
+                    override fun mouseClicked(e: MouseEvent?) = toggle()
+                })
             }
-
-            if (isLargeCode) {
-                val showMoreBtn = JBLabel("显示完整 (${codeLines.size} 行)")
-                showMoreBtn.apply {
-                    font = JBFont.small()
-                    foreground = ChatAppColors.Text.disabled
-                    cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-                    border = EmptyBorder(0, 0, 0, JBUI.scale(8))
-                    val listener = object : java.awt.event.MouseAdapter() {
-                        override fun mouseClicked(e: java.awt.event.MouseEvent?) {
-                            textArea.text = code
-                            scrollPane.viewport.view = textArea
-                            showMoreBtn.removeMouseListener(this)
-                        }
-                    }
-                    addMouseListener(listener)
-                }
-                this.add(showMoreBtn)
-            }
-
-            add(langLabel)
-            val copyBtn = createCopyButton(code)
-            add(copyBtn)
+            add(toggleLabel)
         }
 
-        add(header)
-        add(scrollPane)
+        add(JBLabel(language.uppercase()).apply {
+            font = JBFont.small()
+            foreground = ChatAppColors.Text.disabled
+            border = EmptyBorder(0, 0, 0, JBUI.scale(8))
+        })
+        add(createCopyButton(code))
     }
+
+    /** 展开/收起：收起只渲染预览行，展开后块内滚动，避免长输出撑爆消息列表 */
+    private fun toggle() {
+        expanded = !expanded
+        if (expanded) {
+            textArea.text = codeLines
+                .take(ChatUIConstants.LargeContent.MAX_CODE_LINES)
+                .joinToString("\n")
+            applyPaneHeight(ChatUIConstants.LargeContent.MAX_CODE_LINES)
+        } else {
+            textArea.text = previewText()
+            applyPaneHeight(previewLineCount())
+        }
+        toggleLabel.text = if (expanded) expandedLabel() else collapsedLabel()
+        revalidate()
+        repaint()
+    }
+
+    private fun collapsedLabel() = "展开 ${codeLines.size} 行"
+
+    private fun expandedLabel() = "收起"
 
     private fun createCopyButton(text: String): JComponent {
         return JBLabel().apply {
             setIcon(com.intellij.icons.AllIcons.Actions.Copy)
-            cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-            addMouseListener(object : java.awt.event.MouseAdapter() {
-                override fun mouseClicked(e: java.awt.event.MouseEvent?) {
-                    java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent?) {
+                    Toolkit.getDefaultToolkit().systemClipboard.setContents(
                         java.awt.datatransfer.StringSelection(text),
                         null
                     )
