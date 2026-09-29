@@ -21,7 +21,8 @@ class OpenCodeToolWindowFactory : ToolWindowFactory, DumbAware {
     private fun openCodeChatApp(project: Project, toolWindow: ToolWindow) {
         val viewModel = ChatViewModel(
             CoroutineScopeHolder.getInstance(project).createScope(ChatViewModel::class.java.simpleName),
-            FrontendChatRepositoryModel.getInstance(project)
+            FrontendChatRepositoryModel.getInstance(project),
+            project.basePath
         )
         Disposer.register(toolWindow.disposable, viewModel)
 

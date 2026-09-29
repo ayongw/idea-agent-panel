@@ -51,7 +51,9 @@ class OpenCodeChatApp(
             onApprovalModeSelected = { mode -> viewModel.setApprovalMode(mode) },
             onAgentSelected = { agent -> viewModel.switchAgent(agent.id) },
             onModelSelected = { model -> viewModel.switchModel(model) },
-            onBeforeMenuOpen = { viewModel.loadAgentsAndModels() }
+            onBeforeMenuOpen = { viewModel.loadAgentsAndModels() },
+            onBeforeModelMenuOpen = { viewModel.loadModelProviders() },
+            onManageModels = { openSettings(OpenCodeSettingsConfigurable.MODELS_TAB_INDEX) }
         )
         chatList = ChatList(project)
         promptInput = PromptInput(
@@ -60,7 +62,13 @@ class OpenCodeChatApp(
             onStop = { _ -> viewModel.onAbortSendingMessage() },
             onPermissionDecide = { requestId, response -> viewModel.replyPermission(requestId, response) },
             contextChipBar = contextChipBar,
-            inputToolbar = inputToolbar
+            inputToolbar = inputToolbar,
+            basePath = project.basePath,
+            onAddAttachments = { attachments -> viewModel.addAttachments(attachments) },
+            onRemoveAttachment = { attachment -> viewModel.removeAttachment(attachment.path) },
+            onMentionCandidatesNeeded = { viewModel.ensureMentionCandidates() },
+            onSearchWorkspace = { query -> viewModel.searchWorkspace(query) },
+            onBrowseDirectory = { path -> viewModel.browseWorkspaceDirectory(path) }
         )
 
         add(topBar, BorderLayout.NORTH)
@@ -125,7 +133,8 @@ class OpenCodeChatApp(
         allSessionsPopup?.showUnderneathOf(anchor)
     }
 
-    private fun openSettings() {
+    private fun openSettings(tabIndex: Int? = null) {
+        if (tabIndex != null) OpenCodeSettingsConfigurable.selectTab(tabIndex)
         ShowSettingsUtil.getInstance().showSettingsDialog(project, OpenCodeSettingsConfigurable::class.java)
     }
 
@@ -182,17 +191,15 @@ class OpenCodeChatApp(
                 viewModel.approvalMode,
                 viewModel.agentsFlow,
                 viewModel.selectedAgentId,
-                viewModel.modelsFlow,
                 viewModel.selectedModel
-            ) { approvalMode, agents, selectedAgentId, models, selectedModel ->
-                InputToolbarState(approvalMode, agents, selectedAgentId, models, selectedModel)
+            ) { approvalMode, agents, selectedAgentId, selectedModel ->
+                InputToolbarState(approvalMode, agents, selectedAgentId, selectedModel)
             }.collect { state ->
                 ApplicationManager.getApplication().invokeLater {
                     inputToolbar.update(
                         approvalMode = state.approvalMode,
                         agents = state.agents,
                         selectedAgentId = state.selectedAgentId,
-                        models = state.models,
                         selectedModel = state.selectedModel
                     )
                 }
@@ -216,13 +223,48 @@ class OpenCodeChatApp(
                 }
             }
         }
+
+        // 输入区：会话附件（chips 右段）
+        coroutineScope.launch {
+            viewModel.contextFilesFlow.collect { attachments ->
+                ApplicationManager.getApplication().invokeLater {
+                    promptInput.updateSessionAttachments(attachments)
+                }
+            }
+        }
+
+        // 输入区：`/` 候选（命令 / 技能 / 规则）
+        coroutineScope.launch {
+            viewModel.mentionCandidatesFlow.collect { candidates ->
+                ApplicationManager.getApplication().invokeLater {
+                    promptInput.updateMentionCandidates(candidates)
+                }
+            }
+        }
+
+        // 输入区：`#` 候选（工作区文件 / 目录）
+        coroutineScope.launch {
+            viewModel.workspaceCandidatesFlow.collect { candidates ->
+                ApplicationManager.getApplication().invokeLater {
+                    promptInput.updateWorkspaceCandidates(candidates)
+                }
+            }
+        }
+
+        // 底部：按供应商分组的模型
+        coroutineScope.launch {
+            viewModel.modelProvidersFlow.collect { providers ->
+                ApplicationManager.getApplication().invokeLater {
+                    inputToolbar.updateProviders(providers)
+                }
+            }
+        }
     }
 
     private data class InputToolbarState(
         val approvalMode: ApprovalMode,
         val agents: List<AgentDto>,
         val selectedAgentId: String?,
-        val models: List<ModelDto>,
         val selectedModel: ModelDto?
     )
 }

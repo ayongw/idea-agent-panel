@@ -28,6 +28,9 @@ object ChatAppIcons {
     object Prompt {
         val send: Icon = AllIcons.RunConfigurations.TestState.Run
         val stop: Icon = AllIcons.Run.Stop
+
+        /** 附件按钮（＋）：选择本机文件 / 目录作为上下文 */
+        val attach: Icon = AllIcons.General.Add
     }
 
     object Context {

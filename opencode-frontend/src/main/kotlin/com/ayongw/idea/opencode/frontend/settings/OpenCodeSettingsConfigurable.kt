@@ -22,6 +22,19 @@ import javax.swing.Scrollable
  */
 class OpenCodeSettingsConfigurable : Configurable {
 
+    companion object {
+        /** 「模型」页下标（连接页之后的第一个 opencode 设置页） */
+        const val MODELS_TAB_INDEX = 1
+
+        /** 外部入口指定的初始 Tab（如模型弹窗的「管理模型」），创建组件时消费一次 */
+        private var pendingTabIndex: Int? = null
+
+        /** 指定下次打开设置页时选中的 Tab */
+        fun selectTab(index: Int) {
+            pendingTabIndex = index
+        }
+    }
+
     private var panel: JComponent? = null
     private var tabbed: JBTabbedPane? = null
 
@@ -42,6 +55,8 @@ class OpenCodeSettingsConfigurable : Configurable {
         tabs.forEach { tab -> pane.addTab(tab.title, tab.component) }
         // 切换 Tab 即加载该页数据
         pane.addChangeListener { reloadSelectedTab() }
+        pendingTabIndex?.let { index -> pane.selectedIndex = index.coerceIn(0, tabs.size - 1) }
+        pendingTabIndex = null
         tabbed = pane
 
         val wrapper = SettingsPage().apply { add(pane, BorderLayout.CENTER) }

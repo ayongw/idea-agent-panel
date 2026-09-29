@@ -9,6 +9,7 @@ import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatUIConstants
 import com.ayongw.idea.opencode.frontend.chatApp.viewmodel.ApprovalMode
 import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ModelDto
+import com.ayongw.idea.opencode.shared.ModelProviderDto
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JComponent
@@ -19,21 +20,32 @@ import javax.swing.JRadioButtonMenuItem
 
 /**
  * 底部输入工具条：审核类型 / 模式（agent）/ 会话模型 选择
+ *
+ * 模型选择为组件式弹窗（搜索 + 按供应商分组 + 免费标签 + 管理入口），见 [ModelPickerPopup]。
  */
 class InputToolbar(
     private val onApprovalModeSelected: (ApprovalMode) -> Unit,
     private val onAgentSelected: (AgentDto) -> Unit,
     private val onModelSelected: (ModelDto) -> Unit,
-    private val onBeforeMenuOpen: () -> Unit
+    private val onBeforeMenuOpen: () -> Unit,
+    /** 模型弹窗打开前刷新按供应商分组的模型 */
+    private val onBeforeModelMenuOpen: () -> Unit = {},
+    /** 模型弹窗「管理模型」入口 */
+    private val onManageModels: () -> Unit = {}
 ) : JPanel() {
 
     private val approvalButton = createMenuButton()
     private val modeButton = createMenuButton()
     private val modelButton = createMenuButton()
 
+    private val modelPicker = ModelPickerPopup(
+        onSelect = { model -> selectModel(model) },
+        onManage = { onManageModels() }
+    )
+
     private var approvalMode: ApprovalMode = ApprovalMode.AUTO
     private var agents: List<AgentDto> = emptyList()
-    private var models: List<ModelDto> = emptyList()
+    private var providers: List<ModelProviderDto> = emptyList()
     private var selectedAgentId: String? = null
     private var selectedModel: ModelDto? = null
 
@@ -74,15 +86,8 @@ class InputToolbar(
         modelButton.apply {
             addActionListener {
                 onBeforeMenuOpen()
-                showMenu(
-                    anchor = this,
-                    items = models.map { it to it.name },
-                    selected = selectedModel
-                ) { model ->
-                    selectedModel = model
-                    updateLabels()
-                    onModelSelected(model)
-                }
+                onBeforeModelMenuOpen()
+                modelPicker.show(this, providers, selectedModel)
             }
         }
 
@@ -102,13 +107,11 @@ class InputToolbar(
         approvalMode: ApprovalMode,
         agents: List<AgentDto>,
         selectedAgentId: String?,
-        models: List<ModelDto>,
         selectedModel: ModelDto?
     ) {
         this.approvalMode = approvalMode
         this.agents = agents
         this.selectedAgentId = selectedAgentId
-        this.models = models
         this.selectedModel = selectedModel
         updateLabels()
     }
@@ -117,6 +120,18 @@ class InputToolbar(
         border = JBUI.Borders.empty(JBUI.scale(3), JBUI.scale(8))
         font = JBFont.small()
         foreground = ChatAppColors.Text.disabled
+    }
+
+    /** 模型弹窗选中回调（成功后由 ViewModel 状态回流更新标签） */
+    private fun selectModel(model: ModelDto) {
+        selectedModel = model
+        updateLabels()
+        onModelSelected(model)
+    }
+
+    /** 更新按供应商分组的模型（由外层订阅 ViewModel 状态后调用） */
+    fun updateProviders(providers: List<ModelProviderDto>) {
+        this.providers = providers
     }
 
     private fun updateLabels() {
