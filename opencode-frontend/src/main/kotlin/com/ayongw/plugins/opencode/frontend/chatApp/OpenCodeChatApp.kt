@@ -17,17 +17,20 @@ class OpenCodeChatApp(
 
     private val toolbar: ChatToolbar
     private val chatList: ChatList
+    private val contextChipBar: ContextChipBar
     private val promptInput: PromptInput
 
     init {
         setupAppearance()
 
+        contextChipBar = ContextChipBar()
         toolbar = ChatToolbar(viewModel)
         chatList = ChatList(project)
         promptInput = PromptInput(
             onInputChanged = { text -> viewModel.onPromptInputChanged(text) },
             onSend = { _ -> viewModel.onSendMessage() },
-            onStop = { _ -> viewModel.onAbortSendingMessage() }
+            onStop = { _ -> viewModel.onAbortSendingMessage() },
+            contextChipBar = contextChipBar
         )
 
         add(toolbar, BorderLayout.NORTH)

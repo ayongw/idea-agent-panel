@@ -1,7 +1,7 @@
 package com.ayongw.plugins.opencode.frontend.chatApp.ui
 
-import com.intellij.icons.AllIcons
-import com.intellij.openapi.project.Project
+import com.intellij.ui.JBColor
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
@@ -11,7 +11,9 @@ import com.ayongw.plugins.opencode.frontend.chatApp.ui.utils.ChatAppColors
 import com.ayongw.plugins.opencode.frontend.chatApp.ui.utils.ChatAppIcons
 import com.ayongw.plugins.opencode.frontend.chatApp.ui.utils.ChatUIConstants
 import com.ayongw.plugins.opencode.frontend.chatApp.viewmodel.MessageInputState
+import com.ayongw.plugins.opencode.shared.ContextFile
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Dimension
 import java.awt.event.ActionEvent
 import java.awt.event.InputEvent
@@ -20,10 +22,14 @@ import javax.swing.AbstractAction
 import javax.swing.Icon
 import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.JList
 import javax.swing.JPanel
+import javax.swing.JPopupMenu
 import javax.swing.JScrollPane
 import javax.swing.KeyStroke
+import javax.swing.ListCellRenderer
 import javax.swing.border.CompoundBorder
+import javax.swing.border.EmptyBorder
 import javax.swing.border.LineBorder
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
@@ -31,7 +37,9 @@ import javax.swing.event.DocumentListener
 class PromptInput(
     private val onInputChanged: (String) -> Unit,
     private val onSend: (String) -> Unit,
-    private val onStop: (String) -> Unit
+    private val onStop: (String) -> Unit,
+    private val onHistorySelect: (String) -> Unit = {},
+    private val contextChipBar: ContextChipBar
 ) : JPanel() {
 
     private val textArea: JBTextArea
@@ -41,6 +49,10 @@ class PromptInput(
     private var currentState: MessageInputState = MessageInputState.Enabled("")
     private var skipInputChangeUpdate = false
 
+    /** 输入历史 */
+    private val inputHistory = mutableListOf<String>()
+    private var historyIndex = -1
+
     init {
         setupAppearance()
 
@@ -49,6 +61,7 @@ class PromptInput(
         sendButton = createSendButton()
 
         add(scrollPane, BorderLayout.CENTER)
+        add(contextChipBar, BorderLayout.NORTH)
         add(sendButton, BorderLayout.EAST)
 
         setupKeyBindings()
@@ -145,6 +158,21 @@ class PromptInput(
                 textArea.insert("\n", textArea.caretPosition)
             }
         })
+
+        // Up/Down for history navigation
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0), "historyUp")
+        actionMap.put("historyUp", object : AbstractAction() {
+            override fun actionPerformed(e: ActionEvent?) {
+                navigateHistory(forward = false)
+            }
+        })
+
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), "historyDown")
+        actionMap.put("historyDown", object : AbstractAction() {
+            override fun actionPerformed(e: ActionEvent?) {
+                navigateHistory(forward = true)
+            }
+        })
     }
 
     fun updateState(state: MessageInputState) {
@@ -178,13 +206,102 @@ class PromptInput(
         val text = textArea.text.trim()
         if (text.isEmpty()) return
 
+        // Add to history
+        addToHistory(text)
+
         onSend(text)
         skipInputChangeUpdate = true
         textArea.text = ""
+        historyIndex = -1
     }
 
     private fun handleStop() {
         onStop(textArea.text.trim())
+    }
+
+    private fun navigateHistory(forward: Boolean) {
+        if (inputHistory.isEmpty()) return
+
+        if (historyIndex == -1) {
+            // First navigation - save current input if not empty
+            val currentText = textArea.text.trim()
+            if (currentText.isNotBlank()) {
+                // Temporarily store at end
+            }
+            historyIndex = if (forward) 0 else inputHistory.lastIndex
+        } else {
+            historyIndex += if (forward) 1 else -1
+        }
+
+        historyIndex = historyIndex.coerceIn(0, inputHistory.lastIndex)
+        textArea.text = inputHistory[historyIndex]
+        skipInputChangeUpdate = true
+    }
+
+    private fun addToHistory(text: String) {
+        if (text.isBlank()) return
+        // Remove if already exists
+        inputHistory.remove(text)
+        // Add to front
+        inputHistory.add(0, text)
+        // Limit history size
+        if (inputHistory.size > 50) {
+            inputHistory.removeAt(inputHistory.lastIndex)
+        }
+        historyIndex = -1
+    }
+
+    /**
+     * 显示历史记录弹窗
+     */
+    fun showHistoryPopup() {
+        if (inputHistory.isEmpty()) return
+
+        val list = JList(inputHistory.toTypedArray()).apply {
+            cellRenderer = object : ListCellRenderer<String> {
+                override fun getListCellRendererComponent(
+                    list: JList<out String>?,
+                    value: String?,
+                    index: Int,
+                    isSelected: Boolean,
+                    cellHasFocus: Boolean
+                ): JComponent {
+                    val label = JBLabel(value ?: "").apply {
+                        border = JBUI.Borders.empty(8, 12)
+                        if (isSelected) {
+                            background = JBColor(Color(200, 220, 255), Color(40, 60, 90))
+                            isOpaque = true
+                        }
+                    }
+                    return label
+                }
+            }
+            selectionMode = javax.swing.ListSelectionModel.SINGLE_SELECTION
+        }
+
+        val scrollPane = JBScrollPane(list).apply {
+            preferredSize = Dimension(300, 200)
+        }
+
+        val popupMenu = JPopupMenu().apply {
+            add(scrollPane)
+            setLightWeightPopupEnabled(true)
+        }
+
+        list.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent?) {
+                val index = list.locationToIndex(e?.point ?: return)
+                if (index >= 0) {
+                    val selected = inputHistory[index]
+                    textArea.text = selected
+                    skipInputChangeUpdate = true
+                    onHistorySelect(selected)
+                    popupMenu.setVisible(false)
+                }
+            }
+        })
+
+        popupMenu.show(textArea, 0, textArea.height)
     }
 
     private enum class SendButtonStyle(val tooltipKey: String, val allowsSend: Boolean) {
@@ -194,7 +311,7 @@ class PromptInput(
 
         fun iconFor(hasText: Boolean): Icon = when (this) {
             Idle -> ChatAppIcons.Prompt.send
-            Ready -> if (hasText) AllIcons.Actions.Execute else ChatAppIcons.Prompt.send
+            Ready -> if (hasText) ChatAppIcons.Prompt.send else ChatAppIcons.Prompt.send
             Stop -> ChatAppIcons.Prompt.stop
         }
     }

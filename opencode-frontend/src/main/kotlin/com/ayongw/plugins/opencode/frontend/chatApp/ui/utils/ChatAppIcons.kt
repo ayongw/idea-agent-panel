@@ -22,4 +22,8 @@ object ChatAppIcons {
         val send: Icon = AllIcons.RunConfigurations.TestState.Run
         val stop: Icon = AllIcons.Run.Stop
     }
+
+    object Context {
+        val remove: Icon = AllIcons.Actions.Cancel
+    }
 }

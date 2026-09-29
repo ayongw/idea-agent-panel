@@ -81,4 +81,10 @@ object ChatAppColors {
     object Prompt {
         val border: Color = JBColor.border()
     }
+
+    object Context {
+        val autoFile: Color = JBColor(Color(200, 230, 255), Color(40, 60, 80))
+        val explicitFile: Color = JBColor(Color(255, 230, 200), Color(80, 60, 40))
+        val onContextChip: Color = JBColor(Color(30, 60, 90), Color(200, 220, 240))
+    }
 }
