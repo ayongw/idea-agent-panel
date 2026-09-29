@@ -1,188 +1,163 @@
 package com.ayongw.idea.opencode.backend.repository
 
 import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
-import java.io.BufferedReader
+import com.google.gson.JsonArray
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import java.io.IOException
-import java.io.InputStreamReader
-import java.io.OutputStream
-import java.lang.reflect.Type
 import java.net.HttpURLConnection
-import java.net.URL
-import java.time.LocalDateTime
-import java.util.concurrent.TimeUnit
+import java.net.URI
+import java.net.URLEncoder
+import java.util.Base64
 
 /**
- * OpenCode Server REST API 客户端
- * 使用 Java 内置 HttpURLConnection，避免外部依赖
+ * OpenCode Server v2 REST 客户端
+ *
+ * - 认证：HTTP Basic（用户名默认 opencode + 密码），密码为空则不鉴权
+ * - 基路径：`/api`，响应统一为 `{ "data": ... }` 包裹
+ * - 端点契约以 `GET /openapi.json` 为准（opencode serve 默认 http://127.0.0.1:4096）
  */
 class OpenCodeRestClient(
-    private val baseUrl: String,
-    private val token: String? = null
+    baseUrl: String,
+    private val username: String = DEFAULT_USERNAME,
+    private val password: String? = null
 ) {
 
+    private val base: String = baseUrl.trim().trimEnd('/')
     private val gson = Gson()
-    private val typeTokenSessionList = object : TypeToken<List<OpenCodeSession>>() {}.type
-    private val typeTokenSession = object : TypeToken<OpenCodeSession>() {}.type
 
     /**
-     * 健康检查
+     * 探测 Server 是否可用（v2 无 /global/health，用 GET /api/project）
      */
-    suspend fun healthCheck(): Boolean {
-        return try {
-            val url = URL("$baseUrl/global/health")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.connectTimeout = 10000
-            connection.readTimeout = 30000
-            connection.requestMethod = "GET"
-            applyAuthHeader(connection)
-            connection.connect()
-            connection.responseCode == 200
-        } catch (e: IOException) {
-            false
-        }
-    }
+    suspend fun healthCheck(): Boolean = executeRequest("GET", "/project") { true }.isSuccess()
 
     /**
      * 获取所有会话列表
-     * GET /session
+     * GET /api/session
      */
     suspend fun getAllSessions(): Result<List<OpenCodeSession>> {
-        return executeRequest("GET", "/session") { response ->
-            val json = response.body ?: "[]"
-            gson.fromJson(json, typeTokenSessionList)
+        return executeRequest("GET", "/session") { json ->
+            parseDataObjects(json).map { parseSession(it) }
         }
     }
 
     /**
      * 创建新会话
-     * POST /session
+     * POST /api/session
      */
     suspend fun createSession(title: String? = null): Result<String> {
-        val json = gson.toJson(mapOf("title" to (title ?: "New Session")))
-        return executeRequest<String>("POST", "/session", json) { response ->
-            val json = response.body ?: "{}"
-            val session = gson.fromJson(json, typeTokenSession) as OpenCodeSession
-            session.id
+        val body = gson.toJson(if (title.isNullOrBlank()) emptyMap<String, Any>() else mapOf("title" to title))
+        return executeRequest("POST", "/session", body) { json ->
+            parseSession(dataObject(json)).id
         }
     }
 
     /**
      * 获取会话详情
-     * GET /session/{id}
+     * GET /api/session/{sessionID}
      */
     suspend fun getSession(sessionId: String): Result<OpenCodeSession> {
-        return executeRequest("GET", "/session/$sessionId") { response ->
-            val json = response.body ?: throw IOException("Empty response")
-            gson.fromJson(json, typeTokenSession)
+        return executeRequest("GET", "/session/${encodePath(sessionId)}") { json ->
+            parseSession(dataObject(json))
         }
     }
 
     /**
      * 删除会话
-     * DELETE /session/{id}
+     * DELETE /api/session/{sessionID}
      */
     suspend fun deleteSession(sessionId: String): Result<Unit> {
-        return executeRequest("DELETE", "/session/$sessionId") { response ->
-            if (!response.isSuccessful) throw IOException("Failed to delete session: ${response.code}")
-            Unit
-        }
+        return executeRequest("DELETE", "/session/${encodePath(sessionId)}") { Unit }
     }
 
     /**
      * 重命名会话
-     * PATCH /session/{id}
+     * PATCH /api/session/{sessionID}
      */
     suspend fun renameSession(sessionId: String, newTitle: String): Result<OpenCodeSession> {
-        val json = gson.toJson(mapOf("title" to newTitle))
-        return executeRequest("PATCH", "/session/$sessionId", json) { response ->
-            val json = response.body ?: throw IOException("Empty response")
-            gson.fromJson(json, typeTokenSession)
+        val body = gson.toJson(mapOf("title" to newTitle))
+        return executeRequest("PATCH", "/session/${encodePath(sessionId)}", body) { json ->
+            parseSession(dataObject(json))
         }
     }
 
     /**
-     * 发送消息（流式）
-     * POST /session/{id}/prompt_async
+     * 发送消息
+     * POST /api/session/{sessionID}/prompt
+     *
+     * @param files 附件 uri 列表（如 file:///path/to/file）
      */
-    suspend fun sendPromptAsync(
+    suspend fun sendPrompt(
         sessionId: String,
-        prompt: String,
-        contextFiles: List<String> = emptyList()
+        text: String,
+        files: List<String> = emptyList()
     ): Result<Unit> {
-        val json = gson.toJson(mapOf(
-            "prompt" to prompt,
-            "contextFiles" to contextFiles
-        ))
-        return executeRequest("POST", "/session/$sessionId/prompt_async", json) { response ->
-            if (!response.isSuccessful) throw IOException("Failed to send prompt: ${response.code}")
-            Unit
+        val body = mutableMapOf<String, Any>("text" to text)
+        if (files.isNotEmpty()) {
+            body["files"] = files.map { mapOf("uri" to it) }
         }
+        return executeRequest("POST", "/session/${encodePath(sessionId)}/prompt", gson.toJson(body)) { Unit }
     }
 
     /**
      * 获取会话消息（对账用）
-     * GET /session/{id}/message
+     * GET /api/session/{sessionID}/message
      */
     suspend fun getMessages(sessionId: String): Result<List<OpenCodeMessage>> {
-        val typeTokenMessageList = object : TypeToken<List<OpenCodeMessage>>() {}.type
-
-        return executeRequest("GET", "/session/$sessionId/message") { response ->
-            val json = response.body ?: "[]"
-            gson.fromJson(json, typeTokenMessageList)
+        return executeRequest("GET", "/session/${encodePath(sessionId)}/message") { json ->
+            parseDataObjects(json).mapNotNull { parseMessage(it) }
         }
     }
 
     /**
      * 回复权限请求
-     * POST /session/{id}/permissions/{permissionId}
+     * POST /api/session/{sessionID}/permission/{requestID}/reply
      */
     suspend fun replyPermission(
         sessionId: String,
-        permissionId: String,
-        allow: Boolean
+        requestId: String,
+        decision: PermissionDecision
     ): Result<Unit> {
-        val json = gson.toJson(mapOf("allow" to allow))
-        return executeRequest("POST", "/session/$sessionId/permissions/$permissionId", json) { response ->
-            if (!response.isSuccessful) throw IOException("Failed to reply permission: ${response.code}")
-            Unit
-        }
+        val body = gson.toJson(mapOf("decision" to decision.wire))
+        return executeRequest(
+            "POST",
+            "/session/${encodePath(sessionId)}/permission/${encodePath(requestId)}/reply",
+            body
+        ) { Unit }
     }
 
     /**
      * 中止执行
-     * POST /session/{id}/abort
+     * POST /api/session/{sessionID}/interrupt
      */
-    suspend fun abortExecution(sessionId: String): Result<Unit> {
-        return executeRequest("POST", "/session/$sessionId/abort", "{}") { response ->
-            if (!response.isSuccessful) throw IOException("Failed to abort: ${response.code}")
-            Unit
-        }
+    suspend fun interruptSession(sessionId: String): Result<Unit> {
+        return executeRequest("POST", "/session/${encodePath(sessionId)}/interrupt", "{}") { Unit }
     }
 
+    // ==================== 认证与请求 ====================
+
     /**
-     * 按需附加认证头（Token 为空则不鉴权）
+     * 按需附加 Basic 认证头（密码为空则不鉴权）
      */
     private fun applyAuthHeader(connection: HttpURLConnection) {
-        val authToken = token?.takeIf { it.isNotBlank() } ?: return
-        connection.setRequestProperty("Authorization", "Bearer $authToken")
+        val secret = password?.takeIf { it.isNotBlank() } ?: return
+        val credentials = "$username:$secret".toByteArray(Charsets.UTF_8)
+        connection.setRequestProperty("Authorization", "Basic ${Base64.getEncoder().encodeToString(credentials)}")
     }
 
     private suspend fun <T> executeRequest(
         method: String,
         path: String,
         body: String? = null,
-        parse: (HttpResponse) -> T
+        parse: (String) -> T
     ): Result<T> {
         return try {
-            val url = URL("$baseUrl$path")
-            val connection = url.openConnection() as HttpURLConnection
+            val connection = URI("$base/api$path").toURL().openConnection() as HttpURLConnection
             connection.connectTimeout = 10000
             connection.readTimeout = 30000
             connection.requestMethod = method
             connection.doOutput = body != null
-
-            // 添加认证头
             applyAuthHeader(connection)
 
             if (body != null) {
@@ -191,42 +166,112 @@ class OpenCodeRestClient(
             }
 
             val responseCode = connection.responseCode
-            val responseBody = if (connection.responseCode >= 400) {
+            val responseBody = if (responseCode >= 400) {
                 connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
             } else {
                 connection.inputStream.bufferedReader().use { it.readText() }
             }
+            connection.disconnect()
 
-            val response = HttpResponse(code = connection.responseCode, body = responseBody)
-
-            if (!response.isSuccessful) {
-                Result.failure(IOException("HTTP ${response.code}: ${response.body}"))
+            if (responseCode !in 200..299) {
+                Result.failure(IOException("HTTP $responseCode: $responseBody"))
             } else {
-                Result.success(parse(response))
+                Result.success(parse(responseBody))
             }
         } catch (e: IOException) {
             Result.failure(e)
         }
     }
 
+    // ==================== 响应解析 ====================
+
+    /** 取 `{ "data": {...} }` 中的数据对象 */
+    private fun dataObject(json: String): JsonObject {
+        val root = JsonParser.parseString(json)
+        val data = if (root.isJsonObject) root.asJsonObject.get("data") else null
+        return data?.takeIf { it.isJsonObject }?.asJsonObject
+            ?: throw IOException("Unexpected response shape: ${json.take(200)}")
+    }
+
+    /** 取 `{ "data": [ ... ] }` 中的数据数组 */
+    private fun parseDataObjects(json: String): List<JsonObject> {
+        val root = JsonParser.parseString(json)
+        val data: JsonElement? = if (root.isJsonObject) root.asJsonObject.get("data") else root
+        return when {
+            data == null || data.isJsonNull -> emptyList()
+            data.isJsonArray -> data.asJsonArray.mapNotNull { it as? JsonObject }
+            data.isJsonObject -> listOf(data.asJsonObject)
+            else -> emptyList()
+        }
+    }
+
+    private fun parseSession(session: JsonObject): OpenCodeSession {
+        val time = session.getAsJsonObject("time")
+        val location = session.getAsJsonObject("location")
+        return OpenCodeSession(
+            id = session.string("id").orEmpty(),
+            title = session.string("title").orEmpty(),
+            createdAtMillis = time?.long("created") ?: 0L,
+            updatedAtMillis = time?.long("updated") ?: 0L,
+            agent = session.string("agent"),
+            outcome = session.string("outcome"),
+            directory = location?.string("directory")
+        )
+    }
+
+    /** v2 消息为按 `type` 区分的联合类型，仅保留 user / assistant 两类文本消息 */
+    private fun parseMessage(message: JsonObject): OpenCodeMessage? {
+        val type = message.string("type") ?: return null
+        val id = message.string("id").orEmpty()
+        val createdMillis = message.getAsJsonObject("time")?.long("created") ?: 0L
+        return when (type) {
+            "user" -> OpenCodeMessage(id, "user", message.string("text").orEmpty(), createdMillis)
+            "assistant" -> OpenCodeMessage(id, "assistant", assistantText(message.getAsJsonArray("content")), createdMillis)
+            else -> null
+        }
+    }
+
+    private fun assistantText(content: JsonArray?): String {
+        if (content == null) return ""
+        return content.asSequence()
+            .mapNotNull { it as? JsonObject }
+            .filter { it.string("type") == "text" }
+            .mapNotNull { it.string("text") }
+            .joinToString("\n")
+    }
+
+    private fun encodePath(segment: String): String = URLEncoder.encode(segment, "UTF-8")
+
+    private fun JsonObject.string(name: String): String? =
+        get(name)?.takeIf { it.isJsonPrimitive }?.asString
+
+    private fun JsonObject.long(name: String): Long =
+        get(name)?.takeIf { it.isJsonPrimitive }?.asLong ?: 0L
+
     // ==================== 数据模型 ====================
+
+    /** 权限回复决策（对应 Session PATCH / permission reply 的 decision 枚举） */
+    enum class PermissionDecision(val wire: String) {
+        ONCE("once"),
+        ALWAYS("always"),
+        REJECT("reject")
+    }
 
     data class OpenCodeSession(
         val id: String,
         val title: String,
-        val createdAt: String,
-        val updatedAt: String,
-        val messageCount: Int = 0,
-        val lastMessagePreview: String? = null
+        val createdAtMillis: Long,
+        val updatedAtMillis: Long,
+        val agent: String? = null,
+        val outcome: String? = null,
+        val directory: String? = null
     )
 
     data class OpenCodeMessage(
         val id: String,
-        val role: String, // "user" | "assistant" | "system"
+        val role: String,
         val content: String,
-        val timestamp: String,
-        val type: String? = null,
-        val metadata: Map<String, Any>? = null
+        val createdMillis: Long
     )
 
     sealed class Result<out T> {
@@ -245,10 +290,7 @@ class OpenCodeRestClient(
         fun getOrThrow(): T = if (this is Success) value else throw (this as Failure).exception
     }
 
-    private data class HttpResponse(
-        val code: Int,
-        val body: String
-    ) {
-        val isSuccessful: Boolean = code in 200..299
+    companion object {
+        const val DEFAULT_USERNAME = "opencode"
     }
 }

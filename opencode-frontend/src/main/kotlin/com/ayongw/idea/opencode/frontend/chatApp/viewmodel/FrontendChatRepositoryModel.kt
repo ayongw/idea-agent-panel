@@ -110,7 +110,12 @@ class FrontendChatRepositoryModel(
             val settings = OpenCodeSettingsState.getInstance()
             runCatching {
                 ChatRepositoryRpcApi.getInstance()
-                    .updateServerConfig(project.projectId(), settings.serverUrl, settings.token)
+                    .updateServerConfig(
+                        project.projectId(),
+                        settings.serverUrl,
+                        settings.username,
+                        settings.password
+                    )
             }
             refreshSessions()
             coroutineScope.launch {

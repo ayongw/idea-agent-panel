@@ -19,7 +19,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.time.LocalDateTime
+import java.time.Instant
+import java.time.ZoneId
 
 @Service(Service.Level.PROJECT)
 class BackendChatRepositoryModel {
@@ -39,13 +40,17 @@ class BackendChatRepositoryModel {
     @Volatile
     private var serverUrl: String = DEFAULT_SERVER_URL
 
-    /** 认证 Token（请求头 Authorization: Bearer <token>），为空表示不鉴权 */
+    /** Basic 认证用户名（opencode serve 默认 opencode） */
     @Volatile
-    private var token: String = System.getenv("OPENCODE_SERVER_TOKEN") ?: ""
+    private var username: String = OpenCodeRestClient.DEFAULT_USERNAME
+
+    /** Basic 认证密码（opencode serve 启动时打印，环境变量 OPENCODE_SERVER_PASSWORD 兜底） */
+    @Volatile
+    private var password: String = System.getenv("OPENCODE_SERVER_PASSWORD") ?: ""
 
     /** OpenCode REST 客户端（配置变更时重建） */
     @Volatile
-    private var restClient = OpenCodeRestClient(serverUrl, token)
+    private var restClient = OpenCodeRestClient(serverUrl, username, password)
 
     /** 本地消息缓存（当前会话的消息） */
     private val _messages = MutableStateFlow(emptyList<ChatMessage>())
@@ -98,7 +103,7 @@ class BackendChatRepositoryModel {
                 _messages.value += chatMessageFactory.createUserMessage(messageContent)
 
                 // 调用 OpenCode Server 发送消息（流式）
-                val result = restClient.sendPromptAsync(sessionId, messageContent)
+                val result = restClient.sendPrompt(sessionId, messageContent)
                 if (result.isFailure()) {
                     // 服务器调用失败，回退到模拟模式
                     simulateLocalResponse(messageContent)
@@ -192,8 +197,10 @@ class BackendChatRepositoryModel {
                     content = openCodeMsg.content,
                     author = if (isMy) "Me" else "AI Buddy",
                     isMyMessage = isMy,
-                    timestamp = LocalDateTime.parse(openCodeMsg.timestamp),
-                    type = if (openCodeMsg.type == "thinking") ChatMessage.ChatMessageType.AI_THINKING else ChatMessage.ChatMessageType.TEXT
+                    timestamp = Instant.ofEpochMilli(openCodeMsg.createdMillis)
+                        .atZone(ZoneId.systemDefault())
+                        .toLocalDateTime(),
+                    type = ChatMessage.ChatMessageType.TEXT
                 )
             }
             _messages.value = messages
@@ -206,9 +213,9 @@ class BackendChatRepositoryModel {
     /**
      * 回复权限请求
      */
-    suspend fun replyPermission(permissionId: String, allow: Boolean) {
+    suspend fun replyPermission(permissionId: String, decision: OpenCodeRestClient.PermissionDecision) {
         currentSessionId?.let { sessionId ->
-            restClient.replyPermission(sessionId, permissionId, allow)
+            restClient.replyPermission(sessionId, permissionId, decision)
         }
     }
 
@@ -217,7 +224,7 @@ class BackendChatRepositoryModel {
      */
     suspend fun abortExecution() {
         currentSessionId?.let { sessionId ->
-            restClient.abortExecution(sessionId)
+            restClient.interruptSession(sessionId)
             _messages.value = _messages.value.filter { !it.isAIThinkingMessage() }
         }
     }
@@ -225,15 +232,20 @@ class BackendChatRepositoryModel {
     /**
      * 更新 Server 连接配置（由前端设置页通过 RPC 下发），并刷新连接状态
      */
-    fun updateServerConfig(serverUrl: String, token: String) {
+    fun updateServerConfig(serverUrl: String, username: String, password: String) {
         val normalizedUrl = serverUrl.trim().trimEnd('/').ifEmpty { DEFAULT_SERVER_URL }
-        val normalizedToken = token.trim()
-        if (normalizedUrl == this.serverUrl && normalizedToken == this.token) {
+        val normalizedUsername = username.trim().ifEmpty { OpenCodeRestClient.DEFAULT_USERNAME }
+        val normalizedPassword = password.trim()
+        if (normalizedUrl == this.serverUrl &&
+            normalizedUsername == this.username &&
+            normalizedPassword == this.password
+        ) {
             return
         }
         this.serverUrl = normalizedUrl
-        this.token = normalizedToken
-        this.restClient = OpenCodeRestClient(normalizedUrl, normalizedToken)
+        this.username = normalizedUsername
+        this.password = normalizedPassword
+        this.restClient = OpenCodeRestClient(normalizedUrl, normalizedUsername, normalizedPassword)
         CoroutineScope(Dispatchers.IO).launch { loadSessions() }
     }
 

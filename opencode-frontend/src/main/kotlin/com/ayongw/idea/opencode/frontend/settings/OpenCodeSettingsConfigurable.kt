@@ -15,25 +15,28 @@ import com.ayongw.idea.opencode.shared.ChatRepositoryRpcApi
 import kotlinx.coroutines.launch
 import java.net.HttpURLConnection
 import java.net.URI
+import java.util.Base64
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
 
 /**
- * OpenCode 设置页（应用级）：Server 连接地址与认证 Token
+ * OpenCode 设置页（应用级）：Server 地址与 Basic 认证凭据
  */
 class OpenCodeSettingsConfigurable : Configurable {
 
     private var panel: JComponent? = null
     private val serverUrlField = JBTextField()
-    private val tokenField = JBPasswordField()
+    private val usernameField = JBTextField()
+    private val passwordField = JBPasswordField()
     private val testConnectionLabel = JBLabel("")
 
     override fun getDisplayName(): String = OpencodeFrontendBundle.message("settings.opencode.title")
 
     override fun createComponent(): JComponent {
         serverUrlField.columns = 40
-        tokenField.columns = 40
+        usernameField.columns = 40
+        passwordField.columns = 40
         testConnectionLabel.font = JBUI.Fonts.smallFont()
 
         val testConnectionButton = JButton(OpencodeFrontendBundle.message("settings.opencode.test.connection")).apply {
@@ -42,7 +45,8 @@ class OpenCodeSettingsConfigurable : Configurable {
 
         panel = FormBuilder.createFormBuilder()
             .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.server.url"), serverUrlField)
-            .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.token"), tokenField)
+            .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.username"), usernameField)
+            .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.password"), passwordField)
             .addComponent(testConnectionLabel)
             .addComponent(testConnectionButton)
             .addComponentFillVertically(JPanel(), 0)
@@ -54,21 +58,26 @@ class OpenCodeSettingsConfigurable : Configurable {
 
     override fun isModified(): Boolean {
         val state = OpenCodeSettingsState.getInstance()
-        return normalizedUrl() != state.serverUrl || inputToken() != state.token
+        return normalizedUrl() != state.serverUrl ||
+            inputUsername() != state.username ||
+            inputPassword() != state.password
     }
 
     override fun apply() {
         val state = OpenCodeSettingsState.getInstance()
         val serverUrl = normalizedUrl()
-        val token = inputToken()
+        val username = inputUsername()
+        val password = inputPassword()
         state.serverUrl = serverUrl
-        state.token = token
+        state.username = username
+        state.password = password
 
         // 下发到后端，使新配置即时生效
         ProjectManager.getInstance().openProjects.forEach { project ->
             CoroutineScopeHolder.getInstance(project).createScope("OpenCodeSettingsPush").launch {
                 runCatching {
-                    ChatRepositoryRpcApi.getInstance().updateServerConfig(project.projectId(), serverUrl, token)
+                    ChatRepositoryRpcApi.getInstance()
+                        .updateServerConfig(project.projectId(), serverUrl, username, password)
                 }
             }
         }
@@ -77,7 +86,8 @@ class OpenCodeSettingsConfigurable : Configurable {
     override fun reset() {
         val state = OpenCodeSettingsState.getInstance()
         serverUrlField.text = state.serverUrl
-        tokenField.text = state.token
+        usernameField.text = state.username
+        passwordField.text = state.password
         testConnectionLabel.text = ""
     }
 
@@ -86,15 +96,19 @@ class OpenCodeSettingsConfigurable : Configurable {
             .ifEmpty { OpenCodeSettingsState.DEFAULT_SERVER_URL }
     }
 
-    private fun inputToken(): String = String(tokenField.password).trim()
+    private fun inputUsername(): String =
+        usernameField.text.trim().ifEmpty { OpenCodeSettingsState.DEFAULT_USERNAME }
+
+    private fun inputPassword(): String = String(passwordField.password).trim()
 
     private fun testConnection() {
         val serverUrl = normalizedUrl()
-        val token = inputToken()
+        val username = inputUsername()
+        val password = inputPassword()
         testConnectionLabel.text = OpencodeFrontendBundle.message("settings.opencode.testing")
 
         ApplicationManager.getApplication().executeOnPooledThread {
-            val reachable = probeHealth(serverUrl, token)
+            val reachable = probeServer(serverUrl, username, password)
             ApplicationManager.getApplication().invokeLater {
                 testConnectionLabel.text = OpencodeFrontendBundle.message(
                     if (reachable) "settings.opencode.test.success" else "settings.opencode.test.failed"
@@ -104,16 +118,17 @@ class OpenCodeSettingsConfigurable : Configurable {
     }
 
     /**
-     * 探测 GET /global/health，与真实请求一致地携带 Token
+     * 探测 GET /api/project（v2 无 /global/health），与真实请求一致地携带 Basic 凭据
      */
-    private fun probeHealth(serverUrl: String, token: String): Boolean {
+    private fun probeServer(serverUrl: String, username: String, password: String): Boolean {
         return try {
-            val connection = URI("$serverUrl/global/health").toURL().openConnection() as HttpURLConnection
+            val connection = URI("$serverUrl/api/project").toURL().openConnection() as HttpURLConnection
             connection.connectTimeout = 5000
             connection.readTimeout = 10000
             connection.requestMethod = "GET"
-            if (token.isNotEmpty()) {
-                connection.setRequestProperty("Authorization", "Bearer $token")
+            if (password.isNotEmpty()) {
+                val credentials = "$username:$password".toByteArray(Charsets.UTF_8)
+                connection.setRequestProperty("Authorization", "Basic ${Base64.getEncoder().encodeToString(credentials)}")
             }
             val responseCode = connection.responseCode
             connection.disconnect()

@@ -2,6 +2,7 @@
 
 package com.ayongw.idea.opencode.backend
 
+import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
 import com.ayongw.idea.opencode.shared.ChatMessageDto
 import com.ayongw.idea.opencode.shared.ChatRepositoryRpcApi
 import com.ayongw.idea.opencode.shared.ContextFileDto
@@ -80,8 +81,8 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
                     else
                         com.ayongw.idea.opencode.shared.SessionStatus.IDLE,
                     pendingPermission = null,
-                    createdAt = java.time.LocalDateTime.parse(session.createdAt),
-                    updatedAt = java.time.LocalDateTime.parse(session.updatedAt),
+                    createdAt = toLocalDateTime(session.createdAtMillis),
+                    updatedAt = toLocalDateTime(session.updatedAtMillis),
                     contextFiles = emptyList()
                 )
             }
@@ -121,8 +122,12 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
     ) {
         val backendProject = projectId.findProjectOrNull() ?: return
         val model = BackendChatRepositoryModel.getInstance(backendProject)
-        val allow = response == PermissionResponse.ALLOW_ONCE || response == PermissionResponse.ALLOW_ALWAYS
-        model.replyPermission(permissionId, allow)
+        val decision = when (response) {
+            PermissionResponse.ALLOW_ALWAYS -> OpenCodeRestClient.PermissionDecision.ALWAYS
+            PermissionResponse.ALLOW_ONCE -> OpenCodeRestClient.PermissionDecision.ONCE
+            else -> OpenCodeRestClient.PermissionDecision.REJECT
+        }
+        model.replyPermission(permissionId, decision)
     }
 
     override suspend fun abortExecution(projectId: ProjectId, sessionId: String) {
@@ -161,13 +166,16 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
         )
     }
 
-    override suspend fun updateServerConfig(projectId: ProjectId, serverUrl: String, token: String) {
+    override suspend fun updateServerConfig(projectId: ProjectId, serverUrl: String, username: String, password: String) {
         val backendProject = projectId.findProjectOrNull() ?: return
-        BackendChatRepositoryModel.getInstance(backendProject).updateServerConfig(serverUrl, token)
+        BackendChatRepositoryModel.getInstance(backendProject).updateServerConfig(serverUrl, username, password)
     }
 
     private fun parsePort(serverUrl: String): Int? =
         runCatching { java.net.URI(serverUrl).port }.getOrNull()?.takeIf { it > 0 }
+
+    private fun toLocalDateTime(epochMillis: Long): java.time.LocalDateTime =
+        java.time.Instant.ofEpochMilli(epochMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
 
     private suspend fun getSessionTitle(model: BackendChatRepositoryModel, sessionId: String): String {
         // 从会话列表中查找标题
