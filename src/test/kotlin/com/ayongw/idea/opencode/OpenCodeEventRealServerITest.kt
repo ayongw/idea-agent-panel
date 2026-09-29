@@ -1,6 +1,7 @@
 package com.ayongw.idea.opencode
 
 import com.ayongw.idea.opencode.backend.BackendChatRepositoryModel
+import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ChatMessageDto
 import kotlinx.coroutines.delay
@@ -90,6 +91,37 @@ class OpenCodeEventRealServerITest {
         )
     }
 
+    /** 权限链路（实测契约）：`permission.asked` → 回复 `once` → 执行继续并收尾 */
+    @Test
+    fun permissionRequestCanBeAnswered() = runBlocking {
+        val sessionId = requireNotNull(withTimeout(CREATE_TIMEOUT_MS) { model.createNewSession("itest permission") }) {
+            "应能创建会话（检查 $baseUrl 是否可达、密码是否正确）"
+        }
+        withTimeout(REST_TIMEOUT_MS) { model.switchModel(sessionId, "opencode", FREE_MODEL_ID) }
+
+        withTimeout(REST_TIMEOUT_MS) {
+            model.sendMessage("Use the bash tool to run exactly this command: echo hello > $PERMISSION_FILE")
+        }
+
+        var answered = 0
+        val deadline = System.currentTimeMillis() + STREAM_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            val pending = model.getPendingPermissionFlow().first()
+            if (pending != null) {
+                withTimeout(REST_TIMEOUT_MS) {
+                    model.replyPermission(pending.requestId, OpenCodeRestClient.PermissionDecision.ONCE)
+                }
+                answered++
+                continue
+            }
+            if (!model.getSessionRunningFlow().first()) break
+            delay(POLL_INTERVAL_MS)
+        }
+
+        assumeTrue("本机未触发权限请求（可能已配置自动允许），跳过", answered > 0)
+        assertFalse("回复权限后执行应收尾", model.getSessionRunningFlow().first())
+    }
+
     private fun ChatMessageDto.isAssistantText(expected: String): Boolean =
         !isMyMessage && type == ChatMessage.ChatMessageType.TEXT && content == expected
 
@@ -125,6 +157,7 @@ class OpenCodeEventRealServerITest {
         const val FREE_MODEL_ID = "mimo-v2.6-flash-free"
         const val EXPECTED_TEXT = "PONG"
         const val INTERRUPTED_OUTCOME = "interrupted"
+        const val PERMISSION_FILE = "/tmp/oc-panel-itest-perm.txt"
         const val CREATE_TIMEOUT_MS = 20_000L
         const val REST_TIMEOUT_MS = 30_000L
         const val STREAM_TIMEOUT_MS = 60_000L

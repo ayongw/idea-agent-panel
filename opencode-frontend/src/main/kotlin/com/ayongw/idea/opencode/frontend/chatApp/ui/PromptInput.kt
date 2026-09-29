@@ -12,6 +12,8 @@ import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppIcons
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatUIConstants
 import com.ayongw.idea.opencode.frontend.chatApp.viewmodel.MessageInputState
 import com.ayongw.idea.opencode.shared.ContextFile
+import com.ayongw.idea.opencode.shared.PendingPermissionDto
+import com.ayongw.idea.opencode.shared.PermissionResponse
 import com.ayongw.idea.opencode.shared.SessionUsageDto
 import java.awt.BorderLayout
 import java.awt.Color
@@ -40,6 +42,7 @@ class PromptInput(
     private val onSend: (String) -> Unit,
     private val onStop: (String) -> Unit,
     private val onHistorySelect: (String) -> Unit = {},
+    private val onPermissionDecide: (requestId: String, response: PermissionResponse) -> Unit = { _, _ -> },
     private val contextChipBar: ContextChipBar,
     private val inputToolbar: InputToolbar
 ) : JPanel() {
@@ -48,6 +51,7 @@ class PromptInput(
     private val scrollPane: JBScrollPane
     private val sendButton: JButton
     private val usageIndicator = ContextUsageIndicator()
+    private val permissionPrompt = PermissionPrompt { requestId, response -> onPermissionDecide(requestId, response) }
 
     private var currentState: MessageInputState = MessageInputState.Enabled("")
     private var skipInputChangeUpdate = false
@@ -64,10 +68,19 @@ class PromptInput(
         sendButton = createSendButton()
 
         add(contextChipBar, BorderLayout.NORTH)
-        add(createInputRow(), BorderLayout.CENTER)
+        add(createInputArea(), BorderLayout.CENTER)
         add(createToolbarRow(), BorderLayout.SOUTH)
 
         setupKeyBindings()
+    }
+
+    /**
+     * 输入区：上方权限确认条（有待决项时才显示），下方文本区 + 发送按钮
+     */
+    private fun createInputArea() = JPanel(BorderLayout()).apply {
+        isOpaque = false
+        add(permissionPrompt, BorderLayout.NORTH)
+        add(createInputRow(), BorderLayout.CENTER)
     }
 
     /**
@@ -92,6 +105,11 @@ class PromptInput(
     /** 更新会话用量展示（由外层订阅 ViewModel 状态后调用） */
     fun updateUsage(usage: SessionUsageDto?) {
         usageIndicator.updateUsage(usage)
+    }
+
+    /** 更新待决权限确认条（由外层订阅 ViewModel 状态后调用） */
+    fun updatePendingPermission(permission: PendingPermissionDto?) {
+        permissionPrompt.update(permission)
     }
 
     private fun setupAppearance() {

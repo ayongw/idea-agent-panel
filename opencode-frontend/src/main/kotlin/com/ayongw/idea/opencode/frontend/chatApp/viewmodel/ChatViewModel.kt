@@ -6,6 +6,8 @@ import kotlinx.coroutines.flow.*
 import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ModelDto
+import com.ayongw.idea.opencode.shared.PendingPermissionDto
+import com.ayongw.idea.opencode.shared.PermissionResponse
 import com.ayongw.idea.opencode.shared.SessionStateDto
 import com.ayongw.idea.opencode.shared.SessionUsageDto
 
@@ -17,6 +19,12 @@ interface ChatViewModelApi : Disposable {
 
     /** 当前会话是否正在执行（事件流驱动，决定输入框显示「发送」还是「停止」） */
     val sessionRunningFlow: StateFlow<Boolean>
+
+    /** 当前会话的待决权限请求（事件流驱动）；null 表示无需确认 */
+    val pendingPermissionFlow: StateFlow<PendingPermissionDto?>
+
+    /** 回复权限请求（允许一次 / 始终允许 / 拒绝） */
+    fun replyPermission(permissionId: String, response: PermissionResponse)
 
     fun onPromptInputChanged(input: String)
 
@@ -93,6 +101,8 @@ class ChatViewModel(
     override val currentSessionId: StateFlow<String?> = repository.currentSessionId
 
     override val sessionRunningFlow: StateFlow<Boolean> = repository.sessionRunningFlow
+
+    override val pendingPermissionFlow: StateFlow<PendingPermissionDto?> = repository.pendingPermissionFlow
 
     private val searchChatMessagesHandler: SearchChatMessagesHandler = SearchChatMessagesHandlerImpl(
         coroutineScope = coroutineScope,
@@ -267,6 +277,12 @@ class ChatViewModel(
 
     override fun setApprovalMode(mode: ApprovalMode) {
         _approvalMode.value = mode
+    }
+
+    override fun replyPermission(permissionId: String, response: PermissionResponse) {
+        coroutineScope.launch {
+            runCatching { repository.replyPermission(permissionId, response) }
+        }
     }
 
     override fun deleteSession(sessionId: String) {

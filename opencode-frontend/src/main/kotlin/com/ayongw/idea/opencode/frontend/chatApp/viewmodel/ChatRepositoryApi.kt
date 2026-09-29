@@ -4,6 +4,8 @@ import kotlinx.coroutines.flow.StateFlow
 import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ModelDto
+import com.ayongw.idea.opencode.shared.PendingPermissionDto
+import com.ayongw.idea.opencode.shared.PermissionResponse
 import com.ayongw.idea.opencode.shared.SessionStateDto
 import com.ayongw.idea.opencode.shared.SessionUsageDto
 
@@ -38,6 +40,12 @@ interface ChatRepositoryApi {
      * Drives the input box between "send" and "stop".
      */
     val sessionRunningFlow: StateFlow<Boolean>
+
+    /**
+     * Pending permission request of the current session (driven by the server event stream).
+     * null means there is nothing to confirm.
+     */
+    val pendingPermissionFlow: StateFlow<PendingPermissionDto?>
 
     /**
      * Sends a message with the provided content.
@@ -80,9 +88,9 @@ interface ChatRepositoryApi {
      * Replies to a permission request.
      *
      * @param permissionId The ID of the permission request.
-     * @param allow Whether to allow the permission.
+     * @param response ALLOW_ONCE / ALLOW_ALWAYS / REJECT
      */
-    suspend fun replyPermission(permissionId: String, allow: Boolean)
+    suspend fun replyPermission(permissionId: String, response: PermissionResponse)
 
     /**
      * Aborts the current execution.

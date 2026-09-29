@@ -58,6 +58,7 @@ class OpenCodeChatApp(
             onInputChanged = { text -> viewModel.onPromptInputChanged(text) },
             onSend = { _ -> viewModel.onSendMessage() },
             onStop = { _ -> viewModel.onAbortSendingMessage() },
+            onPermissionDecide = { requestId, response -> viewModel.replyPermission(requestId, response) },
             contextChipBar = contextChipBar,
             inputToolbar = inputToolbar
         )
@@ -203,6 +204,15 @@ class OpenCodeChatApp(
             viewModel.usageFlow.collect { usage ->
                 ApplicationManager.getApplication().invokeLater {
                     promptInput.updateUsage(usage)
+                }
+            }
+        }
+
+        // 输入区：待决权限确认
+        coroutineScope.launch {
+            viewModel.pendingPermissionFlow.collect { permission ->
+                ApplicationManager.getApplication().invokeLater {
+                    promptInput.updatePendingPermission(permission)
                 }
             }
         }

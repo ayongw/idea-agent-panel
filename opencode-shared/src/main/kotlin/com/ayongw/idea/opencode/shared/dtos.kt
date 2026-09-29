@@ -119,6 +119,23 @@ fun SessionState.toSessionStateDto(): SessionStateDto {
     )
 }
 
+// ==================== 新增 DTO: 待决权限请求 ====================
+
+/**
+ * 待决权限请求，由事件流 `permission.asked` 驱动。
+ *
+ * @param requestId 回复用的请求 ID（实测为 `per_` 前缀，即 `data.id`）
+ * @param action 权限动作，如 `external_directory`
+ * @param resources 涉及的资源（如 `["/tmp/&#42;"]`）
+ */
+@Serializable
+data class PendingPermissionDto(
+    val sessionId: String,
+    val requestId: String,
+    val action: String,
+    val resources: List<String> = emptyList()
+)
+
 // ==================== 新增 DTO: PermissionRequest ====================
 
 @Serializable

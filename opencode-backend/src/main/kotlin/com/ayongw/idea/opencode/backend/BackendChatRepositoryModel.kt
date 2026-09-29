@@ -11,6 +11,7 @@ import com.ayongw.idea.opencode.backend.repository.OpenCodeCredentials
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ChatMessageDto
+import com.ayongw.idea.opencode.shared.PendingPermissionDto
 import com.ayongw.idea.opencode.shared.SessionUsageDto
 import com.ayongw.idea.opencode.shared.TokenUsageDto
 import com.ayongw.idea.opencode.shared.toChatMessageDto
@@ -76,6 +77,9 @@ class BackendChatRepositoryModel : Disposable {
     /** 当前会话是否正在执行（事件流驱动，供 UI 切换「停止/发送」态） */
     private val _sessionRunning = MutableStateFlow(false)
 
+    /** 当前会话的待决权限请求（事件流 `permission.asked` 驱动） */
+    private val _pendingPermission = MutableStateFlow<PendingPermissionDto?>(null)
+
     /** 事件驱动流式状态机（文本/推理累积、失败渲染） */
     private val streamState = SessionStreamState()
 
@@ -115,6 +119,9 @@ class BackendChatRepositoryModel : Disposable {
     /** 当前会话的执行状态流（事件流驱动） */
     fun getSessionRunningFlow(): Flow<Boolean> = _sessionRunning
 
+    /** 当前会话的待决权限请求流（null = 无待决项） */
+    fun getPendingPermissionFlow(): Flow<PendingPermissionDto?> = _pendingPermission
+
     // ==================== 事件流接入 ====================
 
     /**
@@ -140,6 +147,7 @@ class BackendChatRepositoryModel : Disposable {
         eventClient?.stop()
         eventClient = null
         _sessionRunning.value = false
+        _pendingPermission.value = null
         streamState.reset()
         ensureEventStream()
     }
@@ -156,7 +164,22 @@ class BackendChatRepositoryModel : Disposable {
         val shouldPublish = streamState.onEvent(event)
         _sessionRunning.value = streamState.isRunning
         if (shouldPublish) publishStreamMessages()
-        if (event.isExecutionTerminal()) reconcile(sessionId)
+        updatePendingPermission(event, sessionId)
+        if (event.isExecutionTerminal()) {
+            _pendingPermission.value = null
+            reconcile(sessionId)
+        }
+    }
+
+    /** 权限请求：`permission.asked` 挂起待决项；执行终态/中断则清空 */
+    private fun updatePendingPermission(event: OpenCodeEvent, sessionId: String) {
+        if (event !is OpenCodeEvent.PermissionAsked) return
+        _pendingPermission.value = PendingPermissionDto(
+            sessionId = sessionId,
+            requestId = event.requestId,
+            action = event.action,
+            resources = event.resources
+        )
     }
 
     /**
@@ -305,6 +328,7 @@ class BackendChatRepositoryModel : Disposable {
                 currentSessionId = null
                 streamState.reset()
                 _sessionRunning.value = false
+                _pendingPermission.value = null
                 _messages.value = emptyList()
             }
             loadSessions()
@@ -338,9 +362,10 @@ class BackendChatRepositoryModel : Disposable {
      * 加载指定会话的消息
      */
     suspend fun loadMessages(sessionId: String) {
-        // 切换/新建会话：清空上一会话的流式缓冲与运行态，避免串值
+        // 切换/新建会话：清空上一会话的流式缓冲、运行态与待决权限，避免串值
         streamState.reset()
         _sessionRunning.value = false
+        _pendingPermission.value = null
         val result = restClient.getMessages(sessionId)
         if (result.isSuccess()) {
             _messages.value = result.getOrThrow().map(::toChatMessage)
@@ -371,6 +396,10 @@ class BackendChatRepositoryModel : Disposable {
     suspend fun replyPermission(permissionId: String, decision: OpenCodeRestClient.PermissionDecision) {
         currentSessionId?.let { sessionId ->
             restClient.replyPermission(sessionId, permissionId, decision)
+            // 已回复：本地立即收起卡片，不等服务端事件
+            if (_pendingPermission.value?.requestId == permissionId) {
+                _pendingPermission.value = null
+            }
         }
     }
 
@@ -383,6 +412,7 @@ class BackendChatRepositoryModel : Disposable {
             // 事件到达前先退出「执行中」，让「停止」立即生效；
             // 缓冲不清空 —— 实测中断链路会补发 reasoning/text.ended 全文，由它校准即可
             _sessionRunning.value = false
+            _pendingPermission.value = null
         }
     }
 

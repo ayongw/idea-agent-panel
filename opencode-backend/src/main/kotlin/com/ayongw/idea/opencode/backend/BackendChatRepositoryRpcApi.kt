@@ -10,6 +10,7 @@ import com.ayongw.idea.opencode.shared.ChatRepositoryRpcApi
 import com.ayongw.idea.opencode.shared.ContextFileDto
 import com.ayongw.idea.opencode.shared.ContextSelectionDto
 import com.ayongw.idea.opencode.shared.MessagePartDto
+import com.ayongw.idea.opencode.shared.PendingPermissionDto
 import com.ayongw.idea.opencode.shared.PermissionResponse
 import com.ayongw.idea.opencode.shared.ServerInfoDto
 import com.ayongw.idea.opencode.shared.SessionStateDto
@@ -222,6 +223,16 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
         val model = BackendChatRepositoryModel.getInstance(backendProject)
         if (model.getCurrentSessionId() != sessionId) return flowOf(false)
         return model.getSessionRunningFlow()
+    }
+
+    override suspend fun getPendingPermissionFlow(
+        projectId: ProjectId,
+        sessionId: String
+    ): Flow<PendingPermissionDto?> {
+        val backendProject = projectId.findProjectOrNull() ?: return flowOf(null)
+        val model = BackendChatRepositoryModel.getInstance(backendProject)
+        if (model.getCurrentSessionId() != sessionId) return flowOf(null)
+        return model.getPendingPermissionFlow()
     }
 
     private fun parsePort(serverUrl: String): Int? =

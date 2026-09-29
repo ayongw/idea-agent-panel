@@ -22,6 +22,7 @@ import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ChatRepositoryRpcApi
 import com.ayongw.idea.opencode.shared.ModelDto
+import com.ayongw.idea.opencode.shared.PendingPermissionDto
 import com.ayongw.idea.opencode.shared.PermissionResponse
 import com.ayongw.idea.opencode.shared.SessionStateDto
 import com.ayongw.idea.opencode.shared.SessionUsageDto
@@ -42,9 +43,11 @@ class FrontendChatRepositoryModel(
     private val _serverConnectedFlow = MutableStateFlow(false)
     private val _currentSessionId = MutableStateFlow<String?>(null)
     private val _sessionRunningFlow = MutableStateFlow(false)
+    private val _pendingPermissionFlow = MutableStateFlow<PendingPermissionDto?>(null)
 
-    /** 当前会话执行状态订阅任务（切换会话时重启） */
+    /** 当前会话的执行状态 / 待决权限订阅任务（切换会话时重启） */
     private var runningJob: Job? = null
+    private var permissionJob: Job? = null
 
     override val messagesFlow: StateFlow<List<ChatMessage>> = flow {
         durable {
@@ -63,6 +66,8 @@ class FrontendChatRepositoryModel(
 
     override val sessionRunningFlow: StateFlow<Boolean> = _sessionRunningFlow
 
+    override val pendingPermissionFlow: StateFlow<PendingPermissionDto?> = _pendingPermissionFlow
+
     override suspend fun sendMessage(messageContent: String) {
         ChatRepositoryRpcApi.getInstance().sendMessage(project.projectId(), messageContent)
     }
@@ -70,7 +75,7 @@ class FrontendChatRepositoryModel(
     override suspend fun createSession(initialTitle: String?): String {
         val sessionId = ChatRepositoryRpcApi.getInstance().createSession(project.projectId(), initialTitle)
         _currentSessionId.value = sessionId
-        refreshRunning()
+        refreshSessionScopedFlows()
         coroutineScope.launch { refreshSessions() }
         return sessionId
     }
@@ -78,7 +83,7 @@ class FrontendChatRepositoryModel(
     override suspend fun switchSession(sessionId: String) {
         ChatRepositoryRpcApi.getInstance().switchSession(project.projectId(), sessionId)
         _currentSessionId.value = sessionId
-        refreshRunning()
+        refreshSessionScopedFlows()
         coroutineScope.launch { refreshSessions() }
     }
 
@@ -86,7 +91,7 @@ class FrontendChatRepositoryModel(
         ChatRepositoryRpcApi.getInstance().deleteSession(project.projectId(), sessionId)
         if (_currentSessionId.value == sessionId) {
             _currentSessionId.value = null
-            refreshRunning()
+            refreshSessionScopedFlows()
         }
         coroutineScope.launch { refreshSessions() }
     }
@@ -96,9 +101,8 @@ class FrontendChatRepositoryModel(
         coroutineScope.launch { refreshSessions() }
     }
 
-    override suspend fun replyPermission(permissionId: String, allow: Boolean) {
+    override suspend fun replyPermission(permissionId: String, response: PermissionResponse) {
         _currentSessionId.value?.let { sessionId ->
-            val response = if (allow) PermissionResponse.ALLOW_ONCE else PermissionResponse.REJECT
             ChatRepositoryRpcApi.getInstance().replyPermission(project.projectId(), sessionId, permissionId, response)
         }
     }
@@ -140,18 +144,26 @@ class FrontendChatRepositoryModel(
         }
     }
 
-    /** 订阅当前会话的执行状态（切换会话时重启，无当前会话时固定为 false） */
-    private fun refreshRunning() {
+    /** 订阅「随当前会话变化」的状态（执行态 / 待决权限）；切换会话时重启，无当前会话时归零 */
+    private fun refreshSessionScopedFlows() {
         runningJob?.cancel()
+        permissionJob?.cancel()
         val sessionId = _currentSessionId.value
         if (sessionId == null) {
             _sessionRunningFlow.value = false
+            _pendingPermissionFlow.value = null
             return
         }
+        val projectId = project.projectId()
         runningJob = coroutineScope.launch {
-            ChatRepositoryRpcApi.getInstance().getSessionRunningFlow(project.projectId(), sessionId).collect {
-                _sessionRunningFlow.value = it
-            }
+            ChatRepositoryRpcApi.getInstance()
+                .getSessionRunningFlow(projectId, sessionId)
+                .collect { _sessionRunningFlow.value = it }
+        }
+        permissionJob = coroutineScope.launch {
+            ChatRepositoryRpcApi.getInstance()
+                .getPendingPermissionFlow(projectId, sessionId)
+                .collect { _pendingPermissionFlow.value = it }
         }
     }
 

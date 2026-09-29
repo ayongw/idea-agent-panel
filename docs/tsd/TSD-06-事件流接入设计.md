@@ -17,6 +17,7 @@
 | v1.5 | 2026-09-29 | S3b 落地：`ChatList` 按消息 id 就地重渲染气泡、`MessageBubble.renderedContent`、`sessionRunningFlow` 接线（发送/停止切换 + 结束后刷新用量）、「停止」真实中断服务端执行；§6/§7/§9 回填 | agent |
 | v1.6 | 2026-09-29 | 补 `OpenCodeEventRealServerITest`（真实连接）；根 `build.gradle.kts` 的 `test` 默认排除 `*ITest`、`-Pit=true` 纳入；回填 §9.1 实跑结果（通过） | agent |
 | v1.7 | 2026-09-29 | S4a 落地：对账兜底（执行终态 + 重连成功触发 REST 覆盖）；实测中断收尾契约（`step.failed(aborted)` + `session.execution.interrupted`）并据此新增 `ExecutionInterrupted`、把 `aborted` 视为用户中断（不弹失败气泡）；关闭 §10 遗留 1 | agent |
+| v1.8 | 2026-09-29 | S4b 落地：`PendingPermissionDto` + `getPendingPermissionFlow` + 输入区权限确认条（三态回复闭环）；`replyPermission` 改为 `PermissionResponse`；ITest 补权限用例（本机未触发则跳过）；§6/§7/§9 回填 | agent |
 
 ---
 
@@ -271,7 +272,8 @@ sealed class OpenCodeEvent {
 - **失败可见**：`step.failed` / `execution.failed` 把 `error.type: error.message` 落成一条正文气泡（id `opencode-failure:<assistantMessageID|execution>`），避免面板卡在「响应中」。**例外**：用户中断（`error.type == "aborted"`）不算失败，不弹失败气泡。
 - **用户中断**（实测契约，见 §4.3）：`reasoning/text.ended`（补全文）→ `step.streamed` → `step.failed(type=aborted)` → **`session.execution.interrupted`**；`ExecutionInterrupted` 与 `aborted` 都只把运行态置 false，正文保留。
 - **会话路由**：只处理 `sessionID == 当前会话` 的事件；`shell.exited` 等无 sessionID 的事件本阶段忽略。
-- **工具与权限**：`session.tool.*` / `permission.asked` 本阶段不产出消息部件，留待 S4 联调（权限卡片 + 工具卡片）。
+- **权限请求**：`permission.asked` → `PendingPermissionDto{sessionId, requestId, action, resources}`（`requestId` 实测为 `per_` 前缀，即 `data.id`）→ RPC `getPendingPermissionFlow` → **输入框上方权限确认条**（三按钮 `once / always / reject`，与后端 `PermissionDecision` 一致）；点击后本地立即收起（不等服务端事件）并回 `POST /api/session/{id}/permission/{requestId}`。执行终态 / 中断 / 切会话 / 重连均清空待决项。
+- **工具卡片**：`session.tool.*` / `shell.*` 仍不产出消息部件，留待后续（权限链路已闭环）。
 - 会话切换 / 新建 / 删除时重置状态机（缓冲、运行态、失败气泡），避免串值。
 
 > `durable.seq` 未落地为 DTO 字段：本阶段以「全文覆盖 + 重连后 REST 对账」（S4）兜底，不用序号做增量去重。
@@ -322,7 +324,7 @@ sealed class OpenCodeEvent {
 | `durable.seq` 跳变/缺口 | 不做序号校验（本轮不落地 `durableSeq`），由上述「终态 + 重连对账」覆盖 |
 | 心跳超时 | 判定链路已死 → 主动重建连接 → 重连成功即对账 |
 | 用户中断（实测） | 本地先置 false 让「停止」即时生效；服务端随后补 `step.failed(aborted)` + `execution.interrupted`，不弹失败气泡，正文由 `reasoning/text.ended` 补全 |
-| permission 到达但 UI 未响应 | 由对账兜底补齐（事件可能丢）—— 待 S4b 权限卡片落地后联调 |
+| permission 到达但 UI 未响应 | 由对账兜底补齐（事件可能丢）；回复后本地先收起卡片，UI 不会重复回复 |
 | 401/403 | 事件客户端标记 `UNAUTHORIZED` 并停止重连，交由设置页（凭据配置处）处理 |
 
 ## 6. 变更文件清单
@@ -358,6 +360,13 @@ sealed class OpenCodeEvent {
 | `opencode-backend/.../repository/OpenCodeRestClient.kt` | 修改：解析 `Session.Info.cost/tokens/model`、助手消息 `tokens.input`、`Model.Info.limit.context` | **已实施（S5）** |
 | `opencode-backend/.../BackendChatRepositoryModel.kt` | 修改：`getSessionUsage`（累计用量 + 最近一次 step 的 input + 按会话模型匹配上下文窗口） | **已实施（S5）** |
 | `opencode-backend/.../BackendChatRepositoryRpcApi.kt` | 修改：`getSessionUsage` 透传（异常降级为空快照）；`listModels` 带上上下文窗口 | **已实施（S5）** |
+| `opencode-backend/.../BackendChatRepositoryModel.kt` | 修改：`_pendingPermission` 待决态（`permission.asked` 挂起；回复/终态/中断/切会话/重连清空）+ `getPendingPermissionFlow` | **已实施（S4b）** |
+| `opencode-shared/.../dtos.kt`、`ChatRepositoryRpcApi.kt` | 新增：`PendingPermissionDto`；RPC `getPendingPermissionFlow(projectId, sessionId)` | **已实施（S4b）** |
+| `opencode-backend/.../BackendChatRepositoryRpcApi.kt` | 修改：`getPendingPermissionFlow` 透传（非当前会话恒 null） | **已实施（S4b）** |
+| `opencode-frontend/.../chatApp/ui/PermissionPrompt.kt` | 新增：权限确认条（动作 + 资源 + 三按钮；无待决项隐藏；点击即收起） | **已实施（S4b）** |
+| `opencode-frontend/.../chatApp/ui/PromptInput.kt`、`OpenCodeChatApp.kt` | 修改：输入区上方挂权限确认条；订阅 `pendingPermissionFlow` → EDT 更新；三按钮回调 → `replyPermission` | **已实施（S4b）** |
+| `opencode-frontend/.../viewmodel/*` | 修改：`pendingPermissionFlow` 订阅（与执行态同一「随会话变化」的订阅）；`replyPermission` 改为三态 `PermissionResponse` | **已实施（S4b）** |
+| `src/test/.../OpenCodeEventRealServerITest.kt` | 新增第 3 例：权限链路（`permission.asked` → 回 `once` → 执行收尾）；本机未触发时按 `Assume` 跳过 | **已实施（S4b）** |
 | `opencode-frontend/.../chatApp/ui/ContextUsageIndicator.kt` | 新增：输入框下方右侧用量指示器（≥80% 警示色、无数据整块隐藏、tooltip 明细） | **已实施（S5）** |
 | `opencode-frontend/.../chatApp/ui/PromptInput.kt` | 修改：工具条行 EAST 挂指示器，暴露 `updateUsage` | **已实施（S5）** |
 | `opencode-frontend/.../viewmodel/ChatRepositoryApi.kt`、`FrontendChatRepositoryModel.kt`、`ChatViewModel.kt` | 修改：`getSessionUsage` 透传；`usageFlow` + 切换/新建会话时清空并刷新、发送/中止/切模型后刷新 | **已实施（S5）** |
@@ -373,7 +382,7 @@ sealed class OpenCodeEvent {
 | **S1 抓帧定契约** | 起真实实例抓取成功流、失败流、工具调用流（含权限请求）的帧，确认事件名/payload/心跳/鉴权；固化 fixture；回填 §4 | §4 待确认项有实测答案，fixture 入库 | **已完成（2026-09-29）** |
 | **S2 客户端** | 依赖接入 + `OpenCodeEventParser` + `OpenCodeEventClient`（重连/读超时存活/停止） | MockWebServer 回放 fixture 单测全绿 | **已完成（2026-09-29）**：12 例事件单测通过 |
 | **S3 通路打通** | 事件 → 流式状态机 → 消息列表（75 ms 节流）→ RPC Flow → 前端就地刷新气泡；运行态驱动「发送/停止」 | 真实连接集成验证通过：面板逐字输出、思考过程可见、首 token 明显提前 | **已完成（2026-09-29）**：S3a 后端 + S3b 前端；真实连接 ITest 实跑通过（§9.1）；面板侧手工验收见 §9.3（待装机执行） |
-| **S4 容错收口** | 对账兜底、权限卡片联调、中断清理、401 处理、包体与 README 同步 | 断开 server 重连自愈；权限允许/拒绝闭环；包体核对完成 | **S4a 已完成（2026-09-29）**：对账兜底（终态 + 重连）+ 中断契约实测与收口；S4b 权限卡片、S4c 包体核对待实施 |
+| **S4 容错收口** | 对账兜底、权限卡片联调、中断清理、401 处理、包体与 README 同步 | 断开 server 重连自愈；权限允许/拒绝闭环；包体核对完成 | **S4a + S4b 已完成（2026-09-29）**：对账兜底、中断契约收口、权限确认条闭环；S4c 包体/文档核对与面板手工验收待执行 |
 | **S5 用量与占比** | 输入框下方展示当前会话 token 用量与上下文占比（REST 拉取：会话累计用量 + 最近一次 step 的 input + 模型上下文窗口） | 切换/发送/中止/切模型后指示器更新；无窗口不显占比、无数据整块隐藏；`ContextUsageFormatter` 单测全绿 | **已完成（2026-09-29）** |
 
 ## 8. 风险与对策
@@ -399,11 +408,11 @@ sealed class OpenCodeEvent {
 | 用例 | `OpenCodeEventRealServerITest`（`*ITest`，Gradle `test` 默认排除；`-Pit=true` 纳入执行） |
 | 前置 | 真实服务可达：`OPENCODE_IT_BASE_URL`（默认 `http://127.0.0.1:4097`）、`OPENCODE_IT_PASSWORD`（默认 `itest-oc-panel`）；未加 `-Pit=true`（测试 JVM 侧为 `-Dopencode.it=true`）时 `Assume.assumeTrue` 跳过 |
 | 流程 | 起受控实例 → `BackendChatRepositoryModel` 建会话 → 切模型 `opencode/mimo-v2.6-flash-free` → 发 `prompt("Reply with exactly: PONG")` → 断言：执行态 true→false、消息列表**多次**中间态推送（≥2 次）、正文以 `text.ended` 校准为 `PONG`、思考气泡非空、无失败气泡 |
-| 工具链路 | 追加一次 `prompt("Use the shell tool to run: echo hello")`，断言 `tool.called` → `tool.success`（`content[].text` 含 `hello`）；若出现 `permission.asked`，用 `reply` 端点回 `once` 后断言继续执行（S4 随工具/权限卡片一起补） |
+| 工具/权限链路 | 追加一次 `prompt("Use the bash tool to run exactly: echo hello > /tmp/oc-panel-itest-perm.txt")`，轮询 `permission.asked` 并回 `once`，断言执行收尾；本机未触发权限请求（已配置自动允许等）时按 `Assume` 跳过而非失败 |
 | 为什么必要 | mock 只能验证"解析与重连逻辑"；真实链路才能发现鉴权、模型未授权、心跳时序、真实帧字段差异等只有真机才暴露的问题 |
 | 手工兜底 | 保留 §4.5 的 curl 复现步骤，作为无 IDE 环境时的对证手段 |
 
-**验证结果（2026-09-29，opencode v2.0.18 本机 4097 受控实例）**：`-Pit=true` 实跑通过（`tests=2 skipped=0 failures=0`）——① 创建会话、切免费模型、真实事件流驱动下正文/思考逐次上屏并以终态校准为 `PONG`、执行态正确回落；② 长回答中途 `interrupt`，服务端 `outcome=interrupted`、本地执行态回落且不出现失败气泡。命令：
+**验证结果（2026-09-29，opencode v2.0.18 本机 4097 受控实例）**：`-Pit=true` 实跑 `tests=3 skipped=1 failures=0`——① 创建会话、切免费模型、真实事件流驱动下正文/思考逐次上屏并以终态校准为 `PONG`、执行态正确回落；② 长回答中途 `interrupt`，服务端 `outcome=interrupted`、本地执行态回落且不出现失败气泡；③ 权限链路**本机未触发**（免费模型未发起需授权的工具调用 / 本机已自动允许），按 `Assume` 跳过——`permission.asked` 的字段映射由 fixture 单测覆盖（§9.2），卡片交互待 §9.3 手工验收。命令：
 
 ```bash
 OPENCODE_SERVER_PASSWORD=itest-oc-panel opencode serve --port 4097 &

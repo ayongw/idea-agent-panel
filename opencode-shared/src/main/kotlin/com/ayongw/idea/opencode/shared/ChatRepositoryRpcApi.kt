@@ -151,6 +151,13 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
      * @return 该会话为当前会话时持续推送；非当前会话恒为 false
      */
     suspend fun getSessionRunningFlow(projectId: ProjectId, sessionId: String): Flow<Boolean>
+
+    /**
+     * 获取指定会话的待决权限请求流（事件流 `permission.asked` 驱动）
+     *
+     * @return null 表示当前无待决项（已回复 / 已结束 / 非当前会话）
+     */
+    suspend fun getPendingPermissionFlow(projectId: ProjectId, sessionId: String): Flow<PendingPermissionDto?>
 }
 
 /** Server 连接信息 */
