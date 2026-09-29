@@ -144,6 +144,13 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
      * @return 服务不可达或无数据时返回空的 [SessionUsageDto]
      */
     suspend fun getSessionUsage(projectId: ProjectId, sessionId: String): SessionUsageDto
+
+    /**
+     * 获取指定会话的执行状态流（事件流驱动）
+     *
+     * @return 该会话为当前会话时持续推送；非当前会话恒为 false
+     */
+    suspend fun getSessionRunningFlow(projectId: ProjectId, sessionId: String): Flow<Boolean>
 }
 
 /** Server 连接信息 */

@@ -13,6 +13,7 @@
 | v1.1 | 2026-09-29 | 回填真实抓帧实测契约（§4）；修正 v1.0 两处错误假设：SSE 帧无 `event:` 行、delta 事件不带 `durable.seq`；增量改为「delta 累积 + ended 全文校准」；补真实连接集成验证（§9） | agent |
 | v1.2 | 2026-09-29 | 补齐工具调用链路（`session.tool.*` / `shell.*`）与权限请求（`permission.asked`）实测契约；新增工具流 fixture；确认权限回复枚举与现有 `PermissionDecision` 一致 | agent |
 | v1.3 | 2026-09-29 | S5 落地：按 §5.8 实现 shared DTO/格式化 → backend 解析聚合 → RPC 透传 → 前端指示器；收紧 `formatTokens` 规则（不足 1000 保持原值）；§6/§7 回填实施状态 | agent |
+| v1.4 | 2026-09-29 | S3a 落地：新增 `SessionStreamState`（累积/校准/75 ms 节流/失败可见）与事件客户端生命周期；新增 `getSessionRunningFlow`；§5.5/§5.9 按实际实现收敛（放弃 delta DTO 与 `StreamingRenderController` 分发方案）；§1/§3/§6/§7/§9 同步 | agent |
 
 ---
 
@@ -20,9 +21,9 @@
 
 ### 1.1 背景
 
-- 当前只完成「一发一收」：`sendPrompt` 之后没有任何事件消费，回复靠 `simulateLocalResponse` 兜底，`SessionStateDto.isStreaming` 恒为 `false`、`status` 恒为 `IDLE`。
-- UI 侧流式渲染骨架已就绪：`StreamingRenderController` 已实现 75 ms 批量刷新、text/reasoning 双缓冲、EDT 调度与 `cancelStreaming`。
-- 前后端推送通路已存在：`ChatRepositoryRpcApi.getSessionStateFlow` 返回 RPC `Flow`，前端已在订阅 —— **不需要新增推送机制**。
+- 设计初期的缺口（已随 S2/S3a 收敛）：事件客户端与事件→后端会话状态的接线已落地，`ChatMessage` 内容随事件流式累积、运行态由事件驱动；前端气泡刷新（S3b）与对账/权限卡片（S4）待实施。
+- UI 侧渲染骨架已就绪：消息气泡支持「就地对内容做重渲染」（`MessageBubble.updateStreamingText` / `updateReasoningContent`）；`StreamingRenderController` 的 delta 缓冲方案未采用，仅保留 `cancelStreaming` 用于清空。
+- 前后端推送通路已存在：前端订阅的是 `messagesFlow`（`ChatMessage` 列表）与 `allSessionsFlow`；本轮新增 `sessionRunningFlow`。**不需要新增推送机制**。
 - opencode v2 仅 `/api/*` 是真实接口（v1 路径回落 SPA HTML 且 HTTP 200），事件流端点为 `GET /api/event`。
 
 ### 1.2 目标
@@ -41,6 +42,7 @@
 | 推送通路 | 复用既有 RPC `Flow`：后端把事件写进 `MutableStateFlow`，前端订阅即可，新增推送机制为 0 |
 | 帧解析方式 | **实测：SSE 帧只有 `data:` 行，没有 `event:` 行**；事件类型在 `data` JSON 的 `type` 字段内，必须解析 JSON 后按 `type` 分发（不能用 `EventSourceListener.onEvent(type, ...)` 的参数分发） |
 | 增量语义 | 消费 `session.text.delta` / `session.reasoning.delta` 累积；**实测：delta 事件不带 `durable`**，故以 `session.(text\|reasoning).ended` 的全文做终态校准（该事件带 `durable.seq`） |
+| 流式承载 | **不引入 delta DTO**：面板消息模型是 `ChatMessage`（非 parts），故由后端按消息 id 合并「累计全文」（75 ms 节流）经既有 `messagesFlow` 推送，前端就地刷新已有气泡 |
 | 心跳 | 实测存在注释帧 `: heartbeat`（空闲时出现），可作为应用层存活检测依据，无需自造 watchdog 心跳 |
 | 工具与权限事件 | 实测已获取：`session.tool.input.started/ended` → `session.tool.called` → `shell.created` → `session.tool.progress` → `shell.exited` → `session.tool.success`；权限请求 `permission.asked`（`data.id` 为 `per_` 前缀）；回复枚举 `once/always/reject` 与现有 `PermissionDecision` 完全一致 |
 | 对账策略 | 沿用「SSE 不可单独信任」：重连成功、`durable.seq` 跳变、执行失败时，触发一次 `GET /api/session/{id}/message` 幂等覆盖 |
@@ -52,11 +54,11 @@
 |---|---|---|
 | REST 客户端 | JDK 自带：`HttpURLConnection`；PATCH 单独走 `java.net.http.HttpClient` | `opencode-backend/.../repository/OpenCodeRestClient.kt` |
 | 鉴权 | HTTP Basic，用户名默认 `opencode`，密码为空则不鉴权；`authHeaderValue()` 已封装 | 同上 |
-| 事件消费 | 无实现，仅注释占位 | `BackendChatRepositoryModel.sendMessage()` 中「流式响应通过 SSE 单独处理」；真实事件族见 §4 |
-| 状态流 | `getMessagesFlow()` 已被 RPC map 成 `SessionStateDto`，但 `isStreaming=false`、`status=IDLE` | `BackendChatRepositoryRpcApi.getSessionStateFlow()` |
+| 事件消费 | `OpenCodeEventClient` + `SessionStreamState`：事件驱动的流式内容与运行态（S3a 已实施） | `opencode-backend/.../event/` |
+| 状态流 | `messagesFlow`（`ChatMessage` 列表）承接流式内容；`sessionRunningFlow` 承接运行态；`getSessionStateFlow` 仍为旧映射，未被前端订阅 | `BackendChatRepositoryModel` / `BackendChatRepositoryRpcApi` |
 | 部件模型 | `MessagePart.PartType` 已含 `TEXT/CODE/REASONING/PERMISSION/TOOL_USE/TOOL_RESULT/ERROR`，`isStreaming` 为 `@Transient` | `opencode-shared/.../MessagePart.kt` |
-| UI 渲染 | 75 ms 批量刷新控制器已就绪，接口为 delta 语义（`onTextDelta`/`onReasoningDelta`） | `opencode-frontend/.../ui/StreamingRenderController.kt` |
-| 测试栈 | JUnit 4，单测文件以 `UnitTest` 结尾，当前 56 例全绿 | `src/test/kotlin/...` |
+| UI 渲染 | 气泡支持按消息内容就地重渲染（`updateStreamingText` / `updateReasoningContent`）；`ChatList` 尚未对「已存在 id 的消息」应用刷新（S3b 待接线） | `opencode-frontend/.../ui/MessageItem.kt`、`ChatList.kt` |
+| 测试栈 | JUnit 4，单测文件以 `UnitTest` 结尾，当前 99 例全绿 | `src/test/kotlin/...` |
 
 ## 4. 协议契约（已用真实服务实测）
 
@@ -252,17 +254,22 @@ sealed class OpenCodeEvent {
 > 实现命名与本节略有收敛：用量/错误用 `TokenUsage`、`OpenCodeError`（backend 内部模型，非 DTO）；**不设 `Heartbeat`**（注释帧由 okhttp-sse 吞掉，存活检测走读超时）。字段名与实测 payload 一一对应，代码见 `opencode-backend/.../backend/event/`。
 > 「中断/取消」触发后的事件尚未实测 —— 见 §10 遗留 1。
 
-### 5.5 状态与增量语义（按实测修正）
+### 5.5 状态与增量语义（按实现收敛）
 
-- **delta 累积**：按 `(assistantMessageID, ordinal)` 维护缓冲，`session.text.delta`/`session.reasoning.delta` 追加；`started` 建缓冲，`ended` 用其 `text` 全文**覆盖校准**（防丢帧/重复）。
-- **`ordinal` 分段**：同一条 assistant 消息可有多个 text/reasoning 段（`ordinal` 递增），映射为多个 `MessagePart`（`isStreaming=true`，结束时置回 `false`）。
-- **`SessionStateDto` 增加 `delta: String?` 与 `durableSeq: Long?`**：
-  - `delta`：本次新增文本，供前端 `StreamingRenderController.onTextDelta` 直接消费；
-  - `durableSeq`：仅里程碑事件携带，用于"是否发生事件缺口"的判断（**不能用于 delta 去重**，因为 delta 无 `durable`）。
-- **执行态**：`execution.started/step.started` → `isStreaming=true`；`execution.succeeded/failed` → `isStreaming=false` 并触发对账；`step.failed` → 把 `error.message` 渲染为 `PartType.ERROR`。
-- **用量**：`usage.updated` / `step.ended.tokens` 更新会话 token 与 cost 展示。
-- 工具调用：`tool.input.*`/`tool.called` 建 `PartType.TOOL_USE`（`metadata` 带 `callId`/`toolName`/入参），`tool.success` 落到 `PartType.TOOL_RESULT`（`content[].text` 为输出，`metadata.exit/truncated` 一并带上）；`shell.created` 无顶层 `sessionID`，按 `info.metadata.sessionID` 路由。
-- 权限请求：`permission.asked` → `MessagePart.PartType.PERMISSION`（`metadata` 带 `requestId`=`data.id`、`action`、`resources`），`SessionStateDto.pendingPermission` 挂当前待决项；UI 三按钮回调既有 `replyPermission`（**实测回复枚举 `once/always/reject` 与 `PermissionDecision` 完全一致，无需改动**）。
+实现载体：`opencode-backend/.../event/SessionStreamState.kt` —— 纯逻辑状态机，无 IntelliJ / 网络依赖，可直接单测。
+
+- **承载方式**：面板消息模型是 `ChatMessage`（`id` / `content` / `type`），不是 parts。因此**不做「前端 delta 分发」**，而是由后端按消息 id 把流式消息合并进消息列表（新气泡追加、已有气泡就地更新）；`ChatMessage.content` 始终是累计全文，前端只负责「内容变了就刷新这个气泡」。
+- **累积规则**：正文 / 推理按 `(assistantMessageID, ordinal)` 累积（同一消息多段按 `ordinal` 升序以 `\n` 拼接）；`session.(text|reasoning).ended` 的全文**覆盖校准**（防丢帧 / 重复）。
+- **气泡 id**：正文气泡 id 直接复用 `assistantMessageID`（与 REST 对账的消息 id 一致，`GET /api/session/{id}/message` 覆盖时能原地替换）；推理气泡 id 为 `<assistantMessageID>#reasoning`。
+- **气泡类型**：正文 → `ChatMessageType.TEXT`；推理 → `ChatMessageType.AI_THINKING`（复用既有推理样式）。**空内容气泡不产出**，避免出现空气泡（失败流因此只剩失败气泡）。
+- **刷新节流**：聚合间隔 75 ms（与前端渲染节奏对齐）。delta 事件仅在距上次发布 ≥75 ms 时发布；内容不丢（每次发布都从缓冲重算全文），`ended` 等里程碑恒发布以补齐尾帧。
+- **执行态**：`isRunning` —— `execution.started` / `step.started` 置 true，`execution.succeeded` / `execution.failed` / `step.failed` 置 false；经 `getSessionRunningFlow` 推到前端切换「发送 / 停止」态。
+- **失败可见**：`step.failed` / `execution.failed` 把 `error.type: error.message` 落成一条正文气泡（id `opencode-failure:<assistantMessageID|execution>`），避免面板卡在「响应中」。
+- **会话路由**：只处理 `sessionID == 当前会话` 的事件；`shell.exited` 等无 sessionID 的事件本阶段忽略。
+- **工具与权限**：`session.tool.*` / `permission.asked` 本阶段不产出消息部件，留待 S4 联调（权限卡片 + 工具卡片）。
+- 会话切换 / 新建 / 删除时重置状态机（缓冲、运行态、失败气泡），避免串值。
+
+> `durable.seq` 未落地为 DTO 字段：本阶段以「全文覆盖 + 重连后 REST 对账」（S4）兜底，不用序号做增量去重。
 
 ### 5.8 会话用量与上下文占比展示（需求新增）
 
@@ -295,9 +302,10 @@ sealed class OpenCodeEvent {
 
 ### 5.9 前端消费
 
-- `FrontendChatRepositoryModel` 已订阅 `getSessionStateFlow`；新增：把 `delta` 分发给 `StreamingRenderController.onTextDelta/onReasoningDelta`，`ended` 走 `onTextEnd/onReasoningEnd`。
-- 不在前端做全量 diff（避免大文本二次遍历）；渲染仍由 75 ms 定时器驱动。
-- 心跳与未知类型不进 StateFlow，避免无谓的 RPC 流量。
+- 后端已把流式内容合并进消息列表并经既有 `messagesFlow` 推出；前端需要**在内容变化时刷新已有气泡**（现状只对新增 id 建气泡，导致流式不可见）——由 `ChatList.setMessages` 对已存在 id 的消息就地更新：`TEXT` → `updateStreamingText`，`AI_THINKING` → `updateReasoningContent`。
+- 新增 `getSessionRunningFlow` → `FrontendChatRepositoryModel.sessionRunningFlow`：`ChatViewModel` 据此把输入框切到「停止」态，执行结束回到可发送并刷新用量（§5.8）——这也补齐了 §5.8 在事件流接通前「用量只在切换/发送后更新」的缺口。
+- 不做全量 diff：按消息 id 比对内容是否变化即可（字符串比较，无二次渲染遍历）。
+- 心跳与未知类型不进状态流，避免无谓的 RPC 流量。
 
 ### 5.7 对账与容错
 
@@ -323,11 +331,15 @@ sealed class OpenCodeEvent {
 | `opencode-backend/.../repository/OpenCodeAuth.kt` | 新增：Basic 认证头构造（`OpenCodeRestClient` 已改为复用它，单一真源） | **已实施** |
 | `src/test/.../OpenCodeEventParserUnitTest.kt` | 新增：回放三个真实 fixture 的解析契约用例 | **已实施** |
 | `src/test/.../OpenCodeEventClientUnitTest.kt` | 新增：MockWebServer 回放（连接+鉴权、心跳不产事件、断线重连、401 不重连、stop 释放） | **已实施** |
-| `opencode-backend/.../BackendChatRepositoryModel.kt` | 修改：持有事件客户端、按 `(assistantMessageID, ordinal)` 累积 delta、`isStreaming`/`delta`/`durableSeq`、失败态渲染与对账 | 待实施 |
-| `opencode-backend/.../BackendChatRepositoryRpcApi.kt` | 修改：`getSessionStateFlow` 透传 `isStreaming`/`delta`/`durableSeq`/`pendingPermission`（不再恒 `IDLE`/`false`） | 待实施 |
-| `opencode-shared/.../SessionState.kt` | 修改：`SessionStateDto` 增加 `delta`、`durableSeq` | 待实施 |
-| `opencode-frontend/.../viewmodel/FrontendChatRepositoryModel.kt` | 修改：把 delta 分发给渲染控制器，ended 走终态 | 待实施 |
-| `opencode-frontend/.../chatApp/ui/StreamingRenderController.kt` | 可能微调：接入 `delta`/`ended` 语义（现有 API 基本可复用） | 待评估 |
+| `opencode-backend/.../event/SessionStreamState.kt` | 新增：事件驱动流式状态机（按 `(messageID, ordinal)` 累积、`ended` 全文校准、75 ms 节流发布、失败可见） | **已实施（S3a）** |
+| `opencode-backend/.../BackendChatRepositoryModel.kt` | 修改：事件客户端生命周期（init / 配置变更重建 / Project 销毁释放）、事件→消息合并（按 id 就地更新）、`getSessionRunningFlow`、会话切换重置；对账兜底留 S4 | **已实施（S3a）** |
+| `opencode-shared/.../ChatRepositoryRpcApi.kt` | 修改：新增 `getSessionRunningFlow(projectId, sessionId)`（非当前会话恒 false） | **已实施（S3a）** |
+| `opencode-backend/.../BackendChatRepositoryRpcApi.kt` | 修改：`getSessionRunningFlow` 透传 | **已实施（S3a）** |
+| `src/test/.../SessionStreamStateUnitTest.kt` | 新增：回放三个真实 fixture，覆盖累积/校准/多段拼接/节流/运行态/失败可见/重置（11 例） | **已实施（S3a）** |
+| `opencode-shared/.../SessionState.kt` | 原计划为 `SessionStateDto` 增加 `delta`、`durableSeq` | **不再需要**（改为后端合并累计全文，见 §5.5） |
+| `opencode-frontend/.../chatApp/ui/ChatList.kt` | 修改：已有气泡内容变化时就地刷新（流式可见） | 待实施（S3b） |
+| `opencode-frontend/.../viewmodel/*`（`ChatRepositoryApi` / `FrontendChatRepositoryModel` / `ChatViewModel`） | 修改：`sessionRunningFlow` 接线；运行中切「停止」态、结束后回可发送并刷新用量 | 待实施（S3b） |
+| `opencode-event 前端 delta 分发`（原 `StreamingRenderController` 方案） | 该方案未落地：`StreamingRenderController` 仅保留 `cancelStreaming` 用于清空 | **已收敛** |
 | `src/test/.../OpenCodeEventParserUnitTest.kt` | 新增：解析纯函数用例（含心跳、未知类型、缺字段、非 JSON） | **已实施** |
 | `src/test/.../OpenCodeEventClientUnitTest.kt` | 新增：MockWebServer 回放 fixture（正常流、重复、断线重连、401、半途关闭） | **已实施** |
 | `src/test/.../OpenCodeEventRealServerITest.kt` | 新增：真实服务集成验证（`*ITest`，默认跳过） | 待实施 |
@@ -351,7 +363,7 @@ sealed class OpenCodeEvent {
 |---|---|---|---|
 | **S1 抓帧定契约** | 起真实实例抓取成功流、失败流、工具调用流（含权限请求）的帧，确认事件名/payload/心跳/鉴权；固化 fixture；回填 §4 | §4 待确认项有实测答案，fixture 入库 | **已完成（2026-09-29）** |
 | **S2 客户端** | 依赖接入 + `OpenCodeEventParser` + `OpenCodeEventClient`（重连/读超时存活/停止） | MockWebServer 回放 fixture 单测全绿 | **已完成（2026-09-29）**：12 例事件单测通过 |
-| **S3 通路打通** | 事件 → `MutableStateFlow` → RPC Flow → 前端 delta 分发 → 渲染；`isStreaming`/`delta` 生效 | 真实连接集成验证通过：面板逐字输出、思考过程折叠、首 token 明显提前 | 待实施 |
+| **S3 通路打通** | 事件 → 流式状态机 → 消息列表（75 ms 节流）→ RPC Flow → 前端就地刷新气泡；运行态驱动「发送/停止」 | 真实连接集成验证通过：面板逐字输出、思考过程可见、首 token 明显提前 | **S3a 后端已完成（2026-09-29）**；S3b 前端接线待实施 |
 | **S4 容错收口** | 对账兜底、权限卡片联调、中断清理、401 处理、包体与 README 同步 | 断开 server 重连自愈；权限允许/拒绝闭环；包体核对完成 | 待实施 |
 | **S5 用量与占比** | 输入框下方展示当前会话 token 用量与上下文占比（REST 拉取：会话累计用量 + 最近一次 step 的 input + 模型上下文窗口） | 切换/发送/中止/切模型后指示器更新；无窗口不显占比、无数据整块隐藏；`ContextUsageFormatter` 单测全绿 | **已完成（2026-09-29）** |
 
@@ -388,7 +400,7 @@ sealed class OpenCodeEvent {
 |------|------|--------|
 | `OpenCodeEventParserUnitTest` | 单元（JUnit 4） | 回放两个真实 fixture；心跳帧忽略、未知类型计数、字段缺失、非 JSON `data`、多行 `data` 拼接 |
 | `OpenCodeEventClientUnitTest` | 单元（MockWebServer） | 正常流、重复事件、断线重连（校验退避与对账调用）、401、服务端半途关闭、心跳超时触发重建 |
-| `BackendChatRepositoryModelUnitTest` | 单元 | delta 按 `(assistantMessageID, ordinal)` 累积、`ended` 覆盖校准、`isStreaming` 生命周期、失败态渲染、中断清理 |
+| `SessionStreamStateUnitTest` | 单元（JUnit 4） | 回放三个真实 fixture：按 `(messageID, ordinal)` 累积、`ended` 全文覆盖校准、多段拼接顺序、75 ms 节流发布、运行态生命周期、失败可见（含缺 message 兜底）、无关事件不发布、`reset` 清空 |
 
 ### 9.3 手工验收
 

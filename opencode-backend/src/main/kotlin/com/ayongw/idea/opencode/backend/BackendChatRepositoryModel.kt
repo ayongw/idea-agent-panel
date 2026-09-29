@@ -2,6 +2,9 @@
 
 package com.ayongw.idea.opencode.backend
 
+import com.ayongw.idea.opencode.backend.event.OpenCodeEvent
+import com.ayongw.idea.opencode.backend.event.OpenCodeEventClient
+import com.ayongw.idea.opencode.backend.event.SessionStreamState
 import com.ayongw.idea.opencode.backend.repository.AIResponseGenerator
 import com.ayongw.idea.opencode.backend.repository.ChatMessageFactory
 import com.ayongw.idea.opencode.backend.repository.OpenCodeCredentials
@@ -11,11 +14,14 @@ import com.ayongw.idea.opencode.shared.ChatMessageDto
 import com.ayongw.idea.opencode.shared.SessionUsageDto
 import com.ayongw.idea.opencode.shared.TokenUsageDto
 import com.ayongw.idea.opencode.shared.toChatMessageDto
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,7 +32,7 @@ import java.time.Instant
 import java.time.ZoneId
 
 @Service(Service.Level.PROJECT)
-class BackendChatRepositoryModel {
+class BackendChatRepositoryModel : Disposable {
     companion object {
         /** 默认 Server 地址 */
         const val DEFAULT_SERVER_URL = "http://127.0.0.1:4096"
@@ -64,14 +70,28 @@ class BackendChatRepositoryModel {
     /** 服务器连接状态 */
     private val _serverConnected = MutableStateFlow(false)
 
+    /** 当前会话是否正在执行（事件流驱动，供 UI 切换「停止/发送」态） */
+    private val _sessionRunning = MutableStateFlow(false)
+
+    /** 事件驱动流式状态机（文本/推理累积、失败渲染） */
+    private val streamState = SessionStreamState()
+
+    /** 事件流客户端（配置变更时重建，随 Project 销毁关闭） */
+    @Volatile
+    private var eventClient: OpenCodeEventClient? = null
+
+    /** 模型内部协程作用域（随 Project 销毁取消） */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     /** 消息工厂（用于本地模拟模式） */
     private val chatMessageFactory = ChatMessageFactory("AI Buddy", "Super Engineer")
     private val aiResponseGenerator = AIResponseGenerator()
 
     init {
-        // 启动时加载会话列表（在后台协程中）
-        CoroutineScope(Dispatchers.IO).launch {
+        // 启动时加载会话列表（在后台协程中），随后挂上事件流
+        scope.launch {
             loadSessions()
+            ensureEventStream()
         }
     }
 
@@ -88,6 +108,96 @@ class BackendChatRepositoryModel {
     }
 
     fun getCurrentSessionId(): String? = currentSessionId
+
+    /** 当前会话的执行状态流（事件流驱动） */
+    fun getSessionRunningFlow(): Flow<Boolean> = _sessionRunning
+
+    // ==================== 事件流接入 ====================
+
+    /**
+     * 建立事件流连接（幂等）。
+     *
+     * 首次调用创建客户端；重复调用直接返回，避免设置页反复下发配置时重建连接。
+     */
+    private fun ensureEventStream() {
+        if (eventClient != null) return
+        val client = OpenCodeEventClient(
+            baseUrl = serverUrl,
+            username = username,
+            password = password,
+            onEvent = ::handleOpenCodeEvent
+        )
+        eventClient = client
+        client.start()
+    }
+
+    /** 关闭并重建事件流（Server 配置变更时调用） */
+    private fun restartEventStream() {
+        eventClient?.stop()
+        eventClient = null
+        _sessionRunning.value = false
+        streamState.reset()
+        ensureEventStream()
+    }
+
+    /**
+     * 事件 → 会话状态。
+     *
+     * 只处理当前会话：多会话并发时，非当前会话的事件不改变面板状态。
+     */
+    private fun handleOpenCodeEvent(event: OpenCodeEvent) {
+        val sessionId = event.sessionIdOrNull() ?: return
+        if (sessionId.isBlank() || sessionId != currentSessionId) return
+
+        val shouldPublish = streamState.onEvent(event)
+        _sessionRunning.value = streamState.isRunning
+        if (shouldPublish) publishStreamMessages()
+    }
+
+    /**
+     * 把流式消息按 id 合并进消息列表（新气泡追加、已有气泡就地更新），
+     * 避免整段回答完成前面板空等。
+     */
+    private fun publishStreamMessages() {
+        val streaming = streamState.messages()
+        if (streaming.isEmpty()) return
+        val byId = streaming.associateBy { it.id }
+        val current = _messages.value
+        val merged = current.map { byId[it.id] ?: it }
+        val knownIds = merged.mapTo(HashSet()) { it.id }
+        _messages.value = merged + streaming.filter { it.id !in knownIds }
+    }
+
+    private fun OpenCodeEvent.sessionIdOrNull(): String? = when (this) {
+        is OpenCodeEvent.SessionCreated -> sessionId
+        is OpenCodeEvent.SessionInboxEnqueued -> sessionId
+        is OpenCodeEvent.SessionInboxDelivered -> sessionId
+        is OpenCodeEvent.ExecutionStarted -> sessionId
+        is OpenCodeEvent.ExecutionSucceeded -> sessionId
+        is OpenCodeEvent.ExecutionFailed -> sessionId
+        is OpenCodeEvent.StepStarted -> sessionId
+        is OpenCodeEvent.StepStreamed -> sessionId
+        is OpenCodeEvent.StepEnded -> sessionId
+        is OpenCodeEvent.StepFailed -> sessionId
+        is OpenCodeEvent.TextStarted -> sessionId
+        is OpenCodeEvent.TextDelta -> sessionId
+        is OpenCodeEvent.TextEnded -> sessionId
+        is OpenCodeEvent.ReasoningStarted -> sessionId
+        is OpenCodeEvent.ReasoningDelta -> sessionId
+        is OpenCodeEvent.ReasoningEnded -> sessionId
+        is OpenCodeEvent.ToolInputStarted -> sessionId
+        is OpenCodeEvent.ToolInputEnded -> sessionId
+        is OpenCodeEvent.ToolCalled -> sessionId
+        is OpenCodeEvent.ToolProgress -> sessionId
+        is OpenCodeEvent.ToolSucceeded -> sessionId
+        is OpenCodeEvent.PermissionAsked -> sessionId
+        is OpenCodeEvent.ModelSelected -> sessionId
+        is OpenCodeEvent.UsageUpdated -> sessionId
+        is OpenCodeEvent.ShellCreated -> sessionId
+        is OpenCodeEvent.ShellExited -> null
+        OpenCodeEvent.ServerConnected -> null
+        is OpenCodeEvent.Unexpected -> null
+    }
 
     /**
      * 发送消息 - 优先使用 OpenCode Server，失败时回退到模拟模式
@@ -158,6 +268,8 @@ class BackendChatRepositoryModel {
         if (result.isSuccess()) {
             if (currentSessionId == sessionId) {
                 currentSessionId = null
+                streamState.reset()
+                _sessionRunning.value = false
                 _messages.value = emptyList()
             }
             loadSessions()
@@ -191,6 +303,9 @@ class BackendChatRepositoryModel {
      * 加载指定会话的消息
      */
     suspend fun loadMessages(sessionId: String) {
+        // 切换/新建会话：清空上一会话的流式缓冲与运行态，避免串值
+        streamState.reset()
+        _sessionRunning.value = false
         val result = restClient.getMessages(sessionId)
         if (result.isSuccess()) {
             val messages = result.getOrThrow().map { openCodeMsg ->
@@ -244,13 +359,15 @@ class BackendChatRepositoryModel {
             normalizedUsername == this.username &&
             normalizedPassword == this.password
         ) {
+            ensureEventStream()
             return
         }
         this.serverUrl = normalizedUrl
         this.username = normalizedUsername
         this.password = normalizedPassword
         this.restClient = OpenCodeRestClient(normalizedUrl, normalizedUsername, normalizedPassword)
-        CoroutineScope(Dispatchers.IO).launch { loadSessions() }
+        restartEventStream()
+        scope.launch { loadSessions() }
     }
 
     /** 当前生效的 Server 地址 */
@@ -373,5 +490,12 @@ class BackendChatRepositoryModel {
             index = endIndex
         }
         return chunks
+    }
+
+    /** Project 销毁：关闭事件流并取消内部协程 */
+    override fun dispose() {
+        eventClient?.stop()
+        eventClient = null
+        scope.cancel()
     }
 }

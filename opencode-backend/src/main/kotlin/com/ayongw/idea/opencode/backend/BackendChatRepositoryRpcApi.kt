@@ -217,6 +217,13 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
         }
     }
 
+    override suspend fun getSessionRunningFlow(projectId: ProjectId, sessionId: String): Flow<Boolean> {
+        val backendProject = projectId.findProjectOrNull() ?: return flowOf(false)
+        val model = BackendChatRepositoryModel.getInstance(backendProject)
+        if (model.getCurrentSessionId() != sessionId) return flowOf(false)
+        return model.getSessionRunningFlow()
+    }
+
     private fun parsePort(serverUrl: String): Int? =
         runCatching { java.net.URI(serverUrl).port }.getOrNull()?.takeIf { it > 0 }
 
