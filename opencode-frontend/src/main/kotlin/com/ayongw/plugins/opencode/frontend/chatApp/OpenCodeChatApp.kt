@@ -23,7 +23,7 @@ class OpenCodeChatApp(
         setupAppearance()
 
         toolbar = ChatToolbar(viewModel)
-        chatList = ChatList()
+        chatList = ChatList(project)
         promptInput = PromptInput(
             onInputChanged = { text -> viewModel.onPromptInputChanged(text) },
             onSend = { _ -> viewModel.onSendMessage() },

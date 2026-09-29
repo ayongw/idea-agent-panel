@@ -1,6 +1,7 @@
 package com.ayongw.plugins.opencode.frontend.chatApp.ui
 
 import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
@@ -12,7 +13,12 @@ import java.awt.*
 import java.awt.geom.RoundRectangle2D
 import javax.swing.Box
 import javax.swing.BoxLayout
+import javax.swing.JComponent
+import javax.swing.JEditorPane
 import javax.swing.JPanel
+import javax.swing.border.EmptyBorder
+import javax.swing.event.HyperlinkEvent
+import javax.swing.text.html.HTMLEditorKit
 
 class MessageBubble(
     private val message: ChatMessage,
@@ -123,29 +129,156 @@ private class AuthorName(message: ChatMessage) : JBLabel() {
     }
 }
 
-private class MessageContent(message: ChatMessage) : JBTextArea() {
+private class MessageContent(message: ChatMessage) : JPanel() {
     init {
-        text = message.content
-        font = JBFont.regular()
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        isOpaque = false
         alignmentX = LEFT_ALIGNMENT
 
-        isEditable = false
-        isFocusable = false
+        val segments = parseMarkdownWithCodeBlocks(message.content)
+        segments.forEachIndexed { index, segment ->
+            when (segment) {
+                is MarkdownSegment.Text -> {
+                    if (segment.content.isNotBlank()) {
+                        add(TextPane(segment.content))
+                        if (index < segments.lastIndex) add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+                    }
+                }
+                is MarkdownSegment.CodeBlock -> {
+                    add(CodeBlockPane(segment.language, segment.code))
+                    if (index < segments.lastIndex) add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+                }
+            }
+        }
+    }
+}
+
+sealed class MarkdownSegment {
+    data class Text(val content: String) : MarkdownSegment()
+    data class CodeBlock(val language: String, val code: String) : MarkdownSegment()
+}
+
+private fun parseMarkdownWithCodeBlocks(content: String): List<MarkdownSegment> {
+    val segments = mutableListOf<MarkdownSegment>()
+    val lines = content.lines().toList()
+    var i = 0
+    var textBuffer = StringBuilder()
+
+    while (i < lines.size) {
+        val line = lines[i]
+        if (line.trim().startsWith("```")) {
+            // Flush pending text
+            if (textBuffer.isNotEmpty()) {
+                segments.add(MarkdownSegment.Text(textBuffer.toString()))
+                textBuffer = StringBuilder()
+            }
+
+            val fence = line.trim()
+            val language = fence.substring(3).trim().takeIf { it.isNotBlank() } ?: "plaintext"
+            i++
+            val codeLines = mutableListOf<String>()
+            while (i < lines.size && !lines[i].trim().startsWith("```")) {
+                codeLines.add(lines[i])
+                i++
+            }
+            // Skip closing fence
+            if (i < lines.size) i++
+            segments.add(MarkdownSegment.CodeBlock(language, codeLines.joinToString("\n")))
+        } else {
+            textBuffer.append(line).append("\n")
+            i++
+        }
+    }
+
+    if (textBuffer.isNotEmpty()) {
+        segments.add(MarkdownSegment.Text(textBuffer.toString()))
+    }
+
+    return segments
+}
+
+private class TextPane(private val text: String) : JPanel() {
+    init {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
         isOpaque = false
-        lineWrap = true
-        wrapStyleWord = true
-        border = null
+        alignmentX = LEFT_ALIGNMENT
 
-        size = Dimension(JBUI.scale(ChatUIConstants.MessageBubble.CONTENT_WRAP_WIDTH), Short.MAX_VALUE.toInt())
+        // Simple text rendering - split by lines and create labels
+        val lines = text.lines().toList()
+        lines.forEachIndexed { index, line ->
+            val label = JBLabel(line).apply {
+                font = JBFont.regular()
+                foreground = ChatAppColors.Text.normal
+                alignmentX = LEFT_ALIGNMENT
+            }
+            add(label)
+            if (index < lines.lastIndex) add(Box.createVerticalStrut(JBUI.scale(2)))
+        }
+    }
+}
+
+private class CodeBlockPane(
+    private val language: String,
+    private val code: String
+) : JPanel() {
+
+    init {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        isOpaque = false
+        alignmentX = LEFT_ALIGNMENT
+
+        val textArea = JBTextArea().apply {
+            text = code
+            font = Font(Font.MONOSPACED, Font.PLAIN, 12)
+            isEditable = false
+            lineWrap = false
+            wrapStyleWord = false
+            border = EmptyBorder(8, 12, 8, 12)
+        }
+
+        val scrollPane = JBScrollPane(textArea).apply {
+            verticalScrollBarPolicy = JBScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+            horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+            border = EmptyBorder(4, 0, 4, 0)
+            isOpaque = false
+            viewport.isOpaque = false
+        }
+
+        val header = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.X_AXIS)
+            isOpaque = false
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(28))
+            add(Box.createHorizontalGlue())
+            val label = JBLabel(language.uppercase()).apply {
+                font = JBFont.small()
+                foreground = ChatAppColors.Text.disabled
+                border = EmptyBorder(0, 0, 0, JBUI.scale(8))
+            }
+            add(label)
+            // Copy button
+            val copyBtn = createCopyButton(code)
+            add(copyBtn)
+        }
+
+        add(header)
+        add(scrollPane)
     }
 
-    override fun getPreferredSize(): Dimension {
-        val width = JBUI.scale(ChatUIConstants.MessageBubble.CONTENT_WRAP_WIDTH)
-        size = Dimension(width, Short.MAX_VALUE.toInt())
-        return Dimension(width, super.getPreferredSize().height)
+    private fun createCopyButton(text: String): JComponent {
+        return JBLabel().apply {
+            setIcon(com.intellij.icons.AllIcons.Actions.Copy)
+            cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+            addMouseListener(object : java.awt.event.MouseAdapter() {
+                override fun mouseClicked(e: java.awt.event.MouseEvent?) {
+                    java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(
+                        java.awt.datatransfer.StringSelection(text),
+                        null
+                    )
+                }
+            })
+            toolTipText = OpencodeFrontendBundle.message("chat.code.copy.tooltip")
+        }
     }
-
-    override fun getMaximumSize(): Dimension = preferredSize
 }
 
 private class TimeStampLabel(message: ChatMessage) : JPanel() {

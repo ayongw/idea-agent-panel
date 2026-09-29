@@ -2,6 +2,7 @@ package com.ayongw.plugins.opencode.shared
 
 import kotlinx.serialization.Contextual
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import java.time.LocalDateTime
 import java.util.*
 

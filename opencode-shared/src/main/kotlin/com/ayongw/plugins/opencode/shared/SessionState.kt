@@ -6,6 +6,7 @@ import java.time.LocalDateTime
 import java.util.*
 
 /** 会话运行状态 */
+@Serializable
 enum class SessionStatus {
     IDLE,                    // 空闲
     STREAMING,               // 流式响应中
@@ -15,11 +16,13 @@ enum class SessionStatus {
 }
 
 /** 权限风险等级 */
+@Serializable
 enum class RiskLevel {
     LOW, MEDIUM, HIGH, CRITICAL
 }
 
 /** 权限响应 */
+@Serializable
 enum class PermissionResponse {
     ALLOW_ONCE,    // 允许一次
     ALLOW_ALWAYS,  // 始终允许

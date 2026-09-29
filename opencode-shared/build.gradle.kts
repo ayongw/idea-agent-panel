@@ -1,10 +1,11 @@
+plugins {
+    id("org.jetbrains.kotlin.jvm")
+    id("org.jetbrains.kotlin.plugin.serialization")
+}
+
 dependencies {
-    intellijPlatform {
-        // Shared module needs IntelliJ Platform for basic types
-        // Use local IntelliJ IDEA installation to avoid network download
-        local("/Applications/IntelliJ IDEA.app")
-        
-        compileOnly(libs.kotlin.serialization.core.jvm)
-        compileOnly(libs.kotlin.serialization.json.jvm)
-    }
+    // Shared module only needs serialization libraries
+    // IntelliJ Platform types are provided by root project via pluginModule
+    implementation(libs.kotlin.serialization.core.jvm)
+    implementation(libs.kotlin.serialization.json.jvm)
 }

@@ -17,21 +17,56 @@ plugins {
 java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(25))
-        // Explicitly use JBR 25 from local IntelliJ IDEA installation
-        // This is project-scoped and doesn't affect system default JDK
     }
 }
 
 subprojects {
-    apply(plugin = "org.jetbrains.intellij.platform.module")
     apply(plugin = "rpc")
     apply(plugin = "org.jetbrains.kotlin.jvm")
     apply(plugin = "org.jetbrains.kotlin.plugin.serialization")
+
+    // Configure subproject-specific dependencies
+    when (name) {
+        "opencode-shared" -> {
+            apply(plugin = "org.jetbrains.intellij.platform.module")
+            dependencies {
+                intellijPlatform {
+                    // IntelliJ Platform 由根项目的 local(...) 提供，子模块通过 module 插件共享，
+                    // 不可再声明 intellijIdea(...)，否则会触发从 JetBrains 下载完整 IDE（~1.5GB）
+                    compileOnly("org.jetbrains.kotlin:kotlin-serialization:2.3.20")
+                    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.0")
+                }
+            }
+        }
+        "opencode-frontend" -> {
+            apply(plugin = "org.jetbrains.intellij.platform.module")
+            dependencies {
+                intellijPlatform {
+                    local("/Applications/IntelliJ IDEA.app")
+                    compileOnly("org.jetbrains.kotlin:kotlin-serialization:2.3.20")
+                    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.0")
+                }
+                implementation(project(":opencode-shared"))
+                implementation("org.jetbrains:markdown:0.7.3")
+            }
+        }
+        "opencode-backend" -> {
+            apply(plugin = "org.jetbrains.intellij.platform.module")
+            dependencies {
+                intellijPlatform {
+                    bundledModule("intellij.platform.kernel.backend")
+                    bundledModule("intellij.platform.rpc.backend")
+                    bundledModule("intellij.platform.backend")
+                }
+                implementation(project(":opencode-shared"))
+            }
+        }
+    }
 }
 
 dependencies {
     intellijPlatform {
-        // 使用本地 IntelliJ IDEA 2026.2.3 安装，避免从外网下载
+        // Use local IntelliJ IDEA 2026.2.3 installation for root
         local("/Applications/IntelliJ IDEA.app")
 
         pluginModule(implementation(project(":opencode-shared")))
@@ -53,13 +88,12 @@ dependencies {
     implementation("org.jetbrains:markdown:0.7.3")
 }
 
+// pluginVerification {
+//     ides {
+//         create(IntelliJPlatformType.IntellijIdeaUltimate, "2026.2.3")
+//     }
+// }
 intellijPlatform {
     splitMode = true
     pluginInstallationTarget = SplitModeAware.PluginInstallationTarget.BOTH
-
-    pluginVerification {
-        ides {
-            create(IntelliJPlatformType.IntellijIdeaUltimate, "2026.2.3")
-        }
-    }
 }

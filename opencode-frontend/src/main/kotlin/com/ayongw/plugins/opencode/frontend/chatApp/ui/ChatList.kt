@@ -1,5 +1,6 @@
 package com.ayongw.plugins.opencode.frontend.chatApp.ui
 
+import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.ayongw.plugins.opencode.shared.ChatMessage
@@ -16,7 +17,7 @@ import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JScrollPane
 
-class ChatList : JPanel() {
+class ChatList(private val project: Project) : JPanel() {
     private val messagesContainer: JPanel
     private val scrollPane: JScrollPane
     private val emptyPlaceholder: JPanel
