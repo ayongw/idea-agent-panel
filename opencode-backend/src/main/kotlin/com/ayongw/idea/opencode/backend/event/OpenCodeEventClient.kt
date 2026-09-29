@@ -1,6 +1,7 @@
 package com.ayongw.idea.opencode.backend.event
 
 import com.ayongw.idea.opencode.backend.repository.OpenCodeAuth
+import com.intellij.openapi.diagnostic.Logger
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -35,6 +36,8 @@ class OpenCodeEventClient(
     enum class State { IDLE, CONNECTING, CONNECTED, RECONNECTING, UNAUTHORIZED, STOPPED }
 
     private val url: String = baseUrl.trim().trimEnd('/') + EVENT_PATH
+
+    private val log = Logger.getInstance(OpenCodeEventClient::class.java)
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(CONNECT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
@@ -97,6 +100,7 @@ class OpenCodeEventClient(
 
         override fun onOpen(eventSource: EventSource, response: Response) {
             backoffMillis = initialBackoffMillis
+            log.info("事件流已连接：$url（HTTP ${response.code}）")
             updateState(State.CONNECTED)
         }
 
@@ -106,15 +110,19 @@ class OpenCodeEventClient(
         }
 
         override fun onClosed(eventSource: EventSource) {
+            log.info("事件流已关闭（服务端断开），准备重连")
             scheduleReconnect()
         }
 
         override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
             val code = response?.code
             if (code == HTTP_UNAUTHORIZED || code == HTTP_FORBIDDEN) {
-                updateState(State.UNAUTHORIZED)   // 凭据无效：不重连
+                // 凭据无效：不再重连（日志只记状态码，不记账号密码）
+                log.warn("事件流认证失败（HTTP $code）：$url，请检查设置页的凭据")
+                updateState(State.UNAUTHORIZED)
                 return
             }
+            log.warn("事件流连接失败（HTTP ${code ?: "-"}）：$url: ${t?.message ?: t?.javaClass?.simpleName ?: "未知原因"}")
             scheduleReconnect()
         }
     }
@@ -124,6 +132,7 @@ class OpenCodeEventClient(
         updateState(State.RECONNECTING)
         val delay = backoffMillis
         backoffMillis = (backoffMillis * BACKOFF_FACTOR).coerceAtMost(maxBackoffMillis)
+        log.info("事件流将在 ${delay}ms 后重连")
         runCatching {
             scheduler.schedule({ runCatching { connect() } }, delay, TimeUnit.MILLISECONDS)
         }
