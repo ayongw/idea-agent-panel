@@ -1,12 +1,16 @@
 package com.ayongw.plugins.opencode.frontend.chatApp.ui
 
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.ayongw.plugins.opencode.shared.ChatMessage
 import com.ayongw.plugins.opencode.frontend.OpencodeFrontendBundle
 import com.ayongw.plugins.opencode.frontend.chatApp.ui.utils.ChatAppColors
 import com.ayongw.plugins.opencode.frontend.chatApp.ui.utils.ChatUIConstants
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.GridBagConstraints
@@ -24,6 +28,12 @@ class ChatList(private val project: Project) : JPanel() {
     private val cardPanel: JPanel
 
     private val messageBubbles = mutableMapOf<String, MessageBubble>()
+
+    /** 流式渲染控制器 */
+    private val streamingController: StreamingRenderController
+
+    /** UI 协程作用域 */
+    private val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     companion object {
         private const val CARD_EMPTY = "empty"
@@ -43,6 +53,24 @@ class ChatList(private val project: Project) : JPanel() {
         }
 
         add(cardPanel, BorderLayout.CENTER)
+
+        // 初始化流式渲染控制器
+        streamingController = StreamingRenderController(
+            project = project,
+            uiScope = uiScope,
+            onMessageUpdate = { messageId, content ->
+                messageBubbles[messageId]?.updateStreamingText(content)
+            },
+            onMessageComplete = { messageId ->
+                // 流式完成，可选：触发最终渲染优化
+            },
+            onReasoningUpdate = { messageId, content ->
+                messageBubbles[messageId]?.updateReasoningContent(content)
+            },
+            onReasoningComplete = { messageId ->
+                // 推理完成
+            }
+        )
     }
 
     private fun setupAppearance() {
@@ -86,6 +114,9 @@ class ChatList(private val project: Project) : JPanel() {
             showMessagesPanel()
         }
 
+        // 检测流式消息并更新控制器
+        detectAndHandleStreaming(messages)
+
         removeDeletedMessages(messages)
         removeSpaceFillerIfPresent()
 
@@ -93,6 +124,29 @@ class ChatList(private val project: Project) : JPanel() {
 
         refresh()
         scrollToBottom()
+    }
+
+    /**
+     * 检测流式消息并同步到 StreamingRenderController
+     */
+    private fun detectAndHandleStreaming(messages: List<ChatMessage>) {
+        // 查找当前正在流式的消息
+        val streamingMessages = messages.filter { msg ->
+            // 检查消息是否为 AI 且内容正在增长（简单启发式）
+            !msg.isMyMessage && msg.type == ChatMessage.ChatMessageType.TEXT && isLikelyStreaming(msg)
+        }
+
+        // 这里可以添加更复杂的流式检测逻辑
+        // 目前由后端模拟流式，前端通过消息内容变化检测
+    }
+
+    /**
+     * 简单启发式：判断消息是否可能正在流式传输
+     * 实际项目中应通过事件流或专门字段判断
+     */
+    private fun isLikelyStreaming(message: ChatMessage): Boolean {
+        // 如果消息内容较短且以不完整句子结尾，可能正在流式
+        return message.content.length < 500 && !message.content.endsWith(".") && !message.content.endsWith("。")
     }
 
     fun updateSearchHighlights(searchState: SearchState) {
@@ -177,6 +231,7 @@ class ChatList(private val project: Project) : JPanel() {
     private fun clearMessages() {
         messagesContainer.removeAll()
         messageBubbles.clear()
+        streamingController.cancelStreaming()
         showEmptyPanel()
         refresh()
     }

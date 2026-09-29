@@ -20,6 +20,9 @@ import javax.swing.border.EmptyBorder
 import javax.swing.event.HyperlinkEvent
 import javax.swing.text.html.HTMLEditorKit
 
+/**
+ * 消息气泡 - 支持流式更新
+ */
 class MessageBubble(
     private val message: ChatMessage,
     private var isMatchingSearch: Boolean = false,
@@ -27,6 +30,12 @@ class MessageBubble(
 ) : JPanel() {
 
     private val isMyMessage = message.isMyMessage
+
+    /** 内容容器 - 用于动态更新 */
+    private var contentContainer: JPanel? = null
+
+    /** 当前渲染的内容段落 */
+    private var currentSegments: List<MarkdownSegment> = emptyList()
 
     init {
         setupAppearance()
@@ -36,7 +45,8 @@ class MessageBubble(
 
         when {
             message.isTextMessage() -> {
-                add(MessageContent(message))
+                contentContainer = buildContentContainer(message.content)
+                add(contentContainer!!)
                 add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.NORMAL)))
                 add(TimeStampLabel(message))
             }
@@ -113,6 +123,104 @@ class MessageBubble(
         isHighlightedInSearch = highlighted
         repaint()
     }
+
+    /**
+     * 更新流式文本内容
+     */
+    fun updateStreamingText(newContent: String) {
+        contentContainer?.let { container ->
+            remove(container)
+            val newContainer = buildContentContainer(newContent)
+            contentContainer = newContainer
+            add(newContainer, 2) // Insert after author name and spacer
+            revalidate()
+            repaint()
+        }
+    }
+
+    /**
+     * 完成流式文本，最终渲染
+     */
+    fun completeStreamingText(finalContent: String) {
+        updateStreamingText(finalContent)
+    }
+
+    /**
+     * 更新推理过程内容
+     */
+    fun updateReasoningContent(content: String) {
+        // For thinking messages, we replace the ThinkingIndicator with content
+        if (message.isAIThinkingMessage()) {
+            removeAll()
+            setupAppearance()
+            add(AuthorName(message))
+            add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.MEDIUM)))
+            contentContainer = buildReasoningContent(content)
+            add(contentContainer!!)
+            revalidate()
+            repaint()
+        }
+    }
+
+    /**
+     * 完成推理过程
+     */
+    fun completeReasoning(finalContent: String) {
+        updateReasoningContent(finalContent)
+    }
+
+    /**
+     * 构建内容容器
+     */
+    private fun buildContentContainer(content: String): JPanel {
+        val container = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            alignmentX = LEFT_ALIGNMENT
+        }
+
+        currentSegments = parseMarkdownWithCodeBlocks(content)
+        currentSegments.forEachIndexed { index, segment ->
+            when (segment) {
+                is MarkdownSegment.Text -> {
+                    if (segment.content.isNotBlank()) {
+                        container.add(TextPane(segment.content))
+                        if (index < currentSegments.lastIndex) container.add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+                    }
+                }
+                is MarkdownSegment.CodeBlock -> {
+                    container.add(CodeBlockPane(segment.language, segment.code))
+                    if (index < currentSegments.lastIndex) container.add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+                }
+            }
+        }
+
+        return container
+    }
+
+    /**
+     * 构建推理过程容器
+     */
+    private fun buildReasoningContent(content: String): JPanel {
+        val container = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            alignmentX = LEFT_ALIGNMENT
+        }
+
+        val lines = content.lines().toList()
+        lines.forEachIndexed { index, line ->
+            val label = JBLabel(line).apply {
+                font = JBFont.regular()
+                foreground = ChatAppColors.Text.normal
+                alignmentX = LEFT_ALIGNMENT
+            }
+            container.add(label)
+            if (index < lines.lastIndex) container.add(Box.createVerticalStrut(JBUI.scale(2)))
+        }
+
+        return container
+    }
 }
 
 private class AuthorName(message: ChatMessage) : JBLabel() {
@@ -126,30 +234,6 @@ private class AuthorName(message: ChatMessage) : JBLabel() {
         font = JBFont.small().asBold()
         foreground = ChatAppColors.Text.authorName
         alignmentX = LEFT_ALIGNMENT
-    }
-}
-
-private class MessageContent(message: ChatMessage) : JPanel() {
-    init {
-        layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        isOpaque = false
-        alignmentX = LEFT_ALIGNMENT
-
-        val segments = parseMarkdownWithCodeBlocks(message.content)
-        segments.forEachIndexed { index, segment ->
-            when (segment) {
-                is MarkdownSegment.Text -> {
-                    if (segment.content.isNotBlank()) {
-                        add(TextPane(segment.content))
-                        if (index < segments.lastIndex) add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
-                    }
-                }
-                is MarkdownSegment.CodeBlock -> {
-                    add(CodeBlockPane(segment.language, segment.code))
-                    if (index < segments.lastIndex) add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
-                }
-            }
-        }
     }
 }
 
@@ -203,7 +287,6 @@ private class TextPane(private val text: String) : JPanel() {
         isOpaque = false
         alignmentX = LEFT_ALIGNMENT
 
-        // Simple text rendering - split by lines and create labels
         val lines = text.lines().toList()
         lines.forEachIndexed { index, line ->
             val label = JBLabel(line).apply {
@@ -255,7 +338,6 @@ private class CodeBlockPane(
                 border = EmptyBorder(0, 0, 0, JBUI.scale(8))
             }
             add(label)
-            // Copy button
             val copyBtn = createCopyButton(code)
             add(copyBtn)
         }
