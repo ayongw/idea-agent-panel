@@ -18,19 +18,12 @@ import java.util.concurrent.TimeUnit
  */
 class OpenCodeRestClient(
     private val baseUrl: String,
-    private val password: String? = null
+    private val token: String? = null
 ) {
 
     private val gson = Gson()
     private val typeTokenSessionList = object : TypeToken<List<OpenCodeSession>>() {}.type
     private val typeTokenSession = object : TypeToken<OpenCodeSession>() {}.type
-
-    /**
-     * 设置密码（用于认证）
-     */
-    fun setPassword(password: String?) {
-        // 这里只是占位，实际通过 executeRequest 传递
-    }
 
     /**
      * 健康检查
@@ -42,6 +35,7 @@ class OpenCodeRestClient(
             connection.connectTimeout = 10000
             connection.readTimeout = 30000
             connection.requestMethod = "GET"
+            applyAuthHeader(connection)
             connection.connect()
             connection.responseCode == 200
         } catch (e: IOException) {
@@ -166,6 +160,14 @@ class OpenCodeRestClient(
         }
     }
 
+    /**
+     * 按需附加认证头（Token 为空则不鉴权）
+     */
+    private fun applyAuthHeader(connection: HttpURLConnection) {
+        val authToken = token?.takeIf { it.isNotBlank() } ?: return
+        connection.setRequestProperty("Authorization", "Bearer $authToken")
+    }
+
     private suspend fun <T> executeRequest(
         method: String,
         path: String,
@@ -181,9 +183,7 @@ class OpenCodeRestClient(
             connection.doOutput = body != null
 
             // 添加认证头
-            password?.let {
-                connection.setRequestProperty("Authorization", "Bearer $it")
-            }
+            applyAuthHeader(connection)
 
             if (body != null) {
                 connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")

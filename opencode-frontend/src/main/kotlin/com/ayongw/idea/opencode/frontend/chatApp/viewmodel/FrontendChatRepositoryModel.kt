@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import com.ayongw.idea.opencode.frontend.settings.OpenCodeSettingsState
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ChatRepositoryRpcApi
 import com.ayongw.idea.opencode.shared.PermissionResponse
@@ -102,9 +103,15 @@ class FrontendChatRepositoryModel(
         }
     }
 
-    // 初始化：延迟加载会话列表和服务器状态
+    // 初始化：下发设置 → 延迟加载会话列表和服务器状态
     init {
         coroutineScope.launch {
+            // 应用级设置下发到后端，保证重启后按设置连接
+            val settings = OpenCodeSettingsState.getInstance()
+            runCatching {
+                ChatRepositoryRpcApi.getInstance()
+                    .updateServerConfig(project.projectId(), settings.serverUrl, settings.token)
+            }
             refreshSessions()
             coroutineScope.launch {
                 val info = ChatRepositoryRpcApi.getInstance().getServerInfo(project.projectId())

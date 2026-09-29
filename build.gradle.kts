@@ -81,6 +81,9 @@ dependencies {
         // 如果需要 Java PSI 支持（上下文注入需要）
         bundledPlugin("com.intellij.java")
     }
+
+    // 单元测试（JUnit 4）
+    testImplementation("junit:junit:4.13.2")
 }
 
 intellijPlatform {

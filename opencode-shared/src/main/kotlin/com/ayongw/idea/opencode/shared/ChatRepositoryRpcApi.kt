@@ -110,6 +110,13 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
      * 获取 OpenCode Server 连接信息
      */
     suspend fun getServerInfo(projectId: ProjectId): ServerInfoDto
+
+    /**
+     * 下发 OpenCode Server 连接配置（前端设置页 → 后端）
+     * @param serverUrl Server 地址，如 http://localhost:8080
+     * @param token 认证 Token，为空表示不鉴权（请求头 Authorization: Bearer <token>）
+     */
+    suspend fun updateServerConfig(projectId: ProjectId, serverUrl: String, token: String)
 }
 
 /** Server 连接信息 */

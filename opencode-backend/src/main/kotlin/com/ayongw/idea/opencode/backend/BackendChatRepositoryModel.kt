@@ -24,6 +24,9 @@ import java.time.LocalDateTime
 @Service(Service.Level.PROJECT)
 class BackendChatRepositoryModel {
     companion object {
+        /** 默认 Server 地址 */
+        const val DEFAULT_SERVER_URL = "http://localhost:8080"
+
         fun getInstance(project: Project): BackendChatRepositoryModel {
             return project.getService(BackendChatRepositoryModel::class.java)
         }
@@ -32,8 +35,17 @@ class BackendChatRepositoryModel {
     /** 当前活跃会话 ID */
     private var currentSessionId: String? = null
 
-    /** OpenCode REST 客户端 */
-    private val restClient = OpenCodeRestClient(getServerUrl(), getServerPassword())
+    /** Server 连接地址（由设置页下发覆盖） */
+    @Volatile
+    private var serverUrl: String = DEFAULT_SERVER_URL
+
+    /** 认证 Token（请求头 Authorization: Bearer <token>），为空表示不鉴权 */
+    @Volatile
+    private var token: String = System.getenv("OPENCODE_SERVER_TOKEN") ?: ""
+
+    /** OpenCode REST 客户端（配置变更时重建） */
+    @Volatile
+    private var restClient = OpenCodeRestClient(serverUrl, token)
 
     /** 本地消息缓存（当前会话的消息） */
     private val _messages = MutableStateFlow(emptyList<ChatMessage>())
@@ -211,21 +223,22 @@ class BackendChatRepositoryModel {
     }
 
     /**
-     * 获取服务器 URL（从配置读取，默认 localhost:8080）
+     * 更新 Server 连接配置（由前端设置页通过 RPC 下发），并刷新连接状态
      */
-    private fun getServerUrl(): String {
-        // TODO: 从配置读取，暂时硬编码
-        return "http://localhost:8080"
+    fun updateServerConfig(serverUrl: String, token: String) {
+        val normalizedUrl = serverUrl.trim().trimEnd('/').ifEmpty { DEFAULT_SERVER_URL }
+        val normalizedToken = token.trim()
+        if (normalizedUrl == this.serverUrl && normalizedToken == this.token) {
+            return
+        }
+        this.serverUrl = normalizedUrl
+        this.token = normalizedToken
+        this.restClient = OpenCodeRestClient(normalizedUrl, normalizedToken)
+        CoroutineScope(Dispatchers.IO).launch { loadSessions() }
     }
 
-    /**
-     * 获取服务器密码（从配置读取，默认无密码）
-     */
-    private fun getServerPassword(): String? {
-        // TODO: 从配置读取，暂时返回 null
-        // 可通过环境变量 OPENCODE_SERVER_PASSWORD 或配置文件读取
-        return System.getenv("OPENCODE_SERVER_PASSWORD")
-    }
+    /** 当前生效的 Server 地址 */
+    fun getServerUrl(): String = serverUrl
 
     /**
      * 本地模拟模式（服务器不可用时的 fallback）

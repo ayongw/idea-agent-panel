@@ -151,14 +151,23 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
         val backendProject = projectId.findProjectOrNull() ?: return ServerInfoDto(false, null, null, null, "Project not found")
         val model = BackendChatRepositoryModel.getInstance(backendProject)
         val connected = model.getServerConnectedFlow().first()
+        val serverUrl = model.getServerUrl()
         return ServerInfoDto(
             isRunning = connected,
-            serverUrl = if (connected) "http://localhost:8080" else null,
-            port = if (connected) 8080 else null,
+            serverUrl = if (connected) serverUrl else null,
+            port = if (connected) parsePort(serverUrl) else null,
             version = if (connected) "OpenCode Server" else null,
             error = if (connected) null else "OpenCode Server not running"
         )
     }
+
+    override suspend fun updateServerConfig(projectId: ProjectId, serverUrl: String, token: String) {
+        val backendProject = projectId.findProjectOrNull() ?: return
+        BackendChatRepositoryModel.getInstance(backendProject).updateServerConfig(serverUrl, token)
+    }
+
+    private fun parsePort(serverUrl: String): Int? =
+        runCatching { java.net.URI(serverUrl).port }.getOrNull()?.takeIf { it > 0 }
 
     private suspend fun getSessionTitle(model: BackendChatRepositoryModel, sessionId: String): String {
         // 从会话列表中查找标题
