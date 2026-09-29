@@ -26,6 +26,7 @@ class OpenCodeRestClientUnitTest {
     private val routes = mutableMapOf<String, String>()
     private var lastMethod = ""
     private var lastPath = ""
+    private var lastQuery: String? = null
     private var lastAuthHeader: String? = null
     private var lastBody: String? = null
     private var port: Int = 0
@@ -37,6 +38,7 @@ class OpenCodeRestClientUnitTest {
         server.createContext("/") { exchange ->
             lastMethod = exchange.requestMethod
             lastPath = exchange.requestURI.path
+            lastQuery = exchange.requestURI.query
             lastAuthHeader = exchange.requestHeaders.getFirst("Authorization")
             lastBody = exchange.requestBody.use { it.readBytes().toString(Charsets.UTF_8) }
                 .takeIf { it.isNotEmpty() }
@@ -112,16 +114,39 @@ class OpenCodeRestClientUnitTest {
     }
 
     @Test
-    fun promptCarriesTextAndFileUris() = runBlocking {
+    fun promptCarriesTextFilesAndSkills() = runBlocking {
         routes["/api/session/ses_1/prompt"] = """{"data":{"id":"msg_1"}}"""
 
-        val result = client().sendPrompt("ses_1", "你好", listOf("file:///tmp/a.kt"))
+        val result = client().sendPrompt(
+            "ses_1",
+            "你好",
+            listOf(OpenCodeRestClient.PromptFile("file:///tmp/a.kt", "a.kt", "src")),
+            listOf("skill_1")
+        )
 
         assertTrue("发送 prompt 应成功", result.isSuccess())
         assertEquals("POST", lastMethod)
         assertEquals("/api/session/ses_1/prompt", lastPath)
         assertTrue(lastBody!!.contains("\"text\":\"你好\""))
         assertTrue(lastBody!!.contains("\"uri\":\"file:///tmp/a.kt\""))
+        assertTrue(lastBody!!.contains("\"name\":\"a.kt\""))
+        assertTrue(lastBody!!.contains("\"description\":\"src\""))
+        assertTrue(lastBody!!.contains("\"skills\":[{\"id\":\"skill_1\"}]"))
+    }
+
+    @Test
+    fun commandUsesCommandEndpointWithName() = runBlocking {
+        routes["/api/session/ses_1/command"] = """{"data":{"id":"msg_2"}}"""
+
+        val result = client().sendCommand("ses_1", "init", "请初始化", emptyList(), listOf("skill_2"))
+
+        assertTrue("执行命令应成功", result.isSuccess())
+        assertEquals("POST", lastMethod)
+        assertEquals("/api/session/ses_1/command", lastPath)
+        assertTrue(lastBody!!.contains("\"name\":\"init\""))
+        assertTrue(lastBody!!.contains("\"text\":\"请初始化\""))
+        assertTrue(lastBody!!.contains("\"skills\":[{\"id\":\"skill_2\"}]"))
+        assertFalse("无文件附件时不应出现 files 字段", lastBody!!.contains("\"files\""))
     }
 
     @Test
@@ -132,6 +157,100 @@ class OpenCodeRestClientUnitTest {
 
         assertEquals("POST", lastMethod)
         assertEquals("/api/session/ses_1/interrupt", lastPath)
+    }
+
+    @Test
+    fun listCommandsParsesNameAndDescription() = runBlocking {
+        routes["/api/command"] = """
+            {"data":[{"name":"init","description":"初始化项目"},{"name":"compact"}]}
+        """.trimIndent()
+
+        val commands = client().listCommands("/tmp/proj").getOrThrow()
+
+        assertEquals("/api/command", lastPath)
+        assertTrue("应带上工作目录", lastQuery!!.contains("location[directory]=/tmp/proj"))
+        assertEquals(2, commands.size)
+        assertEquals("init", commands[0].name)
+        assertEquals("初始化项目", commands[0].description)
+        assertNull("缺省描述应为 null", commands[1].description)
+    }
+
+    @Test
+    fun listReferencesParsesPathAndHidden() = runBlocking {
+        routes["/api/reference"] = """
+            {"data":[
+              {"name":"AGENTS.md","path":"/tmp/proj/AGENTS.md","description":"项目规范"},
+              {"name":"global","path":"/home/me/.config/opencode/AGENTS.md","hidden":true}]}
+        """.trimIndent()
+
+        val references = client().listReferences().getOrThrow()
+
+        assertEquals(2, references.size)
+        assertEquals("/tmp/proj/AGENTS.md", references[0].path)
+        assertFalse(references[0].hidden)
+        assertTrue("hidden 字段应被解析", references[1].hidden)
+    }
+
+    @Test
+    fun findEntriesSendsQueryAndLocation() = runBlocking {
+        routes["/api/fs/find"] = """
+            {"data":[{"path":"src/main/ChatList.kt","type":"file"},{"path":"src/main","type":"directory"}]}
+        """.trimIndent()
+
+        val entries = client().findEntries("ChatList", "/tmp/proj", 20).getOrThrow()
+
+        assertEquals("/api/fs/find", lastPath)
+        assertTrue(lastQuery!!.contains("query=ChatList"))
+        assertTrue(lastQuery!!.contains("limit=20"))
+        assertTrue(lastQuery!!.contains("location[directory]=/tmp/proj"))
+        assertEquals("src/main/ChatList.kt", entries[0].path)
+        assertFalse(entries[0].isDirectory)
+        assertTrue("目录项应被识别", entries[1].isDirectory)
+    }
+
+    @Test
+    fun listDirectorySendsPathAndLocation() = runBlocking {
+        routes["/api/fs/list"] = """{"data":[{"path":"src/main","type":"directory"}]}"""
+
+        val entries = client().listDirectory("src", "/tmp/proj").getOrThrow()
+
+        assertEquals("/api/fs/list", lastPath)
+        assertTrue(lastQuery!!.contains("path=src"))
+        assertTrue(lastQuery!!.contains("location[directory]=/tmp/proj"))
+        assertEquals("src/main", entries.single().path)
+    }
+
+    @Test
+    fun providerNamesMapIdToDisplayName() = runBlocking {
+        routes["/api/provider"] = """
+            {"data":[{"id":"opencode","name":"OpenCode Zen"},{"id":"copilot"}]}
+        """.trimIndent()
+
+        val names = client().listProviderNames().getOrThrow()
+
+        assertEquals("OpenCode Zen", names["opencode"])
+        assertEquals("name 缺失时回落 id", "copilot", names["copilot"])
+    }
+
+    @Test
+    fun modelsMarkFreeWhenAllCostTiersAreZero() = runBlocking {
+        routes["/api/model"] = """
+            {"data":[
+              {"id":"m_free","modelID":"free-1","providerID":"opencode","name":"Free One",
+               "limit":{"context":200000,"output":8000},
+               "cost":[{"input":0,"output":0,"cache":{"read":0,"write":0}}]},
+              {"id":"m_paid","modelID":"paid-1","providerID":"opencode","name":"Paid One",
+               "limit":{"context":200000,"output":8000},
+               "cost":[{"input":3,"output":15,"cache":{"read":0,"write":0}}]},
+              {"id":"m_unknown","modelID":"unknown-1","providerID":"opencode","name":"Unknown"}]}
+        """.trimIndent()
+
+        val models = client().listModels().getOrThrow()
+
+        assertTrue("单价全 0 视为免费", models[0].free)
+        assertFalse("有单价则非免费", models[1].free)
+        assertFalse("无 cost 字段不视为免费", models[2].free)
+        assertEquals(200000L, models[0].limitContext)
     }
 
     @Test
