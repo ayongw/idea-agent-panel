@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import java.awt.BorderLayout
 import java.awt.CardLayout
+import java.awt.Container
 import java.awt.Dimension
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
@@ -260,11 +261,15 @@ class ChatList(private val project: Project) : JPanel() {
         )
         if (messageBubbles.size == lastLoggedBubbleCount) return
         lastLoggedBubbleCount = messageBubbles.size
-        messageBubbles.forEach { (id, bubble) ->
+        val gridBag = messagesContainer.layout as? GridBagLayout
+        messagesContainer.components.forEach { child ->
+            val gbc = gridBag?.getConstraints(child)
             log.info(
-                "[diag]   bubble ${id.take(24)}: bounds=${bubble.bounds.x},${bubble.bounds.y}," +
-                    "${bubble.bounds.width}x${bubble.bounds.height} " +
-                    "pref=${bubble.preferredSize.width}x${bubble.preferredSize.height} visible=${bubble.isVisible}"
+                "[diag]   child ${child.javaClass.simpleName}: " +
+                    "bounds=${child.bounds.x},${child.bounds.y},${child.bounds.width}x${child.bounds.height} " +
+                    "pref=${child.preferredSize.width}x${child.preferredSize.height} visible=${child.isVisible} " +
+                    "grid=(${gbc?.gridx},${gbc?.gridy}) weight=(${gbc?.weightx},${gbc?.weighty}) " +
+                    "fill=${gbc?.fill} anchor=${gbc?.anchor}"
             )
         }
     }
@@ -297,21 +302,34 @@ class ChatList(private val project: Project) : JPanel() {
     /**
      * 保证容器子树已完成布局。
      *
-     * 实测（0.1.0.32 + `[diag]` 日志）：只调用 `revalidate()` 时，视口会按新的 `preferredSize`
-     * 直接 `setSize`（所以滚动条与滚动范围都正常），但气泡的 `bounds` 始终是 `0x0`——
-     * 延迟校验没有生效，结果是一个气泡都画不出来（整屏只有面板底色）。
-     * 这里同步补一次校验；若容器自认 valid 却仍有气泡没有几何，则先 invalidate 再校验。
+     * 实测结论（JDK 21 源码 + `[diag]` 日志）：
+     * `Container.validate()` 的条件是 `!isValid() && peer != null`——轻量组件（scroll pane 里的 JPanel）
+     * `peer == null`，所以 `validate()` 是**空操作**；`revalidate()` 的延迟校验在该链路里同样没落到
+     * `layoutContainer`。结果是视口按 `preferredSize` 给容器 `setSize`（滚动条正常），但气泡 `bounds`
+     * 恒为 `0x0`，一个都画不出来（整屏只剩面板底色）。
+     *
+     * 因此这里不依赖 Swing 的校验机制，直接同步跑布局。
      */
     private fun ensureLaidOut() {
         if (!SwingUtilities.isEventDispatchThread() || messagesContainer.width <= 0) return
         val missingGeometry = messageBubbles.values.any { it.parent === messagesContainer && it.width == 0 }
         if (messagesContainer.isValid && !missingGeometry) return
-        messagesContainer.invalidate()
-        messagesContainer.validate()
+        messagesContainer.revalidate()
+        forceLayout(messagesContainer)
         log.info(
-            "[diag] ensureLaidOut: 强制布局 valid=${messagesContainer.isValid} " +
-                "children=${messagesContainer.componentCount}"
+            "[diag] ensureLaidOut: forced missing=$missingGeometry valid=${messagesContainer.isValid} " +
+                "children=${messagesContainer.componentCount} size=${messagesContainer.size.width}x${messagesContainer.size.height}"
         )
+    }
+
+    /**
+     * 递归强制布局（`doLayout` 直接调布局管理器，绕开 isValid / RepaintManager 的延迟校验）。
+     */
+    private fun forceLayout(container: Container) {
+        container.doLayout()
+        container.components.forEach { child ->
+            if (child is Container && child.isVisible) forceLayout(child)
+        }
     }
 }
 

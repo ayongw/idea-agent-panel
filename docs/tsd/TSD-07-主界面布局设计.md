@@ -8,6 +8,7 @@
 |------|------|---------|------|
 | v1.0 | 2026-09-29 | 初版：确定「顶部会话 tab + 底部输入工具条」三段式布局 | ayongw |
 | v1.1 | 2026-09-30 | 新增 §3.4 消息区渲染规格：助手消息改为「头像 + 名称 + 正文 + 时间」整行块（对齐参考样式）、代码块折叠预览与高度上限、容器宽度跟随视口、布局完成后再滚动到底；§6 缺口 4 收敛 | agent |
+| v1.2 | 2026-09-30 | §3.4 容器布局改为 `forceLayout()` 递归同步 `doLayout()`：定位到「消息区全空」的真正根因——轻量容器 `peer == null` 使 `Container.validate()` 成为空操作（JDK 21 源码佐证），气泡 `bounds` 恒为 `0x0` | agent |
 
 ## 1. 结论与总览
 
@@ -126,7 +127,7 @@ tab 标题超过 24 字符截断显示，完整标题放 tooltip；当前 tab �
 | 助手消息 | **整行块（不画气泡底）**：头像 + 名称 + 正文 + 时间，占满可视宽度 | 对齐参考样式（Agent / Kiro 的标题行 + 无气泡正文）；搜索命中时才画高亮底 |
 | 头像 | 圆角方块 + 名称首字母，取主题色（`ChatAppColors.Avatar`），无需图标资源 | 避免引入图标依赖，浅/深色主题都可见 |
 | 代码块 | 默认折叠为 **12 行预览**，可「展开 N 行 / 收起」；高度上限 **320px**（超出在块内滚动） | 工具输出常达数百行，不设上限会把气泡撑到几千像素高，消息区只剩空白 |
-| 容器布局 | `MessagesContainer`（`Scrollable`，`tracksViewportWidth = true`）+ `refresh()` 中**同步补一次 `validate()`** | 实测：只 `revalidate()` 时视口会按新 `preferredSize` 直接 `setSize`（滚动条/滚动范围正常），但气泡 `bounds` 恒为 `0x0`——延迟校验未生效，整屏只剩面板底色；强制布局后气泡立即获得几何 |
+| 容器布局 | `MessagesContainer`（`Scrollable`，`tracksViewportWidth = true`）+ `refresh()` 中 `forceLayout()` **递归同步跑 `doLayout()`** | 实测根因（JDK 21 源码）：`Container.validate()` 的条件是 `!isValid() && peer != null`，轻量组件（scroll pane 内的 JPanel）`peer == null` → `validate()` 是空操作；`revalidate()` 的延迟校验在该链路也没落到 `layoutContainer`。表现为视口按 `preferredSize` 给容器 `setSize`（滚动条/滚动范围正常）而气泡 `bounds` 恒为 `0x0`，整屏只剩面板底色。改为直接同步布局后气泡立即获得几何 |
 | 滚动到底 | 在 `invokeLater`（布局完成）后执行 `scrollRectToVisible` | `setMessages` 里刚 add 的气泡还没有 bounds，立即滚动会按旧高度落到空白区 |
 | 消息顺序 | 面板内一律「最早在前」（与事件流追加顺序一致），REST 列表在 backend 侧反转后下发 | 见《TSD-06-事件流接入设计》§5.7 |
 
