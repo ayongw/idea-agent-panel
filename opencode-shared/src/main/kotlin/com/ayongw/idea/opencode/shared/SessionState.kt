@@ -73,7 +73,20 @@ data class PermissionRequest(
         get() = response != null
 }
 
-/** 上下文文件 */
+/** 上下文附件类型：决定发送时挂到 prompt 的哪个字段 */
+@Serializable
+enum class ContextKind {
+    /** 文件（工作区内选中的或本机任意文件） */
+    FILE,
+    /** 目录（工作区浏览时选中） */
+    DIRECTORY,
+    /** opencode 技能，按 `skillId` 挂到 prompt 的 `skills` 字段 */
+    SKILL,
+    /** 规则文件（AGENTS.md 等），以文件形式传输 */
+    RULE
+}
+
+/** 上下文附件（会话级；命令为一次性） */
 @Serializable
 data class ContextFile(
     val path: String,
@@ -81,57 +94,8 @@ data class ContextFile(
     val summary: String = "",
     @Serializable(with = LocalDateTimeSerializer::class)
     val addedAt: LocalDateTime = LocalDateTime.now(),
-    val isExplicit: Boolean = true  // true=用户显式添加, false=自动收集
-)
-
-/** 上下文选区 */
-@Serializable
-data class ContextSelection(
-    val filePath: String,
-    val startLine: Int,
-    val endLine: Int,
-    val content: String,
-    @Serializable(with = LocalDateTimeSerializer::class)
-    val selectedAt: LocalDateTime = LocalDateTime.now()
-)
-
-/** 提示上下文组装 */
-@Serializable
-data class PromptContext(
-    val currentFile: ContextFile? = null,
-    val selection: ContextSelection? = null,
-    val explicitFiles: List<ContextFile> = emptyList(),
-    val cursorPosition: CursorPosition? = null
-) {
-    /** 生成上下文摘要文本 */
-    fun toContextSummary(): String {
-        val builder = StringBuilder()
-
-        currentFile?.let {
-            builder.appendLine("## 当前文件: ${it.path}")
-            if (it.summary.isNotBlank()) builder.appendLine(it.summary)
-        }
-
-        selection?.let {
-            builder.appendLine("## 选中代码 (${it.filePath}:${it.startLine}-${it.endLine})")
-            builder.appendLine("```")
-            builder.appendLine(it.content)
-            builder.appendLine("```")
-        }
-
-        explicitFiles.forEachIndexed { index, file ->
-            builder.appendLine("## 上下文文件 ${index + 1}: ${file.path}")
-            if (file.summary.isNotBlank()) builder.appendLine(file.summary)
-        }
-
-        return builder.toString()
-    }
-}
-
-/** 光标位置 */
-@Serializable
-data class CursorPosition(
-    val filePath: String,
-    val line: Int,
-    val column: Int
+    val isExplicit: Boolean = true,  // true=用户显式添加, false=自动收集
+    val kind: ContextKind = ContextKind.FILE,
+    /** kind=SKILL 时 opencode 侧技能 id */
+    val skillId: String? = null
 )

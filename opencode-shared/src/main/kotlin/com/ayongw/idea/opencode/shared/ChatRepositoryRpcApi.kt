@@ -31,11 +31,13 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
     suspend fun getMessagesFlow(projectId: ProjectId): Flow<List<ChatMessageDto>>
 
     /**
-     * Sends a message with the provided content.
-     *
-     * @param messageContent The content of the message to be sent.
+     * 发送消息并携带本次上下文（输入框 mention 的解析结果 + 命令名）
      */
-    suspend fun sendMessage(projectId: ProjectId, messageContent: String)
+    suspend fun sendMessageWithContext(
+        projectId: ProjectId,
+        messageContent: String,
+        context: PromptContextDto
+    )
 
     // ==================== 新增方法 ====================
 
@@ -87,7 +89,7 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
     suspend fun abortExecution(projectId: ProjectId, sessionId: String)
 
     /**
-     * 添加显式上下文文件
+     * 添加显式上下文附件（文件 / 目录 / 技能 / 规则 / 命令）
      */
     suspend fun addContextFile(projectId: ProjectId, sessionId: String, contextFile: ContextFileDto)
 
@@ -102,9 +104,38 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
     suspend fun clearContextFiles(projectId: ProjectId, sessionId: String)
 
     /**
-     * 设置当前选区上下文
+     * 订阅指定会话的上下文附件（会话级，发送消息时随 prompt 一起下发）
      */
-    suspend fun setContextSelection(projectId: ProjectId, sessionId: String, selection: ContextSelectionDto?)
+    suspend fun getContextFilesFlow(projectId: ProjectId, sessionId: String): Flow<List<ContextFileDto>>
+
+    // ==================== 输入区候选（命令 / 规则 / 工作区文件） ====================
+
+    /**
+     * 可用命令清单（内置 + 自定义），对应 v2 `GET /api/command`
+     */
+    suspend fun listCommands(projectId: ProjectId): List<CommandDto>
+
+    /**
+     * 规则清单，对应 v2 `GET /api/reference`
+     */
+    suspend fun listReferences(projectId: ProjectId): List<ReferenceDto>
+
+    /**
+     * 技能清单，对应 v2 `GET /api/skill`
+     */
+    suspend fun listSkills(projectId: ProjectId): List<SkillDto>
+
+    /**
+     * 工作区文件检索（文件与目录），对应 v2 `GET /api/fs/find`
+     */
+    suspend fun findWorkspaceEntries(projectId: ProjectId, query: String, limit: Int = 50): List<WorkspaceEntryDto>
+
+    /**
+     * 浏览工作区目录，对应 v2 `GET /api/fs/list`
+     *
+     * @param path 目录相对路径；null 表示工作区根目录
+     */
+    suspend fun listWorkspaceDirectory(projectId: ProjectId, path: String?): List<WorkspaceEntryDto>
 
     /**
      * 获取 OpenCode Server 连接信息
@@ -128,6 +159,16 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
      * 列出可用模型，对应 v2 GET /api/model
      */
     suspend fun listModels(projectId: ProjectId): List<ModelDto>
+
+    /**
+     * 按供应商分组的模型清单（模型选择弹窗用）：`GET /api/model` + `GET /api/provider` 组装
+     */
+    suspend fun listModelProviders(projectId: ProjectId): List<ModelProviderDto>
+
+    /**
+     * 会话当前选中的模式与模型（切换会话后回读）
+     */
+    suspend fun getSessionSelection(projectId: ProjectId, sessionId: String): SessionSelectionDto
 
     /**
      * 切换当前会话的 Agent（模式），对应 v2 POST /api/session/{sessionID}/agent

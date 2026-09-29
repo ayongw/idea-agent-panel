@@ -178,7 +178,7 @@ fun PermissionRequest.toPermissionRequestDto(): PermissionRequestDto {
     )
 }
 
-// ==================== 新增 DTO: ContextFile ====================
+// ==================== DTO: 上下文附件 ====================
 
 @Serializable
 data class ContextFileDto(
@@ -187,7 +187,10 @@ data class ContextFileDto(
     val summary: String,
     @Serializable(with = LocalDateTimeSerializer::class)
     val addedAt: LocalDateTime,
-    val isExplicit: Boolean
+    val isExplicit: Boolean,
+    val kind: ContextKind = ContextKind.FILE,
+    /** kind=SKILL 时 opencode 侧技能 id */
+    val skillId: String? = null
 )
 
 fun ContextFileDto.toContextFile(): ContextFile {
@@ -196,7 +199,9 @@ fun ContextFileDto.toContextFile(): ContextFile {
         name = name,
         summary = summary,
         addedAt = addedAt,
-        isExplicit = isExplicit
+        isExplicit = isExplicit,
+        kind = kind,
+        skillId = skillId
     )
 }
 
@@ -206,91 +211,49 @@ fun ContextFile.toContextFileDto(): ContextFileDto {
         name = name,
         summary = summary,
         addedAt = addedAt,
-        isExplicit = isExplicit
+        isExplicit = isExplicit,
+        kind = kind,
+        skillId = skillId
     )
 }
 
-// ==================== 新增 DTO: ContextSelection ====================
+// ==================== DTO: 输入区候选（命令 / 规则 / 工作区条目） ====================
 
+/** 命令，对应 v2 `Command.Info` */
 @Serializable
-data class ContextSelectionDto(
-    val filePath: String,
-    val startLine: Int,
-    val endLine: Int,
-    val content: String,
-    @Serializable(with = LocalDateTimeSerializer::class)
-    val selectedAt: LocalDateTime
+data class CommandDto(
+    val name: String,
+    val description: String? = null
 )
 
-fun ContextSelectionDto.toContextSelection(): ContextSelection {
-    return ContextSelection(
-        filePath = filePath,
-        startLine = startLine,
-        endLine = endLine,
-        content = content,
-        selectedAt = selectedAt
-    )
-}
+/** 规则，对应 v2 `Reference.Info` */
+@Serializable
+data class ReferenceDto(
+    val name: String,
+    val path: String,
+    val description: String? = null
+)
 
-fun ContextSelection.toContextSelectionDto(): ContextSelectionDto {
-    return ContextSelectionDto(
-        filePath = filePath,
-        startLine = startLine,
-        endLine = endLine,
-        content = content,
-        selectedAt = selectedAt
-    )
-}
+/** 工作区条目，`path` 相对工作区根目录 */
+@Serializable
+data class WorkspaceEntryDto(
+    val path: String,
+    val name: String,
+    val isDirectory: Boolean
+)
 
-// ==================== 新增 DTO: PromptContext ====================
+/** 会话当前选中的模式与模型（切换会话后回读） */
+@Serializable
+data class SessionSelectionDto(
+    val agentId: String? = null,
+    val providerId: String? = null,
+    val modelId: String? = null
+)
 
+/** 随消息下发的上下文（输入框文本 mention 的解析结果，不落会话存储） */
 @Serializable
 data class PromptContextDto(
-    val currentFile: ContextFileDto? = null,
-    val selection: ContextSelectionDto? = null,
-    val explicitFiles: List<ContextFileDto> = emptyList(),
-    val cursorPosition: CursorPositionDto? = null
+    val attachments: List<ContextFileDto> = emptyList(),
+    /** 文本中选中的命令名；null 表示本次走普通 prompt */
+    val commandName: String? = null
 )
-
-fun PromptContextDto.toPromptContext(): PromptContext {
-    return PromptContext(
-        currentFile = currentFile?.toContextFile(),
-        selection = selection?.toContextSelection(),
-        explicitFiles = explicitFiles.map { it.toContextFile() },
-        cursorPosition = cursorPosition?.toCursorPosition()
-    )
-}
-
-fun PromptContext.toPromptContextDto(): PromptContextDto {
-    return PromptContextDto(
-        currentFile = currentFile?.toContextFileDto(),
-        selection = selection?.toContextSelectionDto(),
-        explicitFiles = explicitFiles.map { it.toContextFileDto() },
-        cursorPosition = cursorPosition?.toCursorPositionDto()
-    )
-}
-
-// ==================== 新增 DTO: CursorPosition ====================
-
-@Serializable
-data class CursorPositionDto(
-    val filePath: String,
-    val line: Int,
-    val column: Int
-)
-
-fun CursorPositionDto.toCursorPosition(): CursorPosition {
-    return CursorPosition(
-        filePath = filePath,
-        line = line,
-        column = column
-    )
-}
-
-fun CursorPosition.toCursorPositionDto(): CursorPositionDto {
-    return CursorPositionDto(
-        filePath = filePath,
-        line = line,
-        column = column
-    )
-}

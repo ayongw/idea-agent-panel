@@ -21,11 +21,19 @@ import com.ayongw.idea.opencode.frontend.settings.OpenCodeSettingsState
 import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ChatRepositoryRpcApi
+import com.ayongw.idea.opencode.shared.CommandDto
+import com.ayongw.idea.opencode.shared.ContextFileDto
 import com.ayongw.idea.opencode.shared.ModelDto
+import com.ayongw.idea.opencode.shared.ModelProviderDto
 import com.ayongw.idea.opencode.shared.PendingPermissionDto
 import com.ayongw.idea.opencode.shared.PermissionResponse
+import com.ayongw.idea.opencode.shared.PromptContextDto
+import com.ayongw.idea.opencode.shared.ReferenceDto
+import com.ayongw.idea.opencode.shared.SessionSelectionDto
 import com.ayongw.idea.opencode.shared.SessionStateDto
 import com.ayongw.idea.opencode.shared.SessionUsageDto
+import com.ayongw.idea.opencode.shared.SkillDto
+import com.ayongw.idea.opencode.shared.WorkspaceEntryDto
 import com.ayongw.idea.opencode.shared.toChatMessage
 
 @Service(Level.PROJECT)
@@ -44,10 +52,12 @@ class FrontendChatRepositoryModel(
     private val _currentSessionId = MutableStateFlow<String?>(null)
     private val _sessionRunningFlow = MutableStateFlow(false)
     private val _pendingPermissionFlow = MutableStateFlow<PendingPermissionDto?>(null)
+    private val _contextFilesFlow = MutableStateFlow(emptyList<ContextFileDto>())
 
-    /** 当前会话的执行状态 / 待决权限订阅任务（切换会话时重启） */
+    /** 当前会话的执行状态 / 待决权限 / 会话附件订阅任务（切换会话时重启） */
     private var runningJob: Job? = null
     private var permissionJob: Job? = null
+    private var contextJob: Job? = null
 
     override val messagesFlow: StateFlow<List<ChatMessage>> = flow {
         durable {
@@ -68,9 +78,48 @@ class FrontendChatRepositoryModel(
 
     override val pendingPermissionFlow: StateFlow<PendingPermissionDto?> = _pendingPermissionFlow
 
-    override suspend fun sendMessage(messageContent: String) {
-        ChatRepositoryRpcApi.getInstance().sendMessage(project.projectId(), messageContent)
+    override val contextFilesFlow: StateFlow<List<ContextFileDto>> = _contextFilesFlow
+
+    override suspend fun sendMessageWithContext(messageContent: String, context: PromptContextDto) {
+        ChatRepositoryRpcApi.getInstance().sendMessageWithContext(project.projectId(), messageContent, context)
     }
+
+    override suspend fun addContextFile(attachment: ContextFileDto) {
+        val sessionId = _currentSessionId.value ?: return
+        ChatRepositoryRpcApi.getInstance().addContextFile(project.projectId(), sessionId, attachment)
+    }
+
+    override suspend fun removeContextFile(path: String) {
+        val sessionId = _currentSessionId.value ?: return
+        ChatRepositoryRpcApi.getInstance().removeContextFile(project.projectId(), sessionId, path)
+    }
+
+    override suspend fun clearContextFiles() {
+        val sessionId = _currentSessionId.value ?: return
+        ChatRepositoryRpcApi.getInstance().clearContextFiles(project.projectId(), sessionId)
+    }
+
+    override suspend fun listCommands(): List<CommandDto> =
+        ChatRepositoryRpcApi.getInstance().listCommands(project.projectId())
+
+    override suspend fun listReferences(): List<ReferenceDto> =
+        ChatRepositoryRpcApi.getInstance().listReferences(project.projectId())
+
+    override suspend fun listSkills(): List<SkillDto> =
+        ChatRepositoryRpcApi.getInstance().listSkills(project.projectId())
+
+    override suspend fun findWorkspaceEntries(query: String, limit: Int): List<WorkspaceEntryDto> =
+        ChatRepositoryRpcApi.getInstance().findWorkspaceEntries(project.projectId(), query, limit)
+
+    override suspend fun listWorkspaceDirectory(path: String?): List<WorkspaceEntryDto> =
+        ChatRepositoryRpcApi.getInstance().listWorkspaceDirectory(project.projectId(), path)
+
+    override suspend fun listModelProviders(): List<ModelProviderDto> =
+        ChatRepositoryRpcApi.getInstance().listModelProviders(project.projectId())
+
+    override suspend fun getSessionSelection(sessionId: String): SessionSelectionDto? =
+        runCatching { ChatRepositoryRpcApi.getInstance().getSessionSelection(project.projectId(), sessionId) }
+            .getOrNull()
 
     override suspend fun createSession(initialTitle: String?): String {
         val sessionId = ChatRepositoryRpcApi.getInstance().createSession(project.projectId(), initialTitle)
@@ -144,14 +193,16 @@ class FrontendChatRepositoryModel(
         }
     }
 
-    /** 订阅「随当前会话变化」的状态（执行态 / 待决权限）；切换会话时重启，无当前会话时归零 */
+    /** 订阅「随当前会话变化」的状态（执行态 / 待决权限 / 会话附件）；切换会话时重启，无当前会话时归零 */
     private fun refreshSessionScopedFlows() {
         runningJob?.cancel()
         permissionJob?.cancel()
+        contextJob?.cancel()
         val sessionId = _currentSessionId.value
         if (sessionId == null) {
             _sessionRunningFlow.value = false
             _pendingPermissionFlow.value = null
+            _contextFilesFlow.value = emptyList()
             return
         }
         val projectId = project.projectId()
@@ -164,6 +215,11 @@ class FrontendChatRepositoryModel(
             ChatRepositoryRpcApi.getInstance()
                 .getPendingPermissionFlow(projectId, sessionId)
                 .collect { _pendingPermissionFlow.value = it }
+        }
+        contextJob = coroutineScope.launch {
+            ChatRepositoryRpcApi.getInstance()
+                .getContextFilesFlow(projectId, sessionId)
+                .collect { _contextFilesFlow.value = it }
         }
     }
 

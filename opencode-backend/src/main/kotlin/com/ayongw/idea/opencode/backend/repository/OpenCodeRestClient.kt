@@ -18,6 +18,7 @@ import java.net.http.HttpResponse
 import java.time.Duration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.intellij.openapi.diagnostic.Logger
 
 /**
  * OpenCode Server v2 REST 客户端
@@ -34,6 +35,7 @@ class OpenCodeRestClient(
 
     private val base: String = baseUrl.trim().trimEnd('/')
     private val gson = Gson()
+    private val log = Logger.getInstance(OpenCodeRestClient::class.java)
 
     /**
      * 探测 Server 是否可用（v2 无 /global/health，用 GET /api/project）
@@ -94,18 +96,57 @@ class OpenCodeRestClient(
      * 发送消息
      * POST /api/session/{sessionID}/prompt
      *
-     * @param files 附件 uri 列表（如 file:///path/to/file）
+     * @param files 文件附件（`uri` 为 `file:///path/to/file`）
+     * @param skills 技能 id 列表
      */
     suspend fun sendPrompt(
         sessionId: String,
         text: String,
-        files: List<String> = emptyList()
+        files: List<PromptFile> = emptyList(),
+        skills: List<String> = emptyList()
     ): Result<Unit> {
+        val body = promptBody(text, files, skills)
+        return executeRequest("POST", "/session/${encodePath(sessionId)}/prompt", gson.toJson(body)) { Unit }
+    }
+
+    /**
+     * 执行命令（内置或自定义）
+     * POST /api/session/{sessionID}/command
+     *
+     * @param name 命令名（`GET /api/command` 返回的 `name`）
+     */
+    suspend fun sendCommand(
+        sessionId: String,
+        name: String,
+        text: String,
+        files: List<PromptFile> = emptyList(),
+        skills: List<String> = emptyList()
+    ): Result<Unit> {
+        val body = promptBody(text, files, skills)
+        body["name"] = name
+        return executeRequest("POST", "/session/${encodePath(sessionId)}/command", gson.toJson(body)) { Unit }
+    }
+
+    /** prompt / command 共有请求体：text + files + skills */
+    private fun promptBody(
+        text: String,
+        files: List<PromptFile>,
+        skills: List<String>
+    ): MutableMap<String, Any> {
         val body = mutableMapOf<String, Any>("text" to text)
         if (files.isNotEmpty()) {
-            body["files"] = files.map { mapOf("uri" to it) }
+            body["files"] = files.map { file ->
+                buildMap<String, Any> {
+                    put("uri", file.uri)
+                    file.name?.takeIf { it.isNotBlank() }?.let { put("name", it) }
+                    file.description?.takeIf { it.isNotBlank() }?.let { put("description", it) }
+                }
+            }
         }
-        return executeRequest("POST", "/session/${encodePath(sessionId)}/prompt", gson.toJson(body)) { Unit }
+        if (skills.isNotEmpty()) {
+            body["skills"] = skills.map { mapOf("id" to it) }
+        }
+        return body
     }
 
     /**
@@ -198,6 +239,18 @@ class OpenCodeRestClient(
         executeRequest("GET", "/provider") { parseDataObjects(it) }
 
     /**
+     * 供应商展示名映射（providerID → name，name 缺失时回落 id）
+     * GET /api/provider
+     */
+    suspend fun listProviderNames(): Result<Map<String, String>> =
+        executeRequest("GET", "/provider") { json ->
+            parseDataObjects(json).mapNotNull { obj ->
+                val id = obj.string("id")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                id to (obj.string("name")?.takeIf { it.isNotBlank() } ?: id)
+            }.toMap()
+        }
+
+    /**
      * 模型清单
      * GET /api/model
      */
@@ -226,6 +279,94 @@ class OpenCodeRestClient(
      */
     suspend fun getSkills(): Result<List<JsonObject>> =
         executeRequest("GET", "/skill") { parseDataObjects(it) }
+
+    /**
+     * 技能清单（结构化）
+     * GET /api/skill
+     */
+    suspend fun listSkillInfos(): Result<List<OpenCodeSkill>> =
+        executeRequest("GET", "/skill") { json ->
+            parseDataObjects(json).mapNotNull { obj ->
+                val id = obj.string("id")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                OpenCodeSkill(
+                    id = id,
+                    name = obj.string("name"),
+                    path = obj.string("path"),
+                    description = obj.string("description")
+                )
+            }
+        }
+
+    // ==================== 输入区上下文：命令 / 规则 / 工作区文件 ====================
+
+    /**
+     * 已注册命令清单（内置 + 自定义）
+     * GET /api/command
+     */
+    suspend fun listCommands(directory: String? = null): Result<List<OpenCodeCommand>> {
+        val query = queryString(listOfNotNull(locationPair(directory)))
+        return executeRequest("GET", "/command$query") { json ->
+            parseDataObjects(json).mapNotNull { obj ->
+                obj.string("name")?.takeIf { it.isNotBlank() }
+                    ?.let { OpenCodeCommand(name = it, description = obj.string("description")) }
+            }
+        }
+    }
+
+    /**
+     * 规则清单（AGENTS.md 等载体文件）
+     * GET /api/reference
+     */
+    suspend fun listReferences(): Result<List<OpenCodeReference>> =
+        executeRequest("GET", "/reference") { json ->
+            parseDataObjects(json).mapNotNull { obj ->
+                val name = obj.string("name")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val path = obj.string("path")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                OpenCodeReference(
+                    name = name,
+                    path = path,
+                    description = obj.string("description"),
+                    hidden = obj.bool("hidden") ?: false
+                )
+            }
+        }
+
+    /**
+     * 工作区文件检索（服务端按相关度递归排序，文件与目录均返回）
+     * GET /api/fs/find
+     *
+     * @param directory 工作区根目录，返回路径以此为基准
+     */
+    suspend fun findEntries(
+        query: String,
+        directory: String?,
+        limit: Int? = null
+    ): Result<List<OpenCodeFsEntry>> {
+        val params = buildList {
+            add("query" to query)
+            limit?.let { add("limit" to it.toString()) }
+            locationPair(directory)?.let { add(it) }
+        }
+        return executeRequest("GET", "/fs/find${queryString(params)}") { json ->
+            parseDataObjects(json).mapNotNull(::parseFsEntry)
+        }
+    }
+
+    /**
+     * 工作区目录浏览
+     * GET /api/fs/list
+     *
+     * @param path 目录相对路径；null 表示工作区根目录
+     */
+    suspend fun listDirectory(path: String?, directory: String?): Result<List<OpenCodeFsEntry>> {
+        val params = buildList {
+            path?.takeIf { it.isNotBlank() }?.let { add("path" to it) }
+            locationPair(directory)?.let { add(it) }
+        }
+        return executeRequest("GET", "/fs/list${queryString(params)}") { json ->
+            parseDataObjects(json).mapNotNull(::parseFsEntry)
+        }
+    }
 
     /**
      * 集成清单（含供应商的认证方式与已存凭据）
@@ -284,6 +425,18 @@ class OpenCodeRestClient(
             ?.let { "?location.directory=" + URLEncoder.encode(it, "UTF-8") }
             ?: ""
 
+    /** `location[directory]` 查询项（openapi 声明为 deepObject；fs/command 的相对路径以此为基准） */
+    private fun locationPair(directory: String?): Pair<String, String>? =
+        directory?.takeIf { it.isNotBlank() }?.let { "location[directory]" to it }
+
+    /** 拼接查询串（键与值均做 URL 编码） */
+    private fun queryString(params: List<Pair<String, String>>): String =
+        params.takeIf { it.isNotEmpty() }
+            ?.joinToString(separator = "&", prefix = "?") { (key, value) ->
+                URLEncoder.encode(key, "UTF-8") + "=" + URLEncoder.encode(value, "UTF-8")
+            }
+            ?: ""
+
     // ==================== 认证与请求 ====================
 
     /**
@@ -308,11 +461,13 @@ class OpenCodeRestClient(
             val response = if (method == "PATCH") patchRequest(uri, body) else connectionRequest(method, uri, body)
             if (response.code !in 200..299) {
                 // 截断响应体，避免整串原始 JSON 灌进设置页状态栏
+                log.warn("REST $method $path 失败：HTTP ${response.code}, body=${response.body.take(200)}")
                 Result.failure(IOException("HTTP ${response.code}: ${response.body.take(200)}"))
             } else {
                 Result.success(parse(response.body))
             }
         } catch (e: IOException) {
+            log.warn("REST $method $path 异常：${e.message}")
             Result.failure(e)
         }
     }
@@ -514,8 +669,27 @@ class OpenCodeRestClient(
         modelID = model.string("modelID").orEmpty(),
         providerID = model.string("providerID").orEmpty(),
         name = model.string("name").orEmpty(),
-        limitContext = model.getAsJsonObject("limit")?.longOrNull("context")
+        limitContext = model.getAsJsonObject("limit")?.longOrNull("context"),
+        free = isFreeModel(model)
     )
+
+    /** 免费判定：`cost` 非空且各档 input/output 均为 0 */
+    private fun isFreeModel(model: JsonObject): Boolean {
+        val cost = model.getAsJsonArray("cost") ?: return false
+        if (cost.isEmpty) return false
+        return cost.all { element ->
+            val tier = element as? JsonObject ?: return@all false
+            val input = tier.doubleOrNull("input")
+            val output = tier.doubleOrNull("output")
+            (input == null || input == 0.0) && (output == null || output == 0.0)
+        }
+    }
+
+    /** `FileSystem.Entry` → 目录项（相对 `location.directory` 的路径） */
+    private fun parseFsEntry(entry: JsonObject): OpenCodeFsEntry? {
+        val path = entry.string("path")?.takeIf { it.isNotBlank() } ?: return null
+        return OpenCodeFsEntry(path = path, type = entry.string("type") ?: "file")
+    }
 
     private fun encodePath(segment: String): String = URLEncoder.encode(segment, "UTF-8")
 
@@ -622,8 +796,49 @@ class OpenCodeRestClient(
         val providerID: String,
         val name: String,
         /** 上下文窗口（`limit.context`），未知为 null */
-        val limitContext: Long? = null
+        val limitContext: Long? = null,
+        /** 免费模型（`cost` 各档单价均为 0） */
+        val free: Boolean = false
     )
+
+    /** prompt / command 的文件附件（v2 `PromptInput.FileAttachment`） */
+    data class PromptFile(
+        /** `file:///path/to/file`（目录同样以绝对路径 uri 传递） */
+        val uri: String,
+        val name: String? = null,
+        val description: String? = null
+    )
+
+    /** 命令，对应 v2 `Command.Info` */
+    data class OpenCodeCommand(
+        val name: String,
+        val description: String? = null
+    )
+
+    /** 规则，对应 v2 `Reference.Info` */
+    data class OpenCodeReference(
+        val name: String,
+        val path: String,
+        val description: String? = null,
+        val hidden: Boolean = false
+    )
+
+    /** 技能，对应 v2 `Skill.Info` */
+    data class OpenCodeSkill(
+        val id: String,
+        val name: String? = null,
+        val path: String? = null,
+        val description: String? = null
+    )
+
+    /** 工作区条目，对应 v2 `FileSystem.Entry`（`path` 相对 `location.directory`） */
+    data class OpenCodeFsEntry(
+        val path: String,
+        /** `file` / `directory` */
+        val type: String
+    ) {
+        val isDirectory: Boolean get() = type == "directory"
+    }
 
     sealed class Result<out T> {
         data class Success<T>(val value: T) : Result<T>()
@@ -639,6 +854,9 @@ class OpenCodeRestClient(
 
         fun getOrNull(): T? = if (this is Success) value else null
         fun getOrThrow(): T = if (this is Success) value else throw (this as Failure).exception
+
+        /** 失败原因（成功时为 null），用于日志与提示 */
+        fun exceptionOrNull(): Throwable? = (this as? Failure)?.exception
     }
 
     companion object {

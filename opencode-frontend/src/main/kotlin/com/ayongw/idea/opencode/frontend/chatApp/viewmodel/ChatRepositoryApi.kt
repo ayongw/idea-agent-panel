@@ -3,11 +3,19 @@ package com.ayongw.idea.opencode.frontend.chatApp.viewmodel
 import kotlinx.coroutines.flow.StateFlow
 import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessage
+import com.ayongw.idea.opencode.shared.CommandDto
+import com.ayongw.idea.opencode.shared.ContextFileDto
 import com.ayongw.idea.opencode.shared.ModelDto
+import com.ayongw.idea.opencode.shared.ModelProviderDto
 import com.ayongw.idea.opencode.shared.PendingPermissionDto
 import com.ayongw.idea.opencode.shared.PermissionResponse
+import com.ayongw.idea.opencode.shared.PromptContextDto
+import com.ayongw.idea.opencode.shared.ReferenceDto
+import com.ayongw.idea.opencode.shared.SessionSelectionDto
 import com.ayongw.idea.opencode.shared.SessionStateDto
 import com.ayongw.idea.opencode.shared.SessionUsageDto
+import com.ayongw.idea.opencode.shared.SkillDto
+import com.ayongw.idea.opencode.shared.WorkspaceEntryDto
 
 /**
  * Interface defining the contract for managing chat messages and sessions within a chat system.
@@ -48,11 +56,44 @@ interface ChatRepositoryApi {
     val pendingPermissionFlow: StateFlow<PendingPermissionDto?>
 
     /**
-     * Sends a message with the provided content.
-     *
-     * @param messageContent The content of the message to be sent.
+     * 发送消息并携带本次上下文（输入框 mention 的解析结果）
      */
-    suspend fun sendMessage(messageContent: String)
+    suspend fun sendMessageWithContext(messageContent: String, context: PromptContextDto)
+
+    /**
+     * 当前会话的会话附件（＋ 按钮加入，会话级常驻）
+     */
+    val contextFilesFlow: StateFlow<List<ContextFileDto>>
+
+    /** 添加会话附件 */
+    suspend fun addContextFile(attachment: ContextFileDto)
+
+    /** 移除会话附件（按绝对路径） */
+    suspend fun removeContextFile(path: String)
+
+    /** 清空当前会话的会话附件 */
+    suspend fun clearContextFiles()
+
+    /** 命令清单（`/` 候选） */
+    suspend fun listCommands(): List<CommandDto>
+
+    /** 规则清单（`/` 候选） */
+    suspend fun listReferences(): List<ReferenceDto>
+
+    /** 技能清单（`/` 候选） */
+    suspend fun listSkills(): List<SkillDto>
+
+    /** 工作区文件检索（`#` 候选） */
+    suspend fun findWorkspaceEntries(query: String, limit: Int = 50): List<WorkspaceEntryDto>
+
+    /** 工作区目录浏览（`#` 候选，path 为 null 时列工作区根目录） */
+    suspend fun listWorkspaceDirectory(path: String?): List<WorkspaceEntryDto>
+
+    /** 按供应商分组的模型清单（模型选择弹窗） */
+    suspend fun listModelProviders(): List<ModelProviderDto>
+
+    /** 指定会话当前选中的模式与模型（切换会话后回读）；不可达时为 null */
+    suspend fun getSessionSelection(sessionId: String): SessionSelectionDto?
 
     /**
      * Creates a new session.

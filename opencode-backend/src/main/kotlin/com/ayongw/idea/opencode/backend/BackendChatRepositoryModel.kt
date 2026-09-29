@@ -11,13 +11,17 @@ import com.ayongw.idea.opencode.backend.repository.OpenCodeCredentials
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ChatMessageDto
+import com.ayongw.idea.opencode.shared.ContextFileDto
+import com.ayongw.idea.opencode.shared.ContextKind
 import com.ayongw.idea.opencode.shared.PendingPermissionDto
+import com.ayongw.idea.opencode.shared.PromptContextDto
 import com.ayongw.idea.opencode.shared.SessionUsageDto
 import com.ayongw.idea.opencode.shared.TokenUsageDto
 import com.ayongw.idea.opencode.shared.ToolCallDto
 import com.ayongw.idea.opencode.shared.toChatMessageDto
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -30,6 +34,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.nio.file.Paths
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -96,6 +101,8 @@ class BackendChatRepositoryModel : Disposable {
     private val chatMessageFactory = ChatMessageFactory(AI_AUTHOR, "Super Engineer")
     private val aiResponseGenerator = AIResponseGenerator()
 
+    private val log = Logger.getInstance(BackendChatRepositoryModel::class.java)
+
     init {
         // 启动时加载会话列表（在后台协程中），随后挂上事件流
         scope.launch {
@@ -124,6 +131,66 @@ class BackendChatRepositoryModel : Disposable {
     /** 当前会话的待决权限请求流（null = 无待决项） */
     fun getPendingPermissionFlow(): Flow<PendingPermissionDto?> = _pendingPermission
 
+    // ==================== 会话上下文附件 ====================
+
+    /** 会话上下文附件（会话级；命令为一次性，发送成功后清除） */
+    private val _contextFiles = MutableStateFlow<Map<String, List<ContextFileDto>>>(emptyMap())
+
+    /** 指定会话的上下文附件流 */
+    fun getContextFilesFlow(sessionId: String): Flow<List<ContextFileDto>> =
+        _contextFiles.map { it[sessionId].orEmpty() }
+
+    /** 添加附件：按 `kind + path` 去重（保留先添加者） */
+    fun addContextFile(sessionId: String, contextFile: ContextFileDto) {
+        val current = contextFilesOf(sessionId)
+        if (current.any { it.kind == contextFile.kind && it.path == contextFile.path }) return
+        _contextFiles.value = _contextFiles.value + (sessionId to (current + contextFile))
+    }
+
+    /** 移除指定路径的附件 */
+    fun removeContextFile(sessionId: String, path: String) {
+        val current = contextFilesOf(sessionId)
+        if (current.none { it.path == path }) return
+        _contextFiles.value = _contextFiles.value + (sessionId to current.filterNot { it.path == path })
+    }
+
+    /** 清空指定会话的附件 */
+    fun clearContextFiles(sessionId: String) {
+        if (contextFilesOf(sessionId).isEmpty()) return
+        _contextFiles.value = _contextFiles.value - sessionId
+    }
+
+    private fun contextFilesOf(sessionId: String): List<ContextFileDto> =
+        _contextFiles.value[sessionId].orEmpty()
+
+    /** 会话附件（＋）与本次 mention 解析附件合并，按 `kind + path` 去重（会话附件在前） */
+    private fun mergedAttachments(sessionId: String, incoming: List<ContextFileDto>): List<ContextFileDto> =
+        (contextFilesOf(sessionId) + incoming).distinctBy { it.kind to it.path }
+
+    /** 上下文附件 → prompt 文件附件（FILE / DIRECTORY / RULE 三类） */
+    private fun promptFiles(attachments: List<ContextFileDto>): List<OpenCodeRestClient.PromptFile> =
+        attachments
+            .filter {
+                it.kind == ContextKind.FILE ||
+                    it.kind == ContextKind.DIRECTORY ||
+                    it.kind == ContextKind.RULE
+            }
+            .map {
+                OpenCodeRestClient.PromptFile(
+                    uri = fileUri(it.path),
+                    name = it.name,
+                    description = it.summary.takeIf { summary -> summary.isNotBlank() }
+                )
+            }
+
+    /** 上下文附件 → prompt 技能 id（SKILL 一类） */
+    private fun promptSkills(attachments: List<ContextFileDto>): List<String> =
+        attachments.filter { it.kind == ContextKind.SKILL }.mapNotNull { it.skillId }
+
+    /** 绝对路径 → `file://` uri（自动转义空格与非 ASCII 字符） */
+    private fun fileUri(path: String): String =
+        if (path.startsWith("file:")) path else Paths.get(path).toUri().toString()
+
     // ==================== 事件流接入 ====================
 
     /**
@@ -142,10 +209,12 @@ class BackendChatRepositoryModel : Disposable {
         )
         eventClient = client
         client.start()
+        log.info("启动事件流：$serverUrl")
     }
 
     /** 关闭并重建事件流（Server 配置变更时调用） */
     private fun restartEventStream() {
+        log.info("重建事件流：$serverUrl")
         eventClient?.stop()
         eventClient = null
         _sessionRunning.value = false
@@ -169,6 +238,7 @@ class BackendChatRepositoryModel : Disposable {
         updatePendingPermission(event, sessionId)
         if (event.isExecutionTerminal()) {
             _pendingPermission.value = null
+            log.info("执行终态事件：${event::class.simpleName} session=$sessionId，开始对账")
             reconcile(sessionId)
         }
     }
@@ -188,6 +258,7 @@ class BackendChatRepositoryModel : Disposable {
      * 连接建立（含重连成功）：以服务端为准对账一次，补齐断线期间漏掉的事件。
      */
     private fun handleEventClientState(state: OpenCodeEventClient.State) {
+        log.info("事件流状态：$state")
         if (state != OpenCodeEventClient.State.CONNECTED) return
         currentSessionId?.let { reconcile(it) }
     }
@@ -199,10 +270,17 @@ class BackendChatRepositoryModel : Disposable {
      */
     private fun reconcile(sessionId: String) {
         scope.launch {
-            val messages = restClient.getMessages(sessionId).getOrNull() ?: return@launch
+            val result = restClient.getMessages(sessionId)
+            val messages = result.getOrNull()
+            if (messages == null) {
+                log.warn("对账失败 session=$sessionId: ${result.exceptionOrNull()?.message}")
+                return@launch
+            }
             if (sessionId != currentSessionId) return@launch
             streamState.reset()
-            _messages.value = messages.flatMap(::toChatMessages)
+            val bubbles = toBubbles(messages)
+            _messages.value = bubbles
+            log.info("对账完成 session=$sessionId: REST 消息 ${messages.size} 条 → 气泡 ${bubbles.size} 条")
             loadSessions()
         }
     }
@@ -224,7 +302,11 @@ class BackendChatRepositoryModel : Disposable {
         val current = _messages.value
         val merged = current.map { byId[it.id] ?: it }
         val knownIds = merged.mapTo(HashSet()) { it.id }
-        _messages.value = merged + streaming.filter { it.id !in knownIds }
+        val added = streaming.filter { it.id !in knownIds }
+        _messages.value = merged + added
+        if (added.isNotEmpty()) {
+            log.info("流式消息入列：新增 ${added.size} 条（${added.joinToString { it.type.name }})，当前气泡 ${_messages.value.size} 条")
+        }
     }
 
     private fun OpenCodeEvent.sessionIdOrNull(): String? = when (this) {
@@ -262,12 +344,19 @@ class BackendChatRepositoryModel : Disposable {
     /**
      * 发送消息 - 优先使用 OpenCode Server，失败时回退到模拟模式
      */
-    suspend fun sendMessage(messageContent: String) {
+    suspend fun sendMessage(messageContent: String) = sendMessage(messageContent, PromptContextDto())
+
+    /**
+     * 发送消息：合并「本次 mention 解析结果」与「会话附件（＋）」后组包；
+     * 文本中带命令时走 `/command` 端点，否则走 `/prompt`。
+     */
+    suspend fun sendMessage(messageContent: String, context: PromptContextDto) {
         withContext(Dispatchers.IO) {
             try {
                 val sessionId = currentSessionId ?: createNewSession()
                 if (sessionId == null) {
                     // 无法连接到服务器，使用模拟模式
+                    log.warn("发送失败：无可用会话（Server 不可达？），回退模拟响应")
                     simulateLocalResponse(messageContent)
                     return@withContext
                 }
@@ -275,11 +364,31 @@ class BackendChatRepositoryModel : Disposable {
                 // 发送用户消息到本地缓存
                 _messages.value += chatMessageFactory.createUserMessage(messageContent)
 
-                // 调用 OpenCode Server 发送消息（流式）
-                val result = restClient.sendPrompt(sessionId, messageContent)
+                // 会话上下文附件随消息下发：有命令时走命令端点，否则走普通 prompt
+                val attachments = mergedAttachments(sessionId, context.attachments)
+                val commandName = context.commandName?.takeIf { it.isNotBlank() }
+                val result = if (commandName != null) {
+                    restClient.sendCommand(
+                        sessionId,
+                        commandName,
+                        messageContent,
+                        promptFiles(attachments),
+                        promptSkills(attachments)
+                    )
+                } else {
+                    restClient.sendPrompt(
+                        sessionId,
+                        messageContent,
+                        promptFiles(attachments),
+                        promptSkills(attachments)
+                    )
+                }
                 if (result.isFailure()) {
                     // 服务器调用失败，回退到模拟模式
+                    log.warn("发送消息失败 session=$sessionId，回退模拟响应: ${result.exceptionOrNull()?.message}")
                     simulateLocalResponse(messageContent)
+                } else {
+                    log.info("已发送消息 session=$sessionId, 长度=${messageContent.length}, command=${commandName ?: "-"}")
                 }
                 // 流式响应通过 SSE 单独处理（在 BackendChatRepositoryRpcApi 中）
             } catch (e: Exception) {
@@ -301,10 +410,12 @@ class BackendChatRepositoryModel : Disposable {
         if (result.isSuccess()) {
             val sessionId = result.getOrThrow()
             currentSessionId = sessionId
+            log.info("新建会话 session=$sessionId, title=${title ?: "-"}")
             loadSessions()
             loadMessages(sessionId)
             return sessionId
         }
+        log.warn("新建会话失败: ${result.exceptionOrNull()?.message}")
         return null
     }
 
@@ -315,8 +426,11 @@ class BackendChatRepositoryModel : Disposable {
         val result = restClient.getSession(sessionId)
         if (result.isSuccess()) {
             currentSessionId = sessionId
+            log.info("切换会话 session=$sessionId")
             loadMessages(sessionId)
             loadSessions()
+        } else {
+            log.warn("切换会话失败 session=$sessionId: ${result.exceptionOrNull()?.message}")
         }
     }
 
@@ -326,6 +440,7 @@ class BackendChatRepositoryModel : Disposable {
     suspend fun deleteSession(sessionId: String) {
         val result = restClient.deleteSession(sessionId)
         if (result.isSuccess()) {
+            log.info("删除会话 session=$sessionId")
             if (currentSessionId == sessionId) {
                 currentSessionId = null
                 streamState.reset()
@@ -334,6 +449,8 @@ class BackendChatRepositoryModel : Disposable {
                 _messages.value = emptyList()
             }
             loadSessions()
+        } else {
+            log.warn("删除会话失败 session=$sessionId: ${result.exceptionOrNull()?.message}")
         }
     }
 
@@ -370,12 +487,25 @@ class BackendChatRepositoryModel : Disposable {
         _pendingPermission.value = null
         val result = restClient.getMessages(sessionId)
         if (result.isSuccess()) {
-            _messages.value = result.getOrThrow().flatMap(::toChatMessages)
+            val messages = result.getOrThrow()
+            val bubbles = toBubbles(messages)
+            _messages.value = bubbles
             currentSessionId = sessionId
+            log.info("加载会话消息 session=$sessionId: REST 消息 ${messages.size} 条 → 气泡 ${bubbles.size} 条")
         } else {
+            log.warn("加载会话消息失败 session=$sessionId: ${result.exceptionOrNull()?.message}")
             _messages.value = emptyList()
         }
     }
+
+    /**
+     * REST 消息列表 → 面板气泡列表。
+     *
+     * `GET /api/session/{id}/message` 返回的 `data[]` 是**最新在前**（下标 0 为最新），
+     * 面板要求最早在前（与事件流追加顺序一致），故此处反转。
+     */
+    private fun toBubbles(messages: List<OpenCodeRestClient.OpenCodeMessage>): List<ChatMessage> =
+        messages.asReversed().flatMap(::toChatMessages)
 
     /** opencode 消息 → 面板气泡：user 单条；assistant 按 `content[]` 顺序拆成正文气泡 + 工具卡片 */
     private fun toChatMessages(openCodeMsg: OpenCodeRestClient.OpenCodeMessage): List<ChatMessage> {
@@ -508,6 +638,50 @@ class BackendChatRepositoryModel : Disposable {
      * 列出可用 Agent（模式）
      */
     suspend fun listAgents(): List<OpenCodeRestClient.OpenCodeAgent> = restClient.listAgents().getOrThrow()
+
+    /**
+     * 命令清单（内置 + 自定义），工作区维度
+     */
+    suspend fun listCommands(directory: String?): List<OpenCodeRestClient.OpenCodeCommand> =
+        restClient.listCommands(directory).getOrThrow()
+
+    /**
+     * 规则清单（AGENTS.md 等）
+     */
+    suspend fun listReferences(): List<OpenCodeRestClient.OpenCodeReference> =
+        restClient.listReferences().getOrThrow()
+
+    /**
+     * 技能清单（含 id / 展示名 / 路径 / 描述）
+     */
+    suspend fun listSkills(): List<OpenCodeRestClient.OpenCodeSkill> =
+        restClient.listSkillInfos().getOrThrow()
+
+    /**
+     * 工作区文件检索（文件与目录，路径相对工作区根目录）
+     */
+    suspend fun findWorkspaceEntries(
+        query: String,
+        directory: String?,
+        limit: Int
+    ): List<OpenCodeRestClient.OpenCodeFsEntry> =
+        restClient.findEntries(query, directory, limit).getOrThrow()
+
+    /**
+     * 工作区目录浏览（path 为 null 时列工作区根目录）
+     */
+    suspend fun listWorkspaceDirectory(
+        path: String?,
+        directory: String?
+    ): List<OpenCodeRestClient.OpenCodeFsEntry> =
+        restClient.listDirectory(path, directory).getOrThrow()
+
+    /** 供应商展示名映射（providerID → name） */
+    suspend fun listProviderNames(): Map<String, String> = restClient.listProviderNames().getOrThrow()
+
+    /** 会话详情（回读模式与模型用）；不可达时为 null */
+    suspend fun getSession(sessionId: String): OpenCodeRestClient.OpenCodeSession? =
+        restClient.getSession(sessionId).getOrNull()
 
     /**
      * 列出可用模型
