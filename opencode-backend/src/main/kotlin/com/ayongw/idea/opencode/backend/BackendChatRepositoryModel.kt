@@ -55,6 +55,33 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
         /** 思考气泡 id 后缀（与事件流侧一致，见 SessionStreamState.REASONING_ID_SUFFIX） */
         private const val REASONING_ID_SUFFIX = "#reasoning"
 
+        /**
+         * 对账增量合并：REST 权威**覆盖**同 id 内容、本地独有消息**保留**、REST 有而本地缺的**按时间补充**。
+         *
+         * 目标（对账交互流畅、消息不乱丢）：
+         * - 本地事件流累积的顺序为骨架（thinking/tool 中间态不因 REST 缺失而消失、不整屏重排）
+         * - 同 id 消息以 REST 为准（正文/tool 终态/思考最终内容）
+         * - 断线遗漏的整段消息按 createdMillis 升序插入到正确位置
+         *
+         * 纯逻辑、无副作用，便于单测。
+         */
+        fun mergeReconcile(existing: List<ChatMessage>, rest: List<ChatMessage>): List<ChatMessage> {
+            if (existing.isEmpty()) return rest
+            if (rest.isEmpty()) return existing
+
+            // 1) REST 权威内容覆盖同 id 本地消息（id 唯一：正文原 id、思考带 #reasoning、工具带 call_）
+            val restById = rest.associateBy { it.id }
+            val updated = existing.map { restById[it.id] ?: it }
+
+            // 2) 补充 REST 有、本地没有的（断线遗漏），按时间升序整段插入（内部顺序保持 REST 的 parts 顺序）
+            val existingIds = updated.mapTo(HashSet()) { it.id }
+            val missing = rest.filter { it.id !in existingIds }
+            if (missing.isEmpty()) return updated
+
+            val anchor = updated.indexOfLast { !it.timestamp.isAfter(missing.first().timestamp) }
+            return updated.toMutableList().apply { addAll(anchor + 1, missing) }
+        }
+
         fun getInstance(project: Project): BackendChatRepositoryModel {
             return project.getService(BackendChatRepositoryModel::class.java)
         }
@@ -309,9 +336,13 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
             }
             if (sessionId != currentSessionId) return@launch
             streamState.reset()
-            val bubbles = toBubbles(messages)
-            _messages.value = bubbles
-            log.info("对账完成 session=$sessionId: REST 消息 ${messages.size} 条 → 气泡 ${bubbles.size} 条")
+            val restBubbles = toBubbles(messages)
+            val merged = mergeReconcile(_messages.value, restBubbles)
+            _messages.value = merged
+            log.info(
+                "对账完成 session=$sessionId: REST 消息 ${messages.size} 条 → " +
+                    "气泡 ${merged.size} 条（保留本地 ${merged.size - restBubbles.size} 条，非全量重建）"
+            )
             loadSessions()
         }
     }
