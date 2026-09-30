@@ -41,6 +41,9 @@ class MessageBubble(
     /** 是否用户消息（决定对齐与气泡样式；供列表重排时取用） */
     val isMy: Boolean get() = isMyMessage
 
+    /** 关联的消息 id（供列表顺序断言 / 检索定位） */
+    val messageId: String get() = message.id
+
     /** 内容容器 - 用于动态更新 */
     private var contentContainer: JPanel? = null
 
