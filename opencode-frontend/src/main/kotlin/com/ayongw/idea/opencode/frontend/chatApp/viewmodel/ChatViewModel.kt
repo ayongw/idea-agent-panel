@@ -16,6 +16,7 @@ import com.ayongw.idea.opencode.shared.PermissionResponse
 import com.ayongw.idea.opencode.shared.PromptContextDto
 import com.ayongw.idea.opencode.shared.SessionStateDto
 import com.ayongw.idea.opencode.shared.SessionUsageDto
+import com.ayongw.idea.opencode.shared.ServerStateDto
 import java.time.LocalDateTime
 
 interface ChatViewModelApi : Disposable {
@@ -122,6 +123,23 @@ interface ChatViewModelApi : Disposable {
 
     /** 重新拉取本工作区会话列表（打开「全部会话」弹窗前刷新） */
     fun loadSessions()
+
+    // ==================== Server 运行时（进程与连接管理，TSD-31） ====================
+
+    /** Server 运行状态流（状态条订阅） */
+    val serverStateFlow: StateFlow<ServerStateDto>
+
+    /** 重试启动 Server（重新探测 → 复用 / 拉起） */
+    fun retryServerStart()
+
+    /** 跳过探测，直接拉起本插件自有的 Server */
+    fun startOwnServer()
+
+    /** 停止本插件启动的 Server（他人实例不生效） */
+    fun stopServer()
+
+    /** 提交他人实例的接入凭据（`NEEDS_CREDENTIALS` 交互） */
+    fun submitServerCredentials(username: String, password: String)
 }
 
 class ChatViewModel(
@@ -317,6 +335,26 @@ class ChatViewModel(
 
     override fun loadSessions() {
         coroutineScope.launch { repository.loadSessions() }
+    }
+
+    // ==================== Server 运行时（进程与连接管理，TSD-31） ====================
+
+    override val serverStateFlow: StateFlow<ServerStateDto> = repository.serverStateFlow
+
+    override fun retryServerStart() {
+        coroutineScope.launch { runCatching { repository.retryServerStart() } }
+    }
+
+    override fun startOwnServer() {
+        coroutineScope.launch { runCatching { repository.startOwnServer() } }
+    }
+
+    override fun stopServer() {
+        coroutineScope.launch { runCatching { repository.stopServer() } }
+    }
+
+    override fun submitServerCredentials(username: String, password: String) {
+        coroutineScope.launch { runCatching { repository.submitServerCredentials(username, password) } }
     }
 
     /**

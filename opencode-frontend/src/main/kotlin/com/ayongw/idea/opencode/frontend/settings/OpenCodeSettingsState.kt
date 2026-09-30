@@ -22,11 +22,23 @@ class OpenCodeSettingsState : PersistentStateComponent<OpenCodeSettingsState> {
     /** Basic 认证用户名，opencode serve 默认 opencode */
     var username: String = DEFAULT_USERNAME
 
+    /** 是否允许插件自动拉起 server（默认开，见 TSD-31 §13 决策点 1） */
+    var autoStartServer: Boolean = true
+
+    /** 是否允许复用非本插件启动的实例（含经密钥接入，见 TSD-31 §13 决策点 2） */
+    var reuseExternalServer: Boolean = true
+
+    /** opencode CLI 路径覆盖；空 = 从 PATH 解析（CLI 缺失时的兜底入口） */
+    var cliPath: String = ""
+
     override fun getState(): OpenCodeSettingsState = this
 
     override fun loadState(state: OpenCodeSettingsState) {
         serverUrl = state.serverUrl
         username = state.username
+        autoStartServer = state.autoStartServer
+        reuseExternalServer = state.reuseExternalServer
+        cliPath = state.cliPath
     }
 
     companion object {

@@ -114,4 +114,24 @@ object ChatAppColors {
         val explicitFile: Color = JBColor(Color(255, 230, 200), Color(80, 60, 40))
         val onContextChip: Color = JBColor(Color(30, 60, 90), Color(200, 220, 240))
     }
+
+    object Server {
+        /** 状态条底色：进行中（探测 / 启动 / 需要密钥） */
+        val progressBackground: Color = JBColor(Color(232, 241, 254), Color(40, 50, 64))
+
+        /** 状态条底色：失败 */
+        val errorBackground: Color = JBColor(Color(253, 236, 234), Color(66, 44, 42))
+
+        /** 状态条上/下分隔线 */
+        val border: Color = JBColor.border()
+
+        /** 进行中状态的主文案色 */
+        val progressText: Color = JBColor(Color(0x1F, 0x4E, 0x79), Color(0x9E, 0xC5, 0xF0))
+
+        /** 失败状态的主文案色 */
+        val errorText: Color = JBColor(Color(0xC0, 0x39, 0x2B), Color(0xFF, 0x8A, 0x80))
+
+        /** 补充说明（detail / 输出尾巴）文字色 */
+        val secondaryText: Color = JBColor(Gray._96, Gray._150)
+    }
 }

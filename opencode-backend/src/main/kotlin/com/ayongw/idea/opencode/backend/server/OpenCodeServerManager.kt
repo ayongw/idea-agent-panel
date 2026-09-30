@@ -139,6 +139,10 @@ class OpenCodeServerManager(
     @Volatile
     private var disposed: Boolean = false
 
+    /** 一次性开关：下一次探测跳过候选、直接拉起自有实例（「改用插件自启实例」） */
+    @Volatile
+    private var skipDiscoveryOnce: Boolean = false
+
     /** 插件启动时调用：探测 → 复用 / 引导 / 启动 */
     fun ensureStarted() {
         if (disposed) return
@@ -162,6 +166,18 @@ class OpenCodeServerManager(
 
     /** 用户点「重试」 */
     fun retry() = ensureStarted()
+
+    /**
+     * 用户选择「改用插件自启实例」：跳过本次探测，直接拉起自有实例
+     *
+     * 场景：探测命中的是他人实例且需要密钥（`NEEDS_CREDENTIALS`）——用户不愿/无法提供密钥时，
+     * 不必先等他人在 4096 上让位，直接在备用端口上起自有实例。
+     */
+    fun startOwnInstance() {
+        if (disposed) return
+        skipDiscoveryOnce = true
+        ensureStarted()
+    }
 
     /**
      * 用户显式停止自有 Server（等价于强制归零引用后终止）
@@ -271,6 +287,14 @@ class OpenCodeServerManager(
                     )
                 }
             }
+
+        // 用户显式选择「改用插件自启实例」：跳过候选探测，直接拉起自有实例
+        if (skipDiscoveryOnce) {
+            skipDiscoveryOnce = false
+            log.info("跳过候选探测，直接拉起自有 server")
+            startOwnServer(config)
+            return
+        }
 
         candidates.forEach { candidate ->
             when (val result = deps.discovery.probe(candidate)) {

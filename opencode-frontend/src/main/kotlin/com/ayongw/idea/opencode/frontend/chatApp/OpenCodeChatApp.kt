@@ -1,5 +1,6 @@
 package com.ayongw.idea.opencode.frontend.chatApp
 
+import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
@@ -31,6 +32,7 @@ class OpenCodeChatApp(
 ) : JPanel() {
 
     private val topBar: TopBar
+    private val serverStatusStrip: ServerStatusStrip
     private val chatList: ChatList
     private val contextChipBar: ContextChipBar
     private val inputToolbar: InputToolbar
@@ -47,6 +49,13 @@ class OpenCodeChatApp(
             viewModel = viewModel,
             onShowAllSessions = { anchor -> showAllSessionsPopup(anchor) },
             onOpenSettings = { openSettings() }
+        )
+        serverStatusStrip = ServerStatusStrip(
+            onRetry = { viewModel.retryServerStart() },
+            onStartOwnInstance = { viewModel.startOwnServer() },
+            onSubmitCredentials = { username, password -> viewModel.submitServerCredentials(username, password) },
+            onOpenSettings = { openSettings(OpenCodeSettingsConfigurable.CONNECTION_TAB_INDEX) },
+            onOpenCliDocs = { BrowserUtil.browse(CLI_DOCS_URL) }
         )
         inputToolbar = InputToolbar(
             onApprovalModeSelected = { mode -> viewModel.setApprovalMode(mode) },
@@ -73,7 +82,13 @@ class OpenCodeChatApp(
         )
 
         add(topBar, BorderLayout.NORTH)
-        add(chatList, BorderLayout.CENTER)
+        add(
+            JPanel(BorderLayout()).apply {
+                add(serverStatusStrip, BorderLayout.NORTH)
+                add(chatList, BorderLayout.CENTER)
+            },
+            BorderLayout.CENTER
+        )
         add(promptInput, BorderLayout.SOUTH)
 
         subscribeToViewModelUpdates()
@@ -157,6 +172,15 @@ class OpenCodeChatApp(
             viewModel.chatMessagesFlow.collect { messages ->
                 ApplicationManager.getApplication().invokeLater {
                     chatList.setMessages(messages)
+                }
+            }
+        }
+
+        // 顶部：Server 运行时状态条（非就绪状态才显示）
+        coroutineScope.launch {
+            viewModel.serverStateFlow.collect { state ->
+                ApplicationManager.getApplication().invokeLater {
+                    serverStatusStrip.update(state)
                 }
             }
         }
@@ -279,4 +303,9 @@ class OpenCodeChatApp(
         val selectedAgentId: String?,
         val selectedModel: ModelDto?
     )
+
+    private companion object {
+        /** CLI 缺失引导外链（仅官方站点，不指向可执行文件） */
+        const val CLI_DOCS_URL = "https://opencode.ai/"
+    }
 }

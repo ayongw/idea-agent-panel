@@ -202,6 +202,22 @@ class OpenCodeServerManagerUnitTest {
         assertFalse("失败态不属于就绪", status.isReady)
     }
 
+    @Test
+    fun `改用插件自启实例时跳过探测直接拉起`() {
+        // 4096 上有可聊通的他人实例，但用户显式选择自启 → 不得复用，直接拉起自有实例
+        discovery.probeByPort[4096] = ready(pid = 8888)
+        discovery.awaitReadyByPort[4096] = ready(pid = STUB_PID)
+        val manager = newManager()
+
+        manager.startOwnInstance()
+
+        val status = manager.status.value
+        assertEquals(OpenCodeServerState.READY, status.state)
+        assertTrue("自启实例应标记为自有", status.owned)
+        assertTrue("不得探测候选端点：${discovery.probeCalls}", discovery.probeCalls.isEmpty())
+        assertEquals(1, launcher.launched.size)
+    }
+
     // ==================== 自愈 ====================
 
     @Test

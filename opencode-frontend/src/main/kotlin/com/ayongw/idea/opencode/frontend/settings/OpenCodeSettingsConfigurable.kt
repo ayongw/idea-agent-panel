@@ -23,6 +23,9 @@ import javax.swing.Scrollable
 class OpenCodeSettingsConfigurable : Configurable {
 
     companion object {
+        /** 「连接」页下标（Server 地址 / 凭据 / Server 管理） */
+        const val CONNECTION_TAB_INDEX = 0
+
         /** 「模型」页下标（连接页之后的第一个 opencode 设置页） */
         const val MODELS_TAB_INDEX = 1
 

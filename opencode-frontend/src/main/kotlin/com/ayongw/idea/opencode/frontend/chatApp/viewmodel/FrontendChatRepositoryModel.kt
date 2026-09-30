@@ -2,6 +2,11 @@
 
 package com.ayongw.idea.opencode.frontend.chatApp.viewmodel
 
+import com.intellij.ide.BrowserUtil
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.Service.Level
 import com.intellij.openapi.project.Project
@@ -17,6 +22,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
 import com.ayongw.idea.opencode.frontend.settings.OpenCodePasswordStore
 import com.ayongw.idea.opencode.frontend.settings.OpenCodeSettingsState
 import com.ayongw.idea.opencode.shared.AgentDto
@@ -34,6 +40,7 @@ import com.ayongw.idea.opencode.shared.ReferenceDto
 import com.ayongw.idea.opencode.shared.SessionSelectionDto
 import com.ayongw.idea.opencode.shared.SessionStateDto
 import com.ayongw.idea.opencode.shared.SessionUsageDto
+import com.ayongw.idea.opencode.shared.ServerStateDto
 import com.ayongw.idea.opencode.shared.SkillDto
 import com.ayongw.idea.opencode.shared.WorkspaceEntryDto
 import com.ayongw.idea.opencode.shared.toChatMessage
@@ -44,6 +51,12 @@ class FrontendChatRepositoryModel(
     private val coroutineScope: CoroutineScope
 ) : ChatRepositoryApi {
     companion object {
+        /** 通知分组 id（注册于 opencode-idea-panel.opencode-frontend.xml） */
+        private const val NOTIFICATION_GROUP = "OpenCode.Server"
+
+        /** CLI 缺失时的引导外链（仅官方站点，不指向可执行文件） */
+        private const val CLI_DOCS_URL = "https://opencode.ai/"
+
         fun getInstance(project: Project): FrontendChatRepositoryModel {
             return project.getService(FrontendChatRepositoryModel::class.java)
         }
@@ -203,6 +216,32 @@ class FrontendChatRepositoryModel(
         return ChatRepositoryRpcApi.getInstance().getSessionUsage(project.projectId(), sessionId)
     }
 
+    // ==================== Server 运行时（进程与连接管理，TSD-31） ====================
+
+    override val serverStateFlow: StateFlow<ServerStateDto> = flow {
+        durable {
+            ChatRepositoryRpcApi.getInstance().getServerStateFlow(project.projectId()).collect { emit(it) }
+        }
+    }.stateIn(
+        coroutineScope,
+        initialValue = ServerStateDto(state = ServerStateDto.STATE_IDLE),
+        started = SharingStarted.Lazily,
+    )
+
+    override suspend fun retryServerStart() {
+        ChatRepositoryRpcApi.getInstance().retryServerStart(project.projectId())
+    }
+
+    override suspend fun startOwnServer() {
+        ChatRepositoryRpcApi.getInstance().startOwnServer(project.projectId())
+    }
+
+    override suspend fun stopServer(): Boolean =
+        ChatRepositoryRpcApi.getInstance().stopServer(project.projectId())
+
+    override suspend fun submitServerCredentials(username: String, password: String): Boolean =
+        ChatRepositoryRpcApi.getInstance().submitServerCredentials(project.projectId(), username, password)
+
     private fun refreshSessions() {
         coroutineScope.launch { loadSessions() }
     }
@@ -237,10 +276,55 @@ class FrontendChatRepositoryModel(
         }
     }
 
+    // ==================== 后台失败的通知引导（TSD-31 §5.3） ====================
+
+    /**
+     * 订阅 Server 失败状态，对需要用户介入的场景发一次性通知
+     *
+     * 放在项目级服务而非面板内：CLI 缺失通常发生在插件启动阶段，此时 Tool Window 可能尚未打开。
+     */
+    private fun observeServerFailures() {
+        coroutineScope.launch {
+            var notifiedKey: String? = null
+            serverStateFlow.collect { state ->
+                if (state.state != ServerStateDto.STATE_FAILED) {
+                    notifiedKey = null
+                    return@collect
+                }
+                val key = "${state.state}:${state.failure}"
+                if (key == notifiedKey) return@collect
+                when (state.failure) {
+                    ServerStateDto.FAILURE_CLI_NOT_FOUND -> {
+                        notifiedKey = key
+                        notifyCliMissing()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun notifyCliMissing() {
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup(NOTIFICATION_GROUP)
+            .createNotification(
+                OpencodeFrontendBundle.message("notification.cli.missing.title"),
+                OpencodeFrontendBundle.message("notification.cli.missing.content"),
+                NotificationType.WARNING,
+            )
+            .addAction(
+                object : AnAction(OpencodeFrontendBundle.message("notification.cli.missing.action.docs")) {
+                    override fun actionPerformed(e: AnActionEvent) {
+                        BrowserUtil.browse(CLI_DOCS_URL)
+                    }
+                }
+            )
+            .notify(project)
+    }
+
     // 初始化：下发设置 → 延迟加载会话列表和服务器状态
     init {
         coroutineScope.launch {
-            // 应用级设置下发到后端，保证重启后按设置连接
+            // 应用级设置下发到后端，保证重启后按设置连接与拉起
             val settings = OpenCodeSettingsState.getInstance()
             runCatching {
                 ChatRepositoryRpcApi.getInstance()
@@ -248,7 +332,10 @@ class FrontendChatRepositoryModel(
                         project.projectId(),
                         settings.serverUrl,
                         settings.username,
-                        OpenCodePasswordStore.load()
+                        OpenCodePasswordStore.load(),
+                        settings.cliPath,
+                        settings.autoStartServer,
+                        settings.reuseExternalServer,
                     )
             }
             refreshSessions()
@@ -257,5 +344,6 @@ class FrontendChatRepositoryModel(
                 _serverConnectedFlow.value = info.isRunning
             }
         }
+        observeServerFailures()
     }
 }

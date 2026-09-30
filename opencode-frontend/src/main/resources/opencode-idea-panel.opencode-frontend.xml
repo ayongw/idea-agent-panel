@@ -15,5 +15,9 @@
                     id="OpenCode"
                     icon="/icons/opencode.svg"/>
         <applicationConfigurable instance="com.ayongw.idea.opencode.frontend.settings.OpenCodeSettingsConfigurable"/>
+        <notificationGroup id="OpenCode.Server"
+                           displayType="BALLOON"
+                           bundle="messages.OpencodeFrontendBundle"
+                           key="notification.group.server"/>
     </extensions>
 </idea-plugin>

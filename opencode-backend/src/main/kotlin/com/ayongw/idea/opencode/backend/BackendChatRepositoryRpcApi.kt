@@ -189,9 +189,19 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
         )
     }
 
-    override suspend fun updateServerConfig(projectId: ProjectId, serverUrl: String, username: String, password: String) {
+    override suspend fun updateServerConfig(
+        projectId: ProjectId,
+        serverUrl: String,
+        username: String,
+        password: String,
+        cliPath: String?,
+        autoStartServer: Boolean,
+        reuseExternalServer: Boolean,
+    ) {
         val backendProject = projectId.findProjectOrNull() ?: return
-        BackendChatRepositoryModel.getInstance(backendProject).updateServerConfig(serverUrl, username, password)
+        BackendChatRepositoryModel.getInstance(backendProject).updateServerConfig(
+            serverUrl, username, password, cliPath, autoStartServer, reuseExternalServer,
+        )
     }
 
     override suspend fun listAgents(projectId: ProjectId): List<AgentDto> {
@@ -340,6 +350,11 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
         withContext(Dispatchers.IO) { OpenCodeServerManager.getInstance(backendProject).retry() }
     }
 
+    override suspend fun startOwnServer(projectId: ProjectId) {
+        val backendProject = projectId.findProjectOrNull() ?: return
+        withContext(Dispatchers.IO) { OpenCodeServerManager.getInstance(backendProject).startOwnInstance() }
+    }
+
     override suspend fun stopServer(projectId: ProjectId): Boolean {
         val backendProject = projectId.findProjectOrNull() ?: return false
         return withContext(Dispatchers.IO) { OpenCodeServerManager.getInstance(backendProject).stopOwnedServer() }
@@ -350,6 +365,11 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
         return withContext(Dispatchers.IO) {
             OpenCodeServerManager.getInstance(backendProject).submitCredentials(username, password)
         }
+    }
+
+    override suspend fun resetServerRegistry(projectId: ProjectId) {
+        val backendProject = projectId.findProjectOrNull() ?: return
+        OpenCodeServerManager.getInstance(backendProject).resetRegistry()
     }
 
     private fun OpenCodeServerStatus.toServerStateDto() = ServerStateDto(

@@ -679,8 +679,18 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
 
     /**
      * 更新 Server 连接配置（由前端设置页通过 RPC 下发），并刷新连接状态
+     *
+     * 新增的 `cliPath` / `autoStartServer` / `reuseExternalServer` 只影响 Server 运行时
+     * （[OpenCodeServerManager]）的探测与拉起行为，不改变 REST/SSE 契约。
      */
-    fun updateServerConfig(serverUrl: String, username: String, password: String) {
+    fun updateServerConfig(
+        serverUrl: String,
+        username: String,
+        password: String,
+        cliPath: String? = null,
+        autoStartServer: Boolean = true,
+        reuseExternalServer: Boolean = true,
+    ) {
         val normalizedUrl = serverUrl.trim().trimEnd('/').ifEmpty { DEFAULT_SERVER_URL }
         val normalizedUsername = username.trim().ifEmpty { OpenCodeRestClient.DEFAULT_USERNAME }
         // 密码留空时回退 OPENCODE_SERVER_PASSWORD / service.json，避免设置页空值把兜底覆盖掉
@@ -689,6 +699,9 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
             serverUrl = normalizedUrl,
             username = normalizedUsername,
             password = normalizedPassword,
+            cliPath = cliPath?.trim()?.takeIf { it.isNotBlank() },
+            autoStartServer = autoStartServer,
+            reuseExternalServer = reuseExternalServer,
         )
         applyConnection(normalizedUrl, normalizedUsername, normalizedPassword)
     }

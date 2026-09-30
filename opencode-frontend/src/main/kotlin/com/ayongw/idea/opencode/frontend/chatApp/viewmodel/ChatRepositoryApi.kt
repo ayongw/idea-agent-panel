@@ -15,6 +15,7 @@ import com.ayongw.idea.opencode.shared.ReferenceDto
 import com.ayongw.idea.opencode.shared.SessionSelectionDto
 import com.ayongw.idea.opencode.shared.SessionStateDto
 import com.ayongw.idea.opencode.shared.SessionUsageDto
+import com.ayongw.idea.opencode.shared.ServerStateDto
 import com.ayongw.idea.opencode.shared.SkillDto
 import com.ayongw.idea.opencode.shared.WorkspaceEntryDto
 
@@ -175,4 +176,29 @@ interface ChatRepositoryApi {
      * @return null when there is no current session; an empty snapshot when the server is unreachable.
      */
     suspend fun getSessionUsage(): SessionUsageDto?
+
+    // ==================== Server 运行时（进程与连接管理，TSD-31） ====================
+
+    /** Server 运行状态流（状态条订阅）：状态、失败分类、端口、是否自有、引用计数、输出尾巴 */
+    val serverStateFlow: StateFlow<ServerStateDto>
+
+    /** 重试启动 Server（重新探测 → 复用 / 拉起） */
+    suspend fun retryServerStart()
+
+    /** 跳过探测，直接拉起本插件自有的 Server（`NEEDS_CREDENTIALS` 场景的「改用自启实例」） */
+    suspend fun startOwnServer()
+
+    /**
+     * 停止本插件启动的 Server（强制归零引用后优雅终止）
+     *
+     * @return false 表示当前端点非自有实例（他人实例一律不终止）
+     */
+    suspend fun stopServer(): Boolean
+
+    /**
+     * 提交他人实例的接入凭据（`NEEDS_CREDENTIALS` 交互）
+     *
+     * @return true 表示凭据校验通过并已复用该实例
+     */
+    suspend fun submitServerCredentials(username: String, password: String): Boolean
 }

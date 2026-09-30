@@ -147,8 +147,19 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
      * @param serverUrl Server 地址，如 http://127.0.0.1:4096
      * @param username Basic 认证用户名，默认 opencode
      * @param password Basic 认证密码，为空表示不鉴权
+     * @param cliPath opencode CLI 路径覆盖；null/空 = 从 PATH 解析
+     * @param autoStartServer 是否允许插件自动拉起 server
+     * @param reuseExternalServer 是否允许复用非本插件启动的实例
      */
-    suspend fun updateServerConfig(projectId: ProjectId, serverUrl: String, username: String, password: String)
+    suspend fun updateServerConfig(
+        projectId: ProjectId,
+        serverUrl: String,
+        username: String,
+        password: String,
+        cliPath: String? = null,
+        autoStartServer: Boolean = true,
+        reuseExternalServer: Boolean = true
+    )
 
     /**
      * 列出可用 Agent（模式），对应 v2 GET /api/agent
@@ -218,6 +229,14 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
     suspend fun retryServerStart(projectId: ProjectId)
 
     /**
+     * 跳过探测，直接拉起**本插件自有**的 Server
+     *
+     * 用于 `NEEDS_CREDENTIALS` 交互中的「改用插件自启实例」：用户不愿/无法提供他人实例密钥时，
+     * 在备用端口上拉起自有实例（4096 常已被该他人实例占用）。
+     */
+    suspend fun startOwnServer(projectId: ProjectId)
+
+    /**
      * 停止**本插件启动的** Server（强制归零引用后优雅终止）
      *
      * @return false 表示当前端点非自有实例（他人实例一律不终止）
@@ -230,6 +249,11 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
      * @return true 表示凭据校验通过并已复用该实例
      */
     suspend fun submitServerCredentials(projectId: ProjectId, username: String, password: String): Boolean
+
+    /**
+     * 排障兜底：清空共享注册表（不终止任何进程）
+     */
+    suspend fun resetServerRegistry(projectId: ProjectId)
 }
 
 /**
@@ -254,7 +278,28 @@ data class ServerStateDto(
     val refCount: Int = 0,
     /** 失败时的输出尾巴（已脱敏，供展开查看） */
     val outputTail: List<String> = emptyList(),
-)
+) {
+    companion object {
+        // 状态枚举名（与后端 `OpenCodeServerState` 同名，前端据此决定状态条显隐与按钮）
+        const val STATE_IDLE = "IDLE"
+        const val STATE_DISCOVERING = "DISCOVERING"
+        const val STATE_REUSING = "REUSING"
+        const val STATE_NEEDS_CREDENTIALS = "NEEDS_CREDENTIALS"
+        const val STATE_STARTING = "STARTING"
+        const val STATE_READY = "READY"
+        const val STATE_FAILED = "FAILED"
+        const val STATE_STOPPING = "STOPPING"
+        const val STATE_STOPPED = "STOPPED"
+
+        // 失败分类枚举名（与后端 `OpenCodeServerFailure` 同名）
+        const val FAILURE_CLI_NOT_FOUND = "CLI_NOT_FOUND"
+        const val FAILURE_PORT_IN_USE = "PORT_IN_USE"
+        const val FAILURE_AUTH_FAILED = "AUTH_FAILED"
+        const val FAILURE_READY_TIMEOUT = "READY_TIMEOUT"
+        const val FAILURE_PROCESS_EXITED = "PROCESS_EXITED"
+        const val FAILURE_UNREACHABLE = "UNREACHABLE"
+    }
+}
 
 /** Server 连接信息 */
 @Serializable
