@@ -29,6 +29,8 @@ class OpenCodeToolWindowFactory : ToolWindowFactory, DumbAware {
         Disposer.register(toolWindow.disposable, viewModel)
 
         val chatPanel = OpenCodeChatApp(viewModel, project)
+        // 面板级生命周期：随工具窗销毁，订阅/子组件 scope 一并取消（TSD-30 §5.4）
+        Disposer.register(toolWindow.disposable, chatPanel)
         val content = ContentFactory.getInstance().createContent(chatPanel, "OpenCode", false)
         toolWindow.contentManager.addContent(content)
     }

@@ -51,8 +51,8 @@ class MessageBubble(
         setupAppearance()
 
         val tool = message.tool
-        log.info(
-            "[diag] new bubble id=${message.id.take(16)} type=${message.type} isMy=${message.isMyMessage} " +
+        log.debug(
+            "new bubble id=${message.id.take(16)} type=${message.type} isMy=${message.isMyMessage} " +
                 "author=${message.author} contentLen=${message.content.length} tool=${tool?.name ?: "-"}"
         )
         if (message.isToolMessage() && tool != null) {
@@ -654,8 +654,8 @@ private class CodeBlockPane(
         add(buildHeader())
         add(scrollPane)
 
-        log.info(
-            "[diag] codeblock lang=$language lines=${codeLines.size} chars=${code.length} " +
+        log.debug(
+            "codeblock lang=$language lines=${codeLines.size} chars=${code.length} " +
                 "collapsible=$collapsible height=${scrollPane.preferredSize.height}"
         )
     }

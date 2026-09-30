@@ -1,15 +1,16 @@
 package com.ayongw.idea.opencode.frontend.chatApp
 
 import com.intellij.ide.BrowserUtil
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopup
 import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.util.Disposer
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.combine
-import com.ayongw.idea.opencode.frontend.CoroutineScopeHolder
 import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
 import com.ayongw.idea.opencode.frontend.chatApp.ui.*
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppColors
@@ -26,10 +27,20 @@ import java.awt.Dimension
 import java.io.File
 import javax.swing.JPanel
 
+/**
+ * 聊天面板装配：TopBar / Server 状态条 / ChatList / 输入区。
+ *
+ * 生命周期（TSD-30 §5.4）：实现 [Disposable]，由 Tool Window 工厂注册到
+ * `toolWindow.disposable` 之下；面板级订阅与子组件（[ChatList]）都挂在本实例下，
+ * 关闭工具窗即整体取消，避免 project 级 scope 叠加导致的状态串扰。
+ */
 class OpenCodeChatApp(
     private val viewModel: ChatViewModel,
     private val project: Project
-) : JPanel() {
+) : JPanel(), Disposable {
+
+    /** 面板级订阅 scope：随本面板销毁而取消（不挂 project 级） */
+    private val panelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private val topBar: TopBar
     private val serverStatusStrip: ServerStatusStrip
@@ -66,6 +77,8 @@ class OpenCodeChatApp(
             onManageModels = { openSettings(OpenCodeSettingsConfigurable.MODELS_TAB_INDEX) }
         )
         chatList = ChatList(project)
+        // ChatList 的定时器与协程 scope 挂到本面板生命周期下（TSD-30 §5.4）
+        Disposer.register(this, chatList)
         promptInput = PromptInput(
             onInputChanged = { text -> viewModel.onPromptInputChanged(text) },
             onSend = { _ -> viewModel.onSendMessage() },
@@ -166,7 +179,7 @@ class OpenCodeChatApp(
     }
 
     private fun subscribeToViewModelUpdates() {
-        val coroutineScope = CoroutineScopeHolder.getInstance(project).createScope(OpenCodeChatApp::class.java.simpleName)
+        val coroutineScope = panelScope
 
         coroutineScope.launch {
             viewModel.chatMessagesFlow.collect { messages ->
@@ -307,5 +320,9 @@ class OpenCodeChatApp(
     private companion object {
         /** CLI 缺失引导外链（仅官方站点，不指向可执行文件） */
         const val CLI_DOCS_URL = "https://opencode.ai/"
+    }
+
+    override fun dispose() {
+        panelScope.cancel()
     }
 }

@@ -1,5 +1,6 @@
 package com.ayongw.idea.opencode.frontend.chatApp.ui
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
@@ -12,6 +13,7 @@ import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatUIConstants
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Container
@@ -26,7 +28,13 @@ import javax.swing.JScrollPane
 import javax.swing.Scrollable
 import javax.swing.SwingUtilities
 
-class ChatList(private val project: Project) : JPanel() {
+/**
+ * 消息列表容器：卡片切换、按消息 id 同步/增删气泡、滚动与布局。
+ *
+ * 生命周期（TSD-30 §5.4）：实现 [Disposable]，由装配方（[OpenCodeChatApp]）注册到面板
+ * 生命周期之下；[dispose] 负责取消内部协程 scope 并停掉流式刷新定时器。
+ */
+class ChatList(private val project: Project) : JPanel(), Disposable {
     private val messagesContainer: JPanel
     private val scrollPane: JScrollPane
     private val emptyPlaceholder: JPanel
@@ -114,8 +122,8 @@ class ChatList(private val project: Project) : JPanel() {
     }
 
     fun setMessages(messages: List<ChatMessage>) {
-        log.info(
-            "[diag] setMessages: ${messages.size} 条 = " +
+        log.debug(
+            "setMessages: ${messages.size} 条 = " +
                 messages.joinToString { "${it.id.take(16)}/${it.type}/${it.content.length}" }
         )
 
@@ -246,11 +254,11 @@ class ChatList(private val project: Project) : JPanel() {
         }
     }
 
-    /** 诊断日志：打印容器/视口/各气泡的真实几何，用于排查「消息区空白」 */
+    /** 诊断日志：打印容器/视口/各气泡的真实几何，用于排查「消息区空白」（仅 DEBUG 开启时输出） */
     private fun logGeometry(tag: String) {
         val viewport = scrollPane.viewport
-        log.info(
-            "[diag] geometry($tag): chatList=${size.width}x${size.height} showing=$isShowing " +
+        log.debug(
+            "geometry($tag): chatList=${size.width}x${size.height} showing=$isShowing " +
                 "card=${visibleCard()} bubbles=${messageBubbles.size} " +
                 "container=${messagesContainer.size.width}x${messagesContainer.size.height} " +
                 "pref=${messagesContainer.preferredSize.width}x${messagesContainer.preferredSize.height} " +
@@ -264,8 +272,8 @@ class ChatList(private val project: Project) : JPanel() {
         val gridBag = messagesContainer.layout as? GridBagLayout
         messagesContainer.components.forEach { child ->
             val gbc = gridBag?.getConstraints(child)
-            log.info(
-                "[diag]   child ${child.javaClass.simpleName}: " +
+            log.debug(
+                "  child ${child.javaClass.simpleName}: " +
                     "bounds=${child.bounds.x},${child.bounds.y},${child.bounds.width}x${child.bounds.height} " +
                     "pref=${child.preferredSize.width}x${child.preferredSize.height} visible=${child.isVisible} " +
                     "grid=(${gbc?.gridx},${gbc?.gridy}) weight=(${gbc?.weightx},${gbc?.weighty}) " +
@@ -316,8 +324,8 @@ class ChatList(private val project: Project) : JPanel() {
         if (messagesContainer.isValid && !missingGeometry) return
         messagesContainer.revalidate()
         forceLayout(messagesContainer)
-        log.info(
-            "[diag] ensureLaidOut: forced missing=$missingGeometry valid=${messagesContainer.isValid} " +
+        log.debug(
+            "ensureLaidOut: forced missing=$missingGeometry valid=${messagesContainer.isValid} " +
                 "children=${messagesContainer.componentCount} size=${messagesContainer.size.width}x${messagesContainer.size.height}"
         )
     }
@@ -330,6 +338,11 @@ class ChatList(private val project: Project) : JPanel() {
         container.components.forEach { child ->
             if (child is Container && child.isVisible) forceLayout(child)
         }
+    }
+
+    override fun dispose() {
+        streamingController.dispose()
+        uiScope.cancel()
     }
 }
 
