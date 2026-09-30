@@ -61,6 +61,9 @@ class MessageBubble(
     /** 思考动画组件（思考气泡初始态）：被内容骨架替换或气泡被删除时必须 dispose，否则 animator 挂到 ROOT 泄漏 */
     private var thinkingIndicator: ThinkingIndicator? = null
 
+    /** 时间行（独立于气泡）：用户消息的气泡只包住内容，绘制时需避开该行 */
+    private var timestampRow: JComponent? = null
+
     /** 当前渲染的内容段落 */
     private var currentSegments: List<MarkdownSegment> = emptyList()
 
@@ -81,16 +84,24 @@ class MessageBubble(
             contentContainer = card
             add(card)
         } else {
-            // 助手消息：头像 + 名称（参考样式），用户消息：仅名称
-            add(if (message.isMyMessage) AuthorName(message) else AuthorRow(message))
-            add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.MEDIUM)))
+            // 助手消息：头像 + 名称；用户消息不显示标题（气泡只包内容，时间另起一行在气泡外）
+            if (!message.isMyMessage) {
+                add(AuthorRow(message))
+                add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.MEDIUM)))
+            }
 
             when {
                 message.isTextMessage() -> {
                     contentContainer = buildContentContainer(message.content)
                     add(contentContainer!!)
-                    add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.NORMAL)))
-                    add(TimeStampLabel(message))
+                    // 用户消息：时间行在气泡之外，需留出「气泡内边距 + 与时间的间距」
+                    val gapBeforeTimestamp = if (message.isMyMessage) {
+                        ChatUIConstants.MessageBubble.INNER_PADDING + ChatUIConstants.Spacing.SMALL
+                    } else {
+                        ChatUIConstants.Spacing.NORMAL
+                    }
+                    add(Box.createVerticalStrut(JBUI.scale(gapBeforeTimestamp)))
+                    add(TimeStampLabel(message).also { timestampRow = it })
                 }
                 message.isAIThinkingMessage() -> {
                     // 已完成的历史思考（非空内容）默认折叠；流式刚开始（空内容）先显示动画
@@ -148,11 +159,18 @@ class MessageBubble(
         val marginH = JBUI.scale(ChatUIConstants.MessageBubble.HORIZONTAL_MARGIN)
         val cornerRadius = JBUI.scale(ChatUIConstants.MessageBubble.CORNER_RADIUS)
 
+        // 用户消息：时间行独立于气泡之外，气泡底边停在时间行之前
+        val bubbleBottom = if (isMyMessage) userBubbleBottom() else height
+        if (bubbleBottom - margin <= marginH) {
+            g2d.dispose()
+            return
+        }
+
         val shape = RoundRectangle2D.Float(
             marginH.toFloat(),
             margin.toFloat(),
             (width - 2 * marginH).toFloat(),
-            (height - 2 * margin).toFloat(),
+            (bubbleBottom - margin).toFloat(),
             cornerRadius.toFloat(),
             cornerRadius.toFloat()
         )
@@ -165,6 +183,18 @@ class MessageBubble(
         g2d.draw(shape)
 
         g2d.dispose()
+    }
+
+    /**
+     * 用户消息气泡底边：到时间行之前留一个间距；时间行尚未完成布局时退回整高（避免画空）。
+     */
+    private fun userBubbleBottom(): Int {
+        val timestamp = timestampRow ?: return height
+        return if (timestamp.bounds.y > 0) {
+            timestamp.bounds.y - JBUI.scale(ChatUIConstants.Spacing.SMALL)
+        } else {
+            height
+        }
     }
 
     private fun getMessageBackground(): Color {
@@ -204,6 +234,8 @@ class MessageBubble(
         renderedContent = newContent
         container.revalidate()
         container.repaint()
+        // 内容增高/缩矮时气泡轮廓与时间行位置需重绘（用户消息气泡只包内容）
+        repaint()
     }
 
     /**
