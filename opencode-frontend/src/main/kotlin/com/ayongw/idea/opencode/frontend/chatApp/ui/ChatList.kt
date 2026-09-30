@@ -95,7 +95,8 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
                 messageBubbles[messageId]?.updateReasoningContent(content)
             },
             onReasoningComplete = { messageId ->
-                // 推理完成
+                // 流式结束：自动折叠思考区（G3），可手动展开
+                messageBubbles[messageId]?.completeReasoning()
             }
         )
     }

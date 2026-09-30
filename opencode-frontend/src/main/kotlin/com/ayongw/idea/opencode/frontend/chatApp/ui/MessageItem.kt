@@ -30,6 +30,10 @@ import javax.swing.text.html.HTMLEditorKit
  */
 private val log = Logger.getInstance("com.ayongw.idea.opencode.frontend.chatApp.ui.MessageItem")
 
+/** 思考区折叠箭头（G3） */
+private const val COLLAPSE_CHEVRON = "▾"
+private const val EXPAND_CHEVRON = "▸"
+
 class MessageBubble(
     private val message: ChatMessage,
     private var isMatchingSearch: Boolean = false,
@@ -46,6 +50,12 @@ class MessageBubble(
 
     /** 内容容器 - 用于动态更新 */
     private var contentContainer: JPanel? = null
+
+    /** 思考区折叠（TSD-30 Phase 2.8 / G3）：流式期间展开，结束自动折叠，可手动切换 */
+    private var reasoningExpanded = false
+
+    /** 折叠箭头（▸/▾）引用，切换时更新 */
+    private var reasoningChevron: JBLabel? = null
 
     /** 当前渲染的内容段落 */
     private var currentSegments: List<MarkdownSegment> = emptyList()
@@ -78,7 +88,14 @@ class MessageBubble(
                     add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.NORMAL)))
                     add(TimeStampLabel(message))
                 }
-                message.isAIThinkingMessage() -> add(ThinkingIndicator())
+                message.isAIThinkingMessage() -> {
+                    // 已完成的历史思考（非空内容）默认折叠；流式刚开始（空内容）先显示动画
+                    if (message.content.isBlank()) {
+                        add(ThinkingIndicator())
+                    } else {
+                        buildReasoningStructure(expanded = false)
+                    }
+                }
             }
         }
     }
@@ -193,25 +210,18 @@ class MessageBubble(
     }
 
     /**
-     * 更新推理过程内容
+     * 更新推理过程内容（G3：流式期间展开）
      *
-     * 首帧（动画 → 内容）在气泡内补建头部与内容容器；后续流式只重建内容容器内部（保持挂载）。
+     * 首帧（动画 → 结构）建折叠骨架并展开；后续流式只填充内容容器内部（保持挂载）。
      */
     fun updateReasoningContent(content: String) {
         // For thinking messages, we replace the ThinkingIndicator with content
         if (message.isAIThinkingMessage()) {
-            val container = contentContainer
-            if (container == null) {
-                removeAll()
-                setupAppearance()
-                add(AuthorName(message))
-                add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.MEDIUM)))
-                contentContainer = JPanel().apply {
-                    layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                    isOpaque = false
-                    alignmentX = LEFT_ALIGNMENT
-                }
-                add(contentContainer!!)
+            if (contentContainer == null) {
+                buildReasoningStructure(expanded = true)
+            }
+            if (!reasoningExpanded) {
+                setReasoningExpanded(true)
             }
             populateReasoningContainer(contentContainer!!, content)
             renderedContent = content
@@ -220,11 +230,63 @@ class MessageBubble(
         }
     }
 
-    /**
-     * 完成推理过程
-     */
-    fun completeReasoning(finalContent: String) {
-        updateReasoningContent(finalContent)
+    /** 流式结束：自动折叠思考区（G3），仍可手动展开查看 */
+    fun completeReasoning() {
+        if (message.isAIThinkingMessage() && contentContainer != null) {
+            setReasoningExpanded(false)
+            revalidate()
+            repaint()
+        }
+    }
+
+    /** 思考区骨架：折叠标题行 + 内容容器（[expanded] 决定初始展开态） */
+    private fun buildReasoningStructure(expanded: Boolean) {
+        removeAll()
+        setupAppearance()
+        add(AuthorName(message))
+        add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.MEDIUM)))
+        add(buildReasoningHeader(expanded))
+        contentContainer = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            alignmentX = LEFT_ALIGNMENT
+            isVisible = expanded
+        }
+        reasoningExpanded = expanded
+        add(contentContainer!!)
+    }
+
+    /** 折叠标题行：标题 + 箭头，点击切换展开/折叠 */
+    private fun buildReasoningHeader(expanded: Boolean): JPanel {
+        reasoningChevron = JBLabel(if (expanded) COLLAPSE_CHEVRON else EXPAND_CHEVRON).apply {
+            foreground = ChatAppColors.Text.disabled
+        }
+        val header = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.X_AXIS)
+            isOpaque = false
+            alignmentX = LEFT_ALIGNMENT
+            add(JBLabel(OpencodeFrontendBundle.message("chat.message.reasoning.title")).apply {
+                font = JBFont.small().asBold()
+                foreground = ChatAppColors.Text.disabled
+            })
+            add(Box.createHorizontalStrut(JBUI.scale(4)))
+            add(reasoningChevron!!)
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    setReasoningExpanded(!reasoningExpanded)
+                    revalidate()
+                    repaint()
+                }
+            })
+        }
+        return header
+    }
+
+    private fun setReasoningExpanded(expanded: Boolean) {
+        reasoningExpanded = expanded
+        contentContainer?.isVisible = expanded
+        reasoningChevron?.text = if (expanded) COLLAPSE_CHEVRON else EXPAND_CHEVRON
     }
 
     /** 更新工具卡片（运行中 → 完成 / 失败） */
