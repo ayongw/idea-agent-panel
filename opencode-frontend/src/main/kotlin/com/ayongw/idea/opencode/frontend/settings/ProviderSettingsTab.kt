@@ -8,22 +8,32 @@ import com.ayongw.idea.opencode.shared.SettingsRpcApi
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
 import com.intellij.platform.project.projectId
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Component
+import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.RenderingHints
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.awt.geom.Ellipse2D
+import java.awt.geom.RoundRectangle2D
 import javax.swing.DefaultComboBoxModel
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JTable
+import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
 import javax.swing.table.TableCellRenderer
 
@@ -60,7 +70,10 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
     ) {
         override fun isCellEditable(row: Int, column: Int): Boolean = false
     }
-    private val providerTable = buildTable(providerModel, listOf(180, 200, 90, 100))
+    // 列宽按内容收窄且不随窗口拉伸，避免表格撑满设置页
+    private val providerTable = buildTable(providerModel, listOf(130, 150, 56, 76)).apply {
+        autoResizeMode = JTable.AUTO_RESIZE_OFF
+    }
 
     // ==================== 模型 ====================
 
@@ -74,7 +87,8 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
         ),
         0
     ) {
-        override fun isCellEditable(row: Int, column: Int): Boolean = column == MODEL_ENABLED_COLUMN
+        // 启用状态由开关按钮（鼠标点击）切换，表格本身不再可编辑
+        override fun isCellEditable(row: Int, column: Int): Boolean = false
 
         override fun setValueAt(value: Any?, row: Int, column: Int) {
             super.setValueAt(value, row, column)
@@ -84,7 +98,17 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
             setModelEnabled(model, enabled)
         }
     }
-    private val modelTable = buildTable(modelModel, listOf(220, 260, 90))
+    private val modelTable = buildTable(modelModel, listOf(160, 180, 60)).apply {
+        autoResizeMode = JTable.AUTO_RESIZE_OFF
+    }
+
+    // 增删模型仅对自定义供应商开放，非自定义供应商下隐藏（见 showModelsOfSelection）
+    private val addModelButton = JButton(OpencodeFrontendBundle.message("settings.opencode.model.add")).apply {
+        addActionListener { addModel() }
+    }
+    private val removeModelButton = JButton(OpencodeFrontendBundle.message("settings.opencode.model.remove")).apply {
+        addActionListener { removeModel() }
+    }
 
     private var providers: List<ProviderDto> = emptyList()
     private var currentModels: List<ProviderModelDto> = emptyList()
@@ -117,11 +141,30 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
                 if (event.clickCount != 1) return
                 val row = providerTable.rowAtPoint(event.point)
                 if (row < 0 || providerTable.columnAtPoint(event.point) != PROVIDER_ACTION_COLUMN) return
+                // 非自定义供应商不可设置（该行也不渲染按钮）
+                val provider = providers.getOrNull(row)?.takeIf { it.custom } ?: return
                 providerTable.setRowSelectionInterval(row, row)
-                providers.getOrNull(row)?.let { configureProvider(it) }
+                configureProvider(provider)
             }
         })
-        providerTable.columnModel.getColumn(PROVIDER_ACTION_COLUMN).cellRenderer = ActionCellRenderer()
+        providerTable.columnModel.getColumn(PROVIDER_ACTION_COLUMN).cellRenderer =
+            ActionCellRenderer { row -> providers.getOrNull(row)?.custom == true }
+
+        // 启用状态：点开关按钮即切换（未禁用即启用）
+        modelTable.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(event: MouseEvent) {
+                if (event.clickCount != 1) return
+                val row = modelTable.rowAtPoint(event.point)
+                if (row < 0 || modelTable.columnAtPoint(event.point) != MODEL_ENABLED_COLUMN) return
+                modelTable.setRowSelectionInterval(row, row)
+                val enabled = modelModel.getValueAt(row, MODEL_ENABLED_COLUMN) as? Boolean ?: return
+                modelModel.setValueAt(!enabled, row, MODEL_ENABLED_COLUMN)
+            }
+        })
+        modelTable.columnModel.getColumn(MODEL_ENABLED_COLUMN).cellRenderer = SwitchCellRenderer()
+        val modelTextRenderer = DisabledAwareRenderer(modelModel, MODEL_ENABLED_COLUMN)
+        modelTable.columnModel.getColumn(MODEL_ID_COLUMN).cellRenderer = modelTextRenderer
+        modelTable.columnModel.getColumn(MODEL_NAME_COLUMN).cellRenderer = modelTextRenderer
 
         val providerBlock = JPanel(BorderLayout()).apply {
             add(
@@ -143,12 +186,8 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
             add(
                 titledRow(
                     modelTitleLabel,
-                    JButton(OpencodeFrontendBundle.message("settings.opencode.model.add")).apply {
-                        addActionListener { addModel() }
-                    },
-                    JButton(OpencodeFrontendBundle.message("settings.opencode.model.remove")).apply {
-                        addActionListener { removeModel() }
-                    }
+                    addModelButton,
+                    removeModelButton
                 ),
                 BorderLayout.NORTH
             )
@@ -224,6 +263,14 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
         val provider = selectedProvider()
         selectedProviderId = provider?.id
         currentModels = provider?.models.orEmpty()
+        // 增删模型只对自定义供应商开放
+        val custom = provider?.custom == true
+        addModelButton.isVisible = custom
+        removeModelButton.isVisible = custom
+        addModelButton.parent?.let {
+            it.revalidate()
+            it.repaint()
+        }
         modelTitleLabel.text = provider
             ?.let { OpencodeFrontendBundle.message("settings.opencode.model.title.of", it.id) }
             ?: OpencodeFrontendBundle.message("settings.opencode.model.title")
@@ -370,12 +417,13 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
 
     override fun isModified(): Boolean = false
 
-    /** 行内「设置」按钮的渲染器（表格按需绘制，不参与焦点，避免绘制出焦点框） */
-    private class ActionCellRenderer : TableCellRenderer {
+    /** 行内「设置」按钮的渲染器（表格按需绘制，不参与焦点，避免绘制出焦点框）；[canConfigure] 为 false 的行渲染为空白 */
+    private class ActionCellRenderer(private val canConfigure: (Int) -> Boolean) : TableCellRenderer {
         private val button = JButton(OpencodeFrontendBundle.message("settings.opencode.provider.configure")).apply {
             isFocusable = false
             isFocusPainted = false
         }
+        private val blank = DefaultTableCellRenderer()
 
         override fun getTableCellRendererComponent(
             table: JTable,
@@ -384,7 +432,91 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
             hasFocus: Boolean,
             row: Int,
             column: Int
-        ): Component = button
+        ): Component = if (canConfigure(row)) {
+            button
+        } else {
+            blank.getTableCellRendererComponent(table, "", isSelected, hasFocus, row, column)
+        }
+    }
+
+    /** 模型行渲染：禁用中的行用次要色，与启用行区分 */
+    private class DisabledAwareRenderer(
+        private val model: DefaultTableModel,
+        private val enabledColumn: Int
+    ) : DefaultTableCellRenderer() {
+        override fun getTableCellRendererComponent(
+            table: JTable,
+            value: Any?,
+            isSelected: Boolean,
+            hasFocus: Boolean,
+            row: Int,
+            column: Int
+        ): Component {
+            val component = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
+            val enabled = model.getValueAt(row, enabledColumn) as? Boolean ?: true
+            component.foreground =
+                if (!enabled && !isSelected) UIUtil.getContextHelpForeground() else UIUtil.getTableForeground()
+            return component
+        }
+    }
+
+    /** 启用状态渲染为开关：开=蓝色轨道 + 右侧白点，关=灰色轨道 + 左侧白点 */
+    private class SwitchCellRenderer : TableCellRenderer {
+        private val view = SwitchView()
+
+        override fun getTableCellRendererComponent(
+            table: JTable,
+            value: Any?,
+            isSelected: Boolean,
+            hasFocus: Boolean,
+            row: Int,
+            column: Int
+        ): Component {
+            view.on = value as? Boolean ?: false
+            view.background = if (isSelected) table.selectionBackground else table.background
+            return view
+        }
+
+        private class SwitchView : JComponent() {
+            var on: Boolean = false
+
+            init {
+                isOpaque = true
+            }
+
+            override fun getPreferredSize(): Dimension =
+                Dimension(JBUI.scale(SWITCH_WIDTH), JBUI.scale(SWITCH_HEIGHT))
+
+            override fun paintComponent(g: Graphics) {
+                g.color = background
+                g.fillRect(0, 0, width, height)
+                val g2 = g.create() as Graphics2D
+                try {
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                    val trackW = JBUI.scale(SWITCH_WIDTH).toDouble()
+                    val trackH = JBUI.scale(SWITCH_HEIGHT).toDouble()
+                    val x = (width - trackW) / 2
+                    val y = (height - trackH) / 2
+                    g2.color = if (on) SWITCH_ON else SWITCH_OFF
+                    g2.fill(RoundRectangle2D.Double(x, y, trackW, trackH, trackH, trackH))
+                    val pad = JBUI.scale(SWITCH_PADDING).toDouble()
+                    val knob = trackH - pad * 2
+                    val knobX = if (on) x + trackW - knob - pad else x + pad
+                    g2.color = Color.WHITE
+                    g2.fill(Ellipse2D.Double(knobX, y + pad, knob, knob))
+                } finally {
+                    g2.dispose()
+                }
+            }
+
+            private companion object {
+                const val SWITCH_WIDTH = 34
+                const val SWITCH_HEIGHT = 18
+                const val SWITCH_PADDING = 2
+                val SWITCH_ON = JBColor(Color(0x2F6FEB), Color(0x548AF7))
+                val SWITCH_OFF = JBColor(Color(0xC9CDD4), Color(0x5A5D63))
+            }
+        }
     }
 
     /** 供应商设置：名称 / 连接 URL / API Key；新增时额外填 id 与运行时包 */
@@ -495,7 +627,9 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
     }
 
     private companion object {
-        const val PROVIDER_ACTION_COLUMN = 3
+        const val MODEL_ID_COLUMN = 0
+        const val MODEL_NAME_COLUMN = 1
         const val MODEL_ENABLED_COLUMN = 2
+        const val PROVIDER_ACTION_COLUMN = 3
     }
 }
