@@ -47,8 +47,8 @@ class MessageBubble(
     /** 当前渲染的内容段落 */
     private var currentSegments: List<MarkdownSegment> = emptyList()
 
-    /** 当前已渲染内容的内容指纹，用于「内容是否变化」的比较；思考消息初始只渲染动画，故为空 */
-    private var renderedContent: String = if (message.isAIThinkingMessage()) "" else contentSignature(message)
+    /** 当前已渲染内容的内容指纹，用于「内容是否变化」的比较；null = 尚未渲染首帧（思考消息初始只渲染动画） */
+    private var renderedContent: String? = if (message.isAIThinkingMessage()) null else contentSignature(message)
 
     init {
         setupAppearance()
@@ -82,9 +82,11 @@ class MessageBubble(
 
     /**
      * 上游按消息 id 推送同一气泡的新内容时就地刷新（流式正文 / 推理 / 工具卡片）；内容未变则不动。
+     *
+     * 首帧（`renderedContent == null`）不做「变更判定」短路，保证思考气泡从动画到内容必然渲染。
      */
     fun syncWith(message: ChatMessage) {
-        if (contentSignature(message) == renderedContent) return
+        if (renderedContent != null && contentSignature(message) == renderedContent) return
         when {
             message.isAIThinkingMessage() -> updateReasoningContent(message.content)
             message.isTextMessage() -> updateStreamingText(message.content)
@@ -167,18 +169,17 @@ class MessageBubble(
     }
 
     /**
-     * 更新流式文本内容
+     * 更新流式文本内容（TSD-30 §5.3 块级增量）
+     *
+     * 复用现有内容容器：只重建容器内的块组件，容器本身保持挂载（不再 `remove + add(newContainer, 2)`），
+     * 避免父级布局的移除/插入抖动导致闪烁。
      */
     fun updateStreamingText(newContent: String) {
-        contentContainer?.let { container ->
-            remove(container)
-            val newContainer = buildContentContainer(newContent)
-            contentContainer = newContainer
-            renderedContent = newContent
-            add(newContainer, 2) // Insert after author name and spacer
-            revalidate()
-            repaint()
-        }
+        val container = contentContainer ?: return
+        populateContentContainer(container, newContent)
+        renderedContent = newContent
+        container.revalidate()
+        container.repaint()
     }
 
     /**
@@ -190,17 +191,27 @@ class MessageBubble(
 
     /**
      * 更新推理过程内容
+     *
+     * 首帧（动画 → 内容）在气泡内补建头部与内容容器；后续流式只重建内容容器内部（保持挂载）。
      */
     fun updateReasoningContent(content: String) {
         // For thinking messages, we replace the ThinkingIndicator with content
         if (message.isAIThinkingMessage()) {
-            removeAll()
-            setupAppearance()
-            add(AuthorName(message))
-            add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.MEDIUM)))
-            contentContainer = buildReasoningContent(content)
+            val container = contentContainer
+            if (container == null) {
+                removeAll()
+                setupAppearance()
+                add(AuthorName(message))
+                add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.MEDIUM)))
+                contentContainer = JPanel().apply {
+                    layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                    isOpaque = false
+                    alignmentX = LEFT_ALIGNMENT
+                }
+                add(contentContainer!!)
+            }
+            populateReasoningContainer(contentContainer!!, content)
             renderedContent = content
-            add(contentContainer!!)
             revalidate()
             repaint()
         }
@@ -227,7 +238,7 @@ class MessageBubble(
     private fun buildToolCard(tool: ToolCallDto): JPanel = ToolCallCard(tool)
 
     /**
-     * 构建内容容器
+     * 构建内容容器（消息创建时的首次渲染）
      */
     private fun buildContentContainer(content: String): JPanel {
         val container = JPanel().apply {
@@ -235,36 +246,41 @@ class MessageBubble(
             isOpaque = false
             alignmentX = LEFT_ALIGNMENT
         }
+        populateContentContainer(container, content)
+        return container
+    }
 
+    /**
+     * 往**已挂载**的内容容器填充当前 markdown 分段（流式增量复用：容器不脱离父布局）
+     */
+    private fun populateContentContainer(container: JPanel, content: String) {
+        container.removeAll()
         currentSegments = parseMarkdownWithCodeBlocks(content)
         currentSegments.forEachIndexed { index, segment ->
             when (segment) {
                 is MarkdownSegment.Text -> {
                     if (segment.content.isNotBlank()) {
                         container.add(TextPane(segment.content))
-                        if (index < currentSegments.lastIndex) container.add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+                        if (index < currentSegments.lastIndex) {
+                            container.add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+                        }
                     }
                 }
                 is MarkdownSegment.CodeBlock -> {
                     container.add(CodeBlockPane(segment.language, segment.code))
-                    if (index < currentSegments.lastIndex) container.add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+                    if (index < currentSegments.lastIndex) {
+                        container.add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+                    }
                 }
             }
         }
-
-        return container
     }
 
     /**
-     * 构建推理过程容器
+     * 往**已挂载**的推理容器填充内容（首帧建容器后复用）
      */
-    private fun buildReasoningContent(content: String): JPanel {
-        val container = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            isOpaque = false
-            alignmentX = LEFT_ALIGNMENT
-        }
-
+    private fun populateReasoningContainer(container: JPanel, content: String) {
+        container.removeAll()
         val lines = content.lines().toList()
         lines.forEachIndexed { index, line ->
             val label = JBLabel(line).apply {
@@ -275,8 +291,6 @@ class MessageBubble(
             container.add(label)
             if (index < lines.lastIndex) container.add(Box.createVerticalStrut(JBUI.scale(2)))
         }
-
-        return container
     }
 }
 

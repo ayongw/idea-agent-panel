@@ -48,6 +48,9 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
     /** 粘底判定（TSD-30 §5.2）：用户不在底部时不抢滚动 */
     private val scrollPolicy = ScrollPolicy(JBUI.scale(ScrollPolicy.DEFAULT_THRESHOLD))
 
+    /** 刷新合并（TSD-30 §4.2 C-刷新）：窗口内多次 setMessages 合并为一次布局 + 一次滚动判定 */
+    private val updateCoalescer = ListUpdateCoalescer()
+
     /** 底部占位 filler 的显式引用（不再靠组件数量推断） */
     private val filler = Box.createVerticalGlue()
 
@@ -145,14 +148,20 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
         // 已有气泡：内容变化时就地重渲染（事件流累积的流式内容）
         syncExistingMessages(messages)
 
-        // 集合变化：更新顺序模型与气泡映射，统一重排（增删后 gridy 由模型派生）
-        removeDeletedMessages(messages)
-        listModel.sync(messages.map { it.id })
-        addNewMessages(messages)
-        relayoutMessages()
+        // 集合变化（新增/删除/重排）才统一重挂；流式内容变化走 syncExistingMessages，不重挂容器
+        val ids = messages.map { it.id }
+        if (listModel.ids != ids) {
+            removeDeletedMessages(messages)
+            listModel.sync(ids)
+            addNewMessages(messages)
+            relayoutMessages()
+        }
 
-        requestLayout()
-        scrollToBottom()
+        // 布局与滚动判定经合并器收口（窗口内一次布局 + 一次滚动）
+        if (updateCoalescer.request()) {
+            requestLayout()
+            scrollToBottom()
+        }
     }
 
     /**
