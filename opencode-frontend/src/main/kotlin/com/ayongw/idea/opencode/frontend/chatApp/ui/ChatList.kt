@@ -14,12 +14,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlin.math.max
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Container
 import java.awt.Dimension
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
+import java.awt.Point
 import java.awt.Rectangle
 import javax.swing.Box
 import javax.swing.JLabel
@@ -158,11 +160,11 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
             relayoutMessages()
         }
 
-        // 布局与滚动判定经合并器收口（窗口内一次布局 + 一次滚动）
+        // 布局经合并器收口（窗口内一次布局），滚动/越界校准每次都执行（安全且必要）
         if (updateCoalescer.request()) {
             requestLayout()
-            scrollToBottom()
         }
+        scrollToBottom()
     }
 
     /**
@@ -252,24 +254,32 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
     }
 
     /**
-     * 粘底滚动（最新消息）：仅在用户已在底部（阈值内）时执行，上翻阅读期间不抢滚动（TSD-30 §5.2）。
+     * 粘底滚动 + 视口越界校准（最新消息）。
      *
      * 必须在 EDT 上「布局完成之后」执行：`setMessages` 里刚 add 的气泡此刻还没有
-     * bounds，直接 `scrollRectToVisible` 会按旧高度滚动，落到空白区域。
+     * bounds，直接滚动会按旧高度滚到空白区域。
+     *
+     * 两个职责：
+     * 1. **越界校准**：对账/删除使内容收缩后，旧滚动位置可能超出新内容高度，视口呈现一片空白。
+     *    先把视口拉回 `maxY`，避免「整屏空白」（resize 时 RepaintManager 全量 validate 才恢复）。
+     * 2. **粘底滚动**：仅当用户已在底部（阈值内）时滚到最新，上翻阅读期间不抢滚动（TSD-30 §5.2）。
+     *
+     * 用 `viewport.viewPosition` 直接设置（而非 `scrollRectToVisible`），语义确定、无「滚到可见」歧义。
      */
     private fun scrollToBottom() {
         ApplicationManager.getApplication().invokeLater {
             val viewport = scrollPane.viewport
-            if (messagesContainer.height > 0 &&
-                scrollPolicy.shouldStickToBottom(
-                    viewPositionY = viewport.viewPosition.y.toInt(),
-                    extentHeight = viewport.extentSize.height,
-                    viewSizeHeight = viewport.viewSize.height,
-                )
-            ) {
-                messagesContainer.scrollRectToVisible(
-                    Rectangle(0, messagesContainer.height - 1, 1, messagesContainer.height)
-                )
+            if (messagesContainer.height <= 0) return@invokeLater
+            val viewSizeHeight = viewport.viewSize.height
+            val extentHeight = viewport.extentSize.height
+            val maxY = max(0, viewSizeHeight - extentHeight)
+            if (viewport.viewPosition.y > maxY) {
+                // 视口越界（内容收缩）：先校准回底部
+                viewport.viewPosition = Point(0, maxY)
+                messagesContainer.repaint()
+            }
+            if (scrollPolicy.shouldStickToBottom(viewport.viewPosition.y.toInt(), extentHeight, viewSizeHeight)) {
+                viewport.viewPosition = Point(0, maxY)
             }
         }
     }
@@ -311,15 +321,22 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
      * 恒为 `0x0`，一个都画不出来（整屏只剩面板底色）。
      *
      * 因此这里不依赖 Swing 的校验机制，直接同步跑布局。
+     *
+     * 判定条件注意：气泡内容被就地更新（流式）后，`preferredSize` 会变，但 `bounds` 保持旧值，
+     * 此时**容器 `isValid` 不受影响**——若只看 `isValid` 会漏掉「高度滞后」的布局，导致气泡画在
+     * 旧尺寸上（内容被截断 / 整屏空白，resize 触发全量 validate 才恢复）。
+     * 所以改为检查「气泡高度是否滞后于其 preferredSize」。
      */
     private fun ensureLaidOut() {
         if (!SwingUtilities.isEventDispatchThread() || messagesContainer.width <= 0) return
-        val missingGeometry = messageBubbles.values.any { it.parent === messagesContainer && it.width == 0 }
-        if (messagesContainer.isValid && !missingGeometry) return
+        val staleGeometry = messageBubbles.values.any {
+            it.parent === messagesContainer && (it.width == 0 || it.height != it.preferredSize.height)
+        }
+        if (messagesContainer.isValid && !staleGeometry) return
         messagesContainer.revalidate()
         forceLayout(messagesContainer)
         log.debug(
-            "ensureLaidOut: forced missing=$missingGeometry valid=${messagesContainer.isValid} " +
+            "ensureLaidOut: forced stale=$staleGeometry valid=${messagesContainer.isValid} " +
                 "children=${messagesContainer.componentCount} size=${messagesContainer.size.width}x${messagesContainer.size.height}"
         )
     }
