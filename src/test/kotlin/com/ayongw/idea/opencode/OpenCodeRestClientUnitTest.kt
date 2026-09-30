@@ -27,6 +27,7 @@ class OpenCodeRestClientUnitTest {
     private var lastMethod = ""
     private var lastPath = ""
     private var lastQuery: String? = null
+    private var lastRawQuery: String? = null
     private var lastAuthHeader: String? = null
     private var lastBody: String? = null
     private var port: Int = 0
@@ -39,6 +40,7 @@ class OpenCodeRestClientUnitTest {
             lastMethod = exchange.requestMethod
             lastPath = exchange.requestURI.path
             lastQuery = exchange.requestURI.query
+            lastRawQuery = exchange.requestURI.rawQuery
             lastAuthHeader = exchange.requestHeaders.getFirst("Authorization")
             lastBody = exchange.requestBody.use { it.readBytes().toString(Charsets.UTF_8) }
                 .takeIf { it.isNotEmpty() }
@@ -89,6 +91,63 @@ class OpenCodeRestClientUnitTest {
         client(password = "   ").getAllSessions()
 
         assertNull("密码为空白时不应带认证头", lastAuthHeader)
+    }
+
+    @Test
+    fun sessionsAreFilteredByDirectoryQuery() = runBlocking {
+        routes["/api/session"] = """{"data":[],"cursor":{}}"""
+
+        client().getAllSessions("/tmp/我的 项目")
+
+        assertEquals("/api/session", lastPath)
+        assertEquals(
+            "服务端只认 ?directory= 过滤（location[...] 形式会被忽略），值按 query 规则编码",
+            "directory=%2Ftmp%2F%E6%88%91%E7%9A%84+%E9%A1%B9%E7%9B%AE",
+            lastRawQuery
+        )
+
+        client().getAllSessions()
+        assertNull("不传目录时不带查询参数（返回本机全部会话）", lastQuery)
+        assertNull("不传目录时查询串应为空", lastRawQuery)
+    }
+
+    @Test
+    fun createSessionBindsWorkspaceThroughLocationBody() = runBlocking {
+        routes["/api/session"] = """{"data":{"id":"ses_new","location":{"directory":"/tmp/proj"}}}"""
+
+        val result = client().createSession("我的标题", "/tmp/proj")
+
+        assertTrue("POST /api/session 应成功", result.isSuccess())
+        assertEquals("ses_new", result.getOrThrow())
+        assertEquals("/api/session", lastPath)
+        assertEquals(
+            "会话归属只认请求体里的 location.directory（顶层 directory 会被忽略）",
+            """{"title":"我的标题","location":{"directory":"/tmp/proj"}}""",
+            lastBody
+        )
+    }
+
+    @Test
+    fun createSessionWithoutWorkspaceSendsOnlyTitle() = runBlocking {
+        routes["/api/session"] = """{"data":{"id":"ses_new"}}"""
+
+        client().createSession()
+
+        assertEquals("无标题无目录时请求体为空对象", "{}", lastBody)
+    }
+
+    @Test
+    fun defaultModelIsParsedFromModelDefaultEndpoint() = runBlocking {
+        routes["/api/model/default"] = """
+            {"data":{"id":"mimo-v2.6-flash-free","modelID":"mimo-v2.6-flash-free","providerID":"opencode"}}
+        """.trimIndent()
+
+        val result = client().getDefaultModel()
+
+        assertEquals("/api/model/default", lastPath)
+        val model = result.getOrThrow()!!
+        assertEquals("opencode", model.get("providerID").asString)
+        assertEquals("mimo-v2.6-flash-free", model.get("id").asString)
     }
 
     @Test
