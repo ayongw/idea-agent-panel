@@ -1,14 +1,18 @@
 package com.ayongw.idea.opencode.frontend.settings
 
+import com.intellij.icons.AllIcons
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import java.awt.BorderLayout
+import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Rectangle
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import javax.swing.BoxLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -106,43 +110,57 @@ internal class SettingsCardList(filterLabel: String) : JPanel(BorderLayout()) {
 }
 
 /**
- * 一张卡片：左侧标题（粗体）+ 可选多行副标题，右侧操作区。
+ * 一张卡片：左侧标题（粗体）+ 可选多行副标题，右侧操作区；可选「可展开」在标题行下方追加一块内容区。
  *
  * 副标题用固定宽度的 HTML 标签实现折行——设置页内容宽度本身已收口，无需按窗口动态重排。
  */
 internal class SettingsCard(title: String, subtitle: String? = null) : JPanel(BorderLayout()) {
 
     private val actions = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0))
+    private val text = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        isOpaque = false
+    }
+    private val header = JPanel(BorderLayout()).apply { isOpaque = false }
     private val titleText = title
     private val subtitleText = subtitle.orEmpty()
+
+    /** 展开箭头：仅在 [withExpandable] 后可见 */
+    private val arrow = JBLabel(AllIcons.General.ArrowRight).apply {
+        isVisible = false
+        verticalAlignment = SwingConstants.TOP
+        border = JBUI.Borders.empty(2, 0, 0, 4)
+    }
+
+    private var body: JComponent? = null
+    private var onExpand: (() -> Unit)? = null
+    private var expanded = false
 
     init {
         isOpaque = false
         border = JBUI.Borders.empty(8, 6)
 
-        val text = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            isOpaque = false
-            add(
-                JBLabel(titleText).apply {
-                    font = JBUI.Fonts.label().asBold()
+        text.add(
+            JBLabel(titleText).apply {
+                font = JBUI.Fonts.label().asBold()
+                alignmentX = LEFT_ALIGNMENT
+            }
+        )
+        if (subtitleText.isNotBlank()) {
+            text.add(
+                JBLabel(wrappedHtml(subtitleText)).apply {
+                    font = JBUI.Fonts.smallFont()
+                    foreground = UIUtil.getContextHelpForeground()
+                    verticalAlignment = SwingConstants.TOP
                     alignmentX = LEFT_ALIGNMENT
                 }
             )
-            if (subtitleText.isNotBlank()) {
-                add(
-                    JBLabel(wrappedHtml(subtitleText)).apply {
-                        font = JBUI.Fonts.smallFont()
-                        foreground = UIUtil.getContextHelpForeground()
-                        verticalAlignment = SwingConstants.TOP
-                        alignmentX = LEFT_ALIGNMENT
-                    }
-                )
-            }
         }
 
-        add(text, BorderLayout.CENTER)
-        add(actions, BorderLayout.EAST)
+        header.add(arrow, BorderLayout.WEST)
+        header.add(text, BorderLayout.CENTER)
+        header.add(actions, BorderLayout.EAST)
+        add(header, BorderLayout.NORTH)
     }
 
     /** 追加右侧操作组件（按钮 / 开关等） */
@@ -151,11 +169,53 @@ internal class SettingsCard(title: String, subtitle: String? = null) : JPanel(Bo
         return this
     }
 
+    /**
+     * 让卡片可展开：点击标题行切换展开态，[content] 显示在标题行下方（整体缩进对齐副标题）。
+     * [onExpand] 在每次展开时回调——按需加载交给调用方，卡片只负责显示与折叠。
+     */
+    fun withExpandable(content: JComponent, onExpand: () -> Unit): SettingsCard {
+        arrow.isVisible = true
+        this.onExpand = onExpand
+        val contentPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyLeft(EXPAND_INDENT)
+            add(content, BorderLayout.CENTER)
+            isVisible = false
+        }
+        body = contentPanel
+        add(contentPanel, BorderLayout.CENTER)
+        installToggle(arrow)
+        installToggle(text)
+        return this
+    }
+
+    /** 切换展开态；每次由收起变为展开时触发一次 [onExpand] */
+    fun setExpanded(value: Boolean) {
+        if (expanded == value) return
+        expanded = value
+        arrow.icon = if (value) AllIcons.General.ArrowDown else AllIcons.General.ArrowRight
+        body?.isVisible = value
+        if (value) onExpand?.invoke()
+        revalidate()
+        repaint()
+    }
+
     /** 关键词过滤：命中标题或副标题（忽略大小写） */
     fun matches(query: String): Boolean =
         query.isBlank() ||
             titleText.contains(query, ignoreCase = true) ||
             subtitleText.contains(query, ignoreCase = true)
+
+    /** 标题区（不含右侧操作按钮）可点击切换展开：手型光标 + 左键回调 */
+    private fun installToggle(component: JComponent) {
+        component.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        component.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                if (e.button == MouseEvent.BUTTON1) setExpanded(!expanded)
+            }
+        })
+        component.components.forEach { child -> if (child is JComponent) installToggle(child) }
+    }
 }
 
 /** 折行 HTML（固定宽度 + 转义 + 换行转 `<br>`） */
@@ -203,3 +263,6 @@ private const val SUBTITLE_WIDTH = 400
 
 /** 说明行折行宽度（逻辑像素） */
 private const val HINT_WIDTH = 430
+
+/** 卡片展开内容相对标题的缩进（逻辑像素） */
+private const val EXPAND_INDENT = 12

@@ -101,8 +101,12 @@ data class McpServerDto(
     val type: String,
     val enabled: Boolean = true,
     val command: List<String> = emptyList(),
+    /** 本地服务器工作目录（原生配置字段 `cwd`，相对路径按工作区解析） */
+    val cwd: String? = null,
     val url: String? = null,
     val environment: Map<String, String> = emptyMap(),
+    /** 远程服务器附加请求头（原生配置字段 `headers`） */
+    val headers: Map<String, String> = emptyMap(),
     /** 服务端状态：connected / pending / disabled / failed / needs_auth */
     val status: String? = null,
     val statusError: String? = null,
@@ -115,6 +119,26 @@ data class McpTimeoutDto(
     val startup: Long? = null,
     val catalog: Long? = null,
     val execution: Long? = null
+)
+
+/** MCP 工具（仅展示所需字段） */
+@Serializable
+data class McpToolDto(
+    val name: String,
+    val description: String? = null
+)
+
+/**
+ * 某个 MCP 服务器的工具清单（插件自连 MCP 拉取，opencode 无此接口，见 TSD-32）
+ *
+ * [error] 非空表示拉取失败（原因可直接展示）；[note] 是非致命提示（如分页超限）。
+ */
+@Serializable
+data class McpToolsDto(
+    val serverName: String,
+    val tools: List<McpToolDto> = emptyList(),
+    val error: String? = null,
+    val note: String? = null
 )
 
 /** 可选 shell */

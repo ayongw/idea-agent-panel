@@ -214,8 +214,8 @@ object SettingsMapping {
         projectConfig: JsonObject,
         live: List<JsonObject>
     ): List<McpServerDto> {
-        val globalServers = globalConfig.obj("mcp").obj("servers")
-        val projectServers = projectConfig.obj("mcp").obj("servers")
+        val globalServers = mcpServerEntries(globalConfig)
+        val projectServers = mcpServerEntries(projectConfig)
         val liveByName = live.mapNotNull { server -> server.str("name")?.let { it to server } }.toMap()
 
         val names = LinkedHashSet<String>()
@@ -232,8 +232,10 @@ object SettingsMapping {
                 type = cfg?.str("type") ?: "local",
                 enabled = isEnabled(cfg),
                 command = cfg?.element("command").stringList(),
+                cwd = cfg?.str("cwd"),
                 url = cfg?.str("url"),
                 environment = cfg?.element("environment").stringMap(),
+                headers = cfg?.element("headers").stringMap(),
                 status = status?.str("status"),
                 statusError = status?.str("error"),
                 scope = when {
@@ -243,6 +245,21 @@ object SettingsMapping {
                 }
             )
         }.sortedBy { it.name }
+    }
+
+    /**
+     * MCP 服务器条目：原生形态 `mcp.servers.<name>`，兼容 V1 扁平形态 `mcp.<name>`
+     * （opencode `config/normalize.ts` 同样兼容两者）；扁平扫描时跳过保留键 `servers` / `timeout`，同名以原生形态为准。
+     */
+    private fun mcpServerEntries(config: JsonObject): JsonObject {
+        val mcp = config.obj("mcp")
+        val entries = mcp.obj("servers").deepCopy()
+        mcp.asMap().forEach { (name, value) ->
+            if (name == "servers" || name == "timeout") return@forEach
+            val entry = value.asObj() ?: return@forEach
+            if (!entries.has(name)) entries.add(name, entry)
+        }
+        return entries
     }
 
     /** MCP 超时：字段级合并，项目级优先 */

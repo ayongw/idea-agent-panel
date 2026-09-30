@@ -110,6 +110,13 @@ interface SettingsRpcApi : RemoteApi<Unit> {
         timeout: McpTimeoutDto?
     ): SettingsWriteResultDto
 
+    /**
+     * 读取某个 MCP 服务器的工具清单（懒加载：由前端在展开卡片时调用）
+     *
+     * 由插件自建 MCP 客户端拉取（local 走 stdio、remote 走 Streamable HTTP），失败原因写在 [McpToolsDto.error]。
+     */
+    suspend fun listMcpTools(projectId: ProjectId, serverName: String): McpToolsDto
+
     /** 保存 instructions 列表（V2 只接受不解析，仅作兼容保留） */
     suspend fun saveInstructions(
         projectId: ProjectId,

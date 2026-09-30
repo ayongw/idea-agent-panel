@@ -247,6 +247,48 @@ class SettingsMappingUnitTest {
     }
 
     @Test
+    fun mcpReadsLegacyFlatEntriesAndSkipsReservedKeys() {
+        val global = json(
+            """
+            {"mcp":{
+              "flat-local":{"type":"local","command":["/x/flat","proxy"],"environment":{"K":"V"},"cwd":"/tmp/wd"},
+              "timeout":{"startup":1000},
+              "servers":{"native-only":{"type":"local","command":["n"]}}
+            }}
+            """.trimIndent()
+        )
+
+        val servers = SettingsMapping.mcpServers(global, JsonObject(), emptyList())
+
+        assertEquals(listOf("flat-local", "native-only"), servers.map { it.name })
+        val flat = servers.single { it.name == "flat-local" }
+        assertEquals(listOf("/x/flat", "proxy"), flat.command)
+        assertEquals(mapOf("K" to "V"), flat.environment)
+        assertEquals("/tmp/wd", flat.cwd)
+        assertEquals(ConfigScopeDto.GLOBAL, flat.scope)
+        // 保留键 `timeout` 不应被当作服务器名
+        assertTrue(servers.none { it.name == "timeout" })
+    }
+
+    @Test
+    fun mcpNativeEntryWinsOverLegacyFlatWithSameName() {
+        val global = json(
+            """
+            {"mcp":{
+              "servers":{"dup":{"type":"local","command":["native"]}},
+              "dup":{"type":"local","command":["flat"]}
+            }}
+            """.trimIndent()
+        )
+
+        val server = SettingsMapping.mcpServers(global, JsonObject(), emptyList()).single()
+
+        assertEquals("dup", server.name)
+        assertEquals(listOf("native"), server.command)
+        assertEquals(ConfigScopeDto.GLOBAL, server.scope)
+    }
+
+    @Test
     fun mcpMergesLiveStatusAndKeepsProjectPriority() {
         val global = json("""{"mcp":{"servers":{"codegraph":{"type":"local","command":["global"]}}}}""")
         val project = json("""{"mcp":{"servers":{"codegraph":{"type":"local","command":["project"]}}}}""")

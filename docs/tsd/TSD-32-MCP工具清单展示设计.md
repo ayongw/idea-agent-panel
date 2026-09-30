@@ -8,6 +8,7 @@
 | 版本 | 日期 | 变更说明 | 作者 |
 |------|------|---------|------|
 | v1.0 | 2026-09-30 | 初版：确认 opencode 无「按 MCP 列工具」接口（候选端点全 404），确定由**插件自建 MCP 客户端**（stdio / Streamable HTTP）拉 `tools/list`；给出配置读取兼容修复（P0）、RPC 与前端渲染规格、失败降级矩阵、S1–S4 实施阶段 | agent |
+| v1.1 | 2026-09-30 | 回填 S1–S4 实施状态（§11）；对齐实现口径：分页超限写 `note`（§3.2/§4）、缓存失效口径改为「配置重载 / 签名变化失效 + 失败不缓存」（§3.5）、补 `McpToolsDto.note` 与 `McpServerDto.cwd/headers`（§4） | agent |
 
 ## 1. 结论与总览
 
@@ -97,7 +98,7 @@
 | 项 | 规则 |
 |----|------|
 | 协议版本 | 请求 `2025-06-18`（PoC 实测可用）；以 `result.protocolVersion` 为准，不做版本协商重试 |
-| 分页 | 若返回 `nextCursor`，带 `cursor` 再请求，**最多 10 页**（防御死循环），超限只保留已得结果并在 `error` 里记「分页超限」 |
+| 分页 | 若返回 `nextCursor`，带 `cursor` 再请求，**最多 10 页**（防御死循环），超限只保留已得结果并在 `note` 里记「分页超限，仅显示前 N 个」 |
 | 报文解析 | 按行读 stdout；忽略无法解析为 JSON 的行（部分 server 会打印日志到 stdout）；`id` 匹配响应用于关联（1=initialize，2=tools/list） |
 | stderr | 不阻塞读取（独立线程丢弃），**仅保留末尾 ~2KB** 用于失败时报错文案 |
 | 超时 | 单服务器总预算 **8 秒**（initialize 3s + tools/list 5s），到点 `destroyForcibly()` |
@@ -132,10 +133,11 @@
 
 | 项 | 规则 |
 |----|------|
-| 缓存键 | `serverName` + 配置签名（`type|command|url|env|cwd` 的哈希） |
-| TTL | 5 分钟；设置页「刷新」与「切换配置作用域」时清空 |
-| 单飞 | 同一 server 的并发请求合并为一次（进行中的 `Deferred` 复用） |
-| 上限 | 单次会话内最多缓存 32 个 server，超出按 LRU 淘汰 |
+| 缓存键 | `serverName` + 配置签名（`type|command|url|environment|cwd` 的哈希），签名变化即视为未命中 |
+| TTL | 5 分钟；配置重载（`reloadConfig`）时整表失效 |
+| 失败不缓存 | 仅缓存成功结果；失败可取即重试（避免失败态被 TTL 钉住） |
+| 单飞 | 同一 key 的并发请求按 key 加锁串行，后到者双检后直接复用先到者的结果 |
+| 上限 | 单次会话内最多缓存 32 个 key，超出按 LRU 淘汰 |
 
 ## 4. 接口设计（RPC 变更）
 
@@ -149,7 +151,9 @@ data class McpToolsDto(
     val serverName: String,
     val tools: List<McpToolDto> = emptyList(),
     /** 失败原因（成功为 null）；供 UI 直接展示，如「进程启动失败: ...」「需 OAuth 授权」 */
-    val error: String? = null
+    val error: String? = null,
+    /** 非致命提示（成功但需告知用户），如「分页超限，仅显示前 N 个」（§3.2） */
+    val note: String? = null
 )
 
 // shared/SettingsRpcApi.kt（读路径，按需懒加载，不并入 getSnapshot）
@@ -162,6 +166,7 @@ suspend fun listMcpTools(projectId: ProjectId, serverName: String): McpToolsDto
 | 不并入 `getSnapshot` | 打开设置页不应触发任何 MCP 进程；`getSnapshot` 保持纯 HTTP 读取 |
 | 后端实现位置 | 新增 `backend/mcp/McpToolsClient.kt`（协议与进程）+ `backend/mcp/McpToolsCache.kt`（缓存/单飞）；`BackendSettingsRpcApi.listMcpTools` 负责按配置分流并转 DTO |
 | 配置来源 | 复用 `SettingsMapping` 读取的配置（§3.4 修复后含 `command`/`url`/`environment`/`cwd`） |
+| DTO 扩展 | `McpServerDto` 增 `cwd`（§3.4）与 `headers`（remote 请求头，§3.3），保存时一并写回 |
 
 ## 5. 前端渲染规格
 
@@ -237,3 +242,17 @@ suspend fun listMcpTools(projectId: ProjectId, serverName: String): McpToolsDto
 | remote 需鉴权 | 清单拿不到 | 明确提示原因，引导去配置侧处理 |
 | 起进程的安全面 | 执行配置里的任意命令 | 命令来源=用户自己的配置文件（与 opencode 同等信任级）；不做额外执行、不传用户输入 |
 | 设置页卡顿 | 展开时若同步等待会卡 EDT | 全程 `runAsync` + 回 EDT 渲染（沿用现有骨架）；单 server 8s 预算 |
+
+## 11. 实施状态（S1–S4）
+
+| 阶段 | 状态 | 落地内容（关键文件 / 接口） |
+|------|------|---------------------------|
+| S1 配置读取兼容 | **已实施** | `SettingsMapping.mcpServerEntries()` 合并 `mcp.servers.<name>` 与 legacy 扁平 `mcp.<name>`（同名原生优先、跳过 `servers`/`timeout`）；`McpServerDto` 增 `cwd`/`headers`；`BackendSettingsRpcApi.saveMcpServer` 按原形态回写 |
+| S2 协议层 | **已实施** | `backend/mcp/McpProtocol.kt`（报文构造/解析、`PROTOCOL_VERSION=2025-06-18`、10 页分页上限）、`backend/mcp/McpToolsClient.kt`（local=stdio 三步握手 + 超时 + stderr 尾部 + `destroyForcibly`；remote=Streamable HTTP，含 `Mcp-Session-Id`/`MCP-Protocol-Version`、SSE `data:` 解析、401/403/405 归类） |
+| S3 RPC 与缓存 | **已实施** | shared：`McpToolDto`/`McpToolsDto`(+`note`)、`SettingsRpcApi.listMcpTools`；backend：`McpToolsCache`（TTL 5min、仅缓存成功、按 key 加锁 + 双检、上限 32）、`BackendSettingsRpcApi.listMcpTools`（读配置 → 客户端拉取 → 转 DTO），`reloadConfig` 时 `invalidateAll()` |
+| S4 前端渲染 | **已实施** | `SettingsCard.withExpandable`/`setExpanded`（箭头 `AllIcons.General.ArrowRight/ArrowDown`、标题区点击切换、展开区缩进 12px）；`McpSettingsTab` 展开时 `loadTools` → `ToolListPanel` 四态（加载中/失败+重试/空/清单）、工具行（等宽加粗名 + 描述截断 + tooltip）、超 10 行内嵌滚动（上限 160px）；徽章首次成功后追加 `(N tool/tools)` |
+| 单测与验证 | **已实施** | 新增 `McpProtocolUnitTest`、`McpToolsClientUnitTest`（假 `sh -c` 进程 + `com.sun.net.httpserver` 假服务端 + SSE 响应 + 401/不可达）、`McpToolsCacheUnitTest`（TTL/失败不缓存/签名失效/清空）；扩展 `SettingsMappingUnitTest`（legacy 扁平、同名优先、保留键跳过）；`./gradlew test` 相关用例全绿、`opencode-frontend:compileKotlin` 通过 |
+
+> 手工冒烟（§8.2 第 1–6 项）需沙箱 IDE，尚未执行。
+
+**文档结束**

@@ -2,6 +2,9 @@
 
 package com.ayongw.idea.opencode.backend
 
+import com.ayongw.idea.opencode.backend.mcp.McpToolsCache
+import com.ayongw.idea.opencode.backend.mcp.McpToolsClient
+import com.ayongw.idea.opencode.backend.mcp.McpToolsResult
 import com.ayongw.idea.opencode.backend.repository.ConfigScope
 import com.ayongw.idea.opencode.backend.repository.JsoncEditor
 import com.ayongw.idea.opencode.backend.repository.OpenCodeConfigStore
@@ -9,6 +12,8 @@ import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
 import com.ayongw.idea.opencode.shared.ConfigScopeDto
 import com.ayongw.idea.opencode.shared.McpServerDto
 import com.ayongw.idea.opencode.shared.McpTimeoutDto
+import com.ayongw.idea.opencode.shared.McpToolDto
+import com.ayongw.idea.opencode.shared.McpToolsDto
 import com.ayongw.idea.opencode.shared.ProviderDto
 import com.ayongw.idea.opencode.shared.RuleFileContentDto
 import com.ayongw.idea.opencode.shared.RuleFileDto
@@ -27,6 +32,8 @@ import com.intellij.platform.project.findProjectOrNull
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * 设置读写 RPC 实现
@@ -38,6 +45,9 @@ import java.nio.file.Paths
 class BackendSettingsRpcApi : SettingsRpcApi {
 
     private val store = OpenCodeConfigStore()
+
+    private val mcpToolsClient = McpToolsClient()
+    private val mcpToolsCache = McpToolsCache(fetcher = { server, dir -> mcpToolsClient.listTools(server, dir) })
 
     // ==================== 读 ====================
 
@@ -283,8 +293,16 @@ class BackendSettingsRpcApi : SettingsRpcApi {
         scope: ConfigScopeDto,
         server: McpServerDto
     ): SettingsWriteResultDto = write(projectId, scope) { config, text ->
-        // 保留该条目里本 UI 未覆盖的键（如 oauth / codemode / protocol）
-        val existing = config.obj("mcp").obj("servers").objOrNull(server.name)?.deepCopy() ?: JsonObject()
+        // 保留该条目里本 UI 未覆盖的键（如 oauth / codemode / protocol / cwd）
+        val native = config.obj("mcp").obj("servers").objOrNull(server.name)
+        val legacy = legacyMcpEntry(config, server.name)
+        // 只在 V1 扁平形态声明过的服务器就地更新，避免文件里留下同名副本
+        val path = if (native == null && legacy != null) {
+            listOf("mcp", server.name)
+        } else {
+            listOf("mcp", "servers", server.name)
+        }
+        val existing = (native ?: legacy)?.deepCopy() ?: JsonObject()
         existing.remove("enabled")
         existing.remove("disabled")
         existing.addProperty("type", server.type)
@@ -297,7 +315,34 @@ class BackendSettingsRpcApi : SettingsRpcApi {
         }
         if (server.environment.isNotEmpty()) existing.add("environment", stringObject(server.environment))
         if (!server.enabled) existing.addProperty("disabled", true)
-        JsoncEditor.patch(text, listOf("mcp", "servers", server.name), existing)
+        JsoncEditor.patch(text, path, existing)
+    }
+
+    /** V1 扁平形态 `mcp.<name>` 里的服务器条目（跳过保留键 `servers` / `timeout`） */
+    private fun legacyMcpEntry(config: JsonObject, name: String): JsonObject? =
+        if (name == "servers" || name == "timeout") null else config.obj("mcp").objOrNull(name)
+
+    override suspend fun listMcpTools(projectId: ProjectId, serverName: String): McpToolsDto {
+        val project = projectId.findProjectOrNull() ?: return McpToolsDto(serverName, error = "未找到项目")
+        val projectDir = projectDir(project)
+        val warnings = mutableListOf<String>()
+        val globalConfig = readConfig(store.resolveFile(ConfigScope.GLOBAL, projectDir), warnings)
+        val projectConfig = readConfig(store.resolveFile(ConfigScope.PROJECT, projectDir), warnings)
+        val server = SettingsMapping.mcpServers(globalConfig, projectConfig, emptyList())
+            .firstOrNull { it.name == serverName }
+            ?: return McpToolsDto(serverName, error = "配置里没有该服务器：$serverName")
+
+        // 起进程 / 发请求都放到 IO 线程，避免阻塞 RPC 线程
+        val result = withContext(Dispatchers.IO) { mcpToolsCache.list(server, projectDir) }
+        return when (result) {
+            is McpToolsResult.Success -> McpToolsDto(
+                serverName = serverName,
+                tools = result.tools.map { McpToolDto(it.name, it.description) },
+                note = result.note
+            )
+
+            is McpToolsResult.Failure -> McpToolsDto(serverName, error = result.message)
+        }
     }
 
     override suspend fun removeMcpServer(
@@ -391,6 +436,8 @@ class BackendSettingsRpcApi : SettingsRpcApi {
     override suspend fun reloadConfig(projectId: ProjectId): SettingsWriteResultDto {
         val project = projectId.findProjectOrNull() ?: return SettingsWriteResultDto.fail("未找到项目")
         val result = BackendChatRepositoryModel.getInstance(project).getRestClient().reloadConfig()
+        // 配置重载后工具清单可能已变（新增/移除服务器、改命令），清空缓存
+        mcpToolsCache.invalidateAll()
         return if (result.isSuccess()) SettingsWriteResultDto.ok() else SettingsWriteResultDto.fail(failureMessage(result))
     }
 
