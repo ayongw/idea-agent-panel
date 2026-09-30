@@ -250,6 +250,26 @@ class ChatViewModel(
             input.isEmpty() -> MessageInputState.Disabled
             else -> MessageInputState.Enabled(input)
         }
+        // 输入草稿按会话隔离（底部操作区随会话切换，切走保存、切回恢复）
+        _currentSessionId.value?.let { drafts[it] = input }
+    }
+
+    /** 会话输入草稿（会话级，不跨会话共享） */
+    private val drafts = mutableMapOf<String, String>()
+
+    /** 切走前保存当前会话草稿 */
+    fun saveDraft(sessionId: String?, text: String) {
+        if (sessionId != null) drafts[sessionId] = text
+    }
+
+    /** 切回时读取目标会话草稿（无则空） */
+    fun loadDraft(sessionId: String?): String = sessionId?.let { drafts[it] }.orEmpty()
+
+    /** 会话切换后重置输入区状态：有草稿恢复为可发送，无则禁用 */
+    fun restoreDraft(sessionId: String?, draft: String) {
+        emitPromptInputState(
+            if (draft.isNotBlank()) MessageInputState.Enabled(draft) else MessageInputState.Disabled
+        )
     }
 
     override fun onSendMessage() {
@@ -273,6 +293,9 @@ class ChatViewModel(
                         commandName = resolution.commandName
                     )
                 )
+
+                // 发送成功后清空本会话草稿（输入框文本已随发送清空）
+                _currentSessionId.value?.let { drafts.remove(it) }
 
                 if (repository.sessionRunningFlow.value) {
                     // 事件流已开始：保持「停止」态，结束后由执行态订阅恢复

@@ -52,6 +52,9 @@ class OpenCodeChatApp(
     private var allSessions: List<SessionStateDto> = emptyList()
     private var allSessionsPopup: JBPopup? = null
 
+    /** 上次绑定的会话 id（用于底部操作区草稿的切走/切回判定） */
+    private var lastBoundSessionId: String? = null
+
     init {
         setupAppearance()
 
@@ -194,6 +197,20 @@ class OpenCodeChatApp(
             viewModel.serverStateFlow.collect { state ->
                 ApplicationManager.getApplication().invokeLater {
                     serverStatusStrip.update(state)
+                }
+            }
+        }
+
+        // 底部操作区随会话切换：切走保存输入草稿，切回恢复目标会话草稿（会话级，非全局共享）
+        coroutineScope.launch {
+            viewModel.currentSessionId.collect { sessionId ->
+                if (sessionId != lastBoundSessionId) {
+                    val oldId = lastBoundSessionId
+                    lastBoundSessionId = sessionId
+                    if (oldId != null) viewModel.saveDraft(oldId, promptInput.currentText())
+                    val draft = viewModel.loadDraft(sessionId)
+                    viewModel.restoreDraft(sessionId, draft)
+                    promptInput.setDraftText(draft)
                 }
             }
         }

@@ -473,10 +473,11 @@ class OpenCodeRestClientUnitTest {
         val message = client().getMessages("ses_1").getOrThrow().single()
         val parts = message.parts
 
-        assertEquals("reasoning 不参与渲染，text/tool 按原顺序保留", 3, parts.size)
-        assertEquals("我来执行", (parts[0] as OpenCodeRestClient.OpenCodePart.Text).text)
+        assertEquals("reasoning/text/tool 按原顺序保留", 4, parts.size)
+        assertEquals("思考", (parts[0] as OpenCodeRestClient.OpenCodePart.Reasoning).text)
+        assertEquals("我来执行", (parts[1] as OpenCodeRestClient.OpenCodePart.Text).text)
 
-        val shell = (parts[1] as OpenCodeRestClient.OpenCodePart.Tool).call
+        val shell = (parts[2] as OpenCodeRestClient.OpenCodePart.Tool).call
         assertEquals("call_1", shell.callId)
         assertEquals("shell", shell.name)
         assertTrue("completed 的入参对象应序列化为 JSON 字符串", shell.input.contains("echo hi"))
@@ -485,7 +486,7 @@ class OpenCodeRestClientUnitTest {
         assertEquals(0, shell.exit)
         assertFalse(shell.truncated)
 
-        val read = (parts[2] as OpenCodeRestClient.OpenCodePart.Tool).call
+        val read = (parts[3] as OpenCodeRestClient.OpenCodePart.Tool).call
         assertEquals("call_2", read.callId)
         assertEquals(ToolCallStatus.RUNNING, read.status)
         assertNull("running 态无 metadata 时退出码为 null", read.exit)

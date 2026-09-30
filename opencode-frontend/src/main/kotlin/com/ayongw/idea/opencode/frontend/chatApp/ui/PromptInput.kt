@@ -76,6 +76,17 @@ class PromptInput(
     /** 会话附件（＋ 按钮加入），仅用于 chips 右段 */
     private var sessionAttachments: List<ContextFileDto> = emptyList()
 
+    /** 当前输入框文本（会话草稿切走时读取） */
+    fun currentText(): String = textArea.text
+
+    /** 会话草稿恢复：整段替换输入框文本，同步按钮状态与 ViewModel 草稿 */
+    fun setDraftText(text: String) {
+        textArea.text = text
+        textArea.caretPosition = text.length
+        sendButton.isEnabled = currentState != MessageInputState.Disabled && text.isNotBlank()
+        onInputChanged(text)
+    }
+
     private var currentState: MessageInputState = MessageInputState.Enabled("")
     private var skipInputChangeUpdate = false
 

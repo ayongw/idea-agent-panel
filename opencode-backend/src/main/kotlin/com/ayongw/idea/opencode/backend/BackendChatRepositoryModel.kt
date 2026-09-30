@@ -52,6 +52,9 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
         /** 助手消息展示名（与本地模拟模式一致） */
         const val AI_AUTHOR = "AI Buddy"
 
+        /** 思考气泡 id 后缀（与事件流侧一致，见 SessionStreamState.REASONING_ID_SUFFIX） */
+        private const val REASONING_ID_SUFFIX = "#reasoning"
+
         fun getInstance(project: Project): BackendChatRepositoryModel {
             return project.getService(BackendChatRepositoryModel::class.java)
         }
@@ -579,7 +582,7 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
     private fun toBubbles(messages: List<OpenCodeRestClient.OpenCodeMessage>): List<ChatMessage> =
         messages.asReversed().flatMap(::toChatMessages)
 
-    /** opencode 消息 → 面板气泡：user 单条；assistant 按 `content[]` 顺序拆成正文气泡 + 工具卡片 */
+    /** opencode 消息 → 面板气泡：user 单条；assistant 按 `content[]` 顺序拆成思考 + 正文气泡 + 工具卡片 */
     private fun toChatMessages(openCodeMsg: OpenCodeRestClient.OpenCodeMessage): List<ChatMessage> {
         val at = Instant.ofEpochMilli(openCodeMsg.createdMillis)
             .atZone(ZoneId.systemDefault())
@@ -601,6 +604,9 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
         var textEmitted = false
         openCodeMsg.parts.forEach { part ->
             when (part) {
+                // 思考过程 → AI_THINKING 气泡：id 带 #reasoning 后缀，与事件流侧一致（两路可原地互相覆盖）
+                is OpenCodeRestClient.OpenCodePart.Reasoning ->
+                    bubbles += reasoningMessage(openCodeMsg, part.text, at)
                 // 同一消息的多个 text 片段仍合并为一个气泡，落在首个 text 片段的位置
                 is OpenCodeRestClient.OpenCodePart.Text -> {
                     if (!textEmitted && openCodeMsg.content.isNotBlank()) {
@@ -616,6 +622,20 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
         }
         return bubbles
     }
+
+    /** 思考过程气泡：id 与事件流侧 `assistantMessageId#reasoning` 一致 */
+    private fun reasoningMessage(
+        openCodeMsg: OpenCodeRestClient.OpenCodeMessage,
+        reasoning: String,
+        at: LocalDateTime
+    ) = ChatMessage(
+        id = openCodeMsg.id + REASONING_ID_SUFFIX,
+        content = reasoning,
+        author = AI_AUTHOR,
+        isMyMessage = false,
+        timestamp = at,
+        type = ChatMessage.ChatMessageType.AI_THINKING
+    )
 
     private fun assistantTextMessage(
         openCodeMsg: OpenCodeRestClient.OpenCodeMessage,

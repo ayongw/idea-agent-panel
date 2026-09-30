@@ -592,7 +592,7 @@ class OpenCodeRestClient(
      * 助手消息 `content[]` → 渲染部件（按原顺序）。
      *
      * 实测部件类型：`text` / `reasoning` / `tool`（`ToolState` 四态见 openapi.json）；
-     * `reasoning` 暂不渲染（见 TSD-06 §10 遗留）。
+     * `reasoning` 在 [BackendChatRepositoryModel.toChatMessages] 映射为思考气泡（不再丢弃）。
      */
     private fun parseAssistantParts(content: JsonArray?): List<OpenCodePart> {
         if (content == null) return emptyList()
@@ -601,6 +601,9 @@ class OpenCodeRestClient(
             .mapNotNull { part ->
                 when (part.string("type")) {
                     "text" -> part.string("text")?.let { OpenCodePart.Text(it) }
+                    "reasoning" -> part.string("text")
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { OpenCodePart.Reasoning(it) }
                     "tool" -> parseToolCall(part)?.let { OpenCodePart.Tool(it) }
                     else -> null
                 }
@@ -755,6 +758,7 @@ class OpenCodeRestClient(
     sealed class OpenCodePart {
         /** 正文片段（同一消息的多个片段仍合并为一个气泡） */
         data class Text(val text: String) : OpenCodePart()
+        data class Reasoning(val text: String) : OpenCodePart()
 
         data class Tool(val call: OpenCodeToolCall) : OpenCodePart()
     }
