@@ -70,9 +70,11 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
     ) {
         override fun isCellEditable(row: Int, column: Int): Boolean = false
     }
-    // 列宽按内容收窄且不随窗口拉伸，避免表格撑满设置页
+    // 列宽随表格宽度自适应；Custom / Settings 两个紧凑列按内容定宽，不参与拉伸
     private val providerTable = buildTable(providerModel, listOf(130, 150, 56, 76)).apply {
-        autoResizeMode = JTable.AUTO_RESIZE_OFF
+        autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
+        pinColumnWidth(PROVIDER_CUSTOM_COLUMN)
+        pinColumnWidth(PROVIDER_ACTION_COLUMN)
     }
 
     // ==================== 模型 ====================
@@ -98,8 +100,10 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
             setModelEnabled(model, enabled)
         }
     }
+    // 列宽随表格宽度自适应；开关按钮所在列按内容定宽，不参与拉伸
     private val modelTable = buildTable(modelModel, listOf(160, 180, 60)).apply {
-        autoResizeMode = JTable.AUTO_RESIZE_OFF
+        autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
+        pinColumnWidth(MODEL_ENABLED_COLUMN)
     }
 
     // 增删模型仅对自定义供应商开放，非自定义供应商下隐藏（见 showModelsOfSelection）
@@ -634,10 +638,19 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
         fun modelName(): String? = nameField.text.trim().ifBlank { null }
     }
 
+    /** 把某列按内容宽度钉住（min=max=preferred）：自适应模式下仍不参与拉伸，按钮/开关保持原大小 */
+    private fun JTable.pinColumnWidth(column: Int) {
+        columnModel.getColumn(column).apply {
+            minWidth = preferredWidth
+            maxWidth = preferredWidth
+        }
+    }
+
     private companion object {
         const val MODEL_ID_COLUMN = 0
         const val MODEL_NAME_COLUMN = 1
         const val MODEL_ENABLED_COLUMN = 2
+        const val PROVIDER_CUSTOM_COLUMN = 2
         const val PROVIDER_ACTION_COLUMN = 3
     }
 }
