@@ -2,9 +2,6 @@ import org.jetbrains.changelog.Changelog
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.tasks.aware.SplitModeAware
-import java.io.File
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
 
 group = "com.ayongw.idea"
 
@@ -12,8 +9,9 @@ group = "com.ayongw.idea"
 val baseVersion = "0.1.0"
 
 /**
- * 构建号：-PbuildNumber=N 优先，其次 git 提交数，无 .git 时回退时间戳。
+ * 构建号：-PbuildNumber=N 优先，其次 git 提交数。
  * 用于区分每次打出的包（zip 名与 IDE 插件列表显示的版本都会带上）。
+ * git 不可用（如无 .git / PATH 缺 git）时回退数字 0，保证格式始终是 `0.1.0.N`。
  */
 val buildNumber: String = providers.gradleProperty("buildNumber")
     .orElse(
@@ -21,8 +19,7 @@ val buildNumber: String = providers.gradleProperty("buildNumber")
             runCatching {
                 providers.exec { commandLine("git", "rev-list", "--count", "HEAD") }
                     .standardOutput.asText.get().trim()
-            }.getOrNull()?.takeIf { it.toIntOrNull() != null }
-                ?: DateTimeFormatter.ofPattern("yyyyMMddHHmm").format(LocalDateTime.now())
+            }.getOrNull()?.takeIf { it.toIntOrNull() != null } ?: "0"
         }
     )
     .get()
