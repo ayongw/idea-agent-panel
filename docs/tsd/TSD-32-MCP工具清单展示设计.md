@@ -10,6 +10,7 @@
 | v1.0 | 2026-09-30 | 初版：确认 opencode 无「按 MCP 列工具」接口（候选端点全 404），确定由**插件自建 MCP 客户端**（stdio / Streamable HTTP）拉 `tools/list`；给出配置读取兼容修复（P0）、RPC 与前端渲染规格、失败降级矩阵、S1–S4 实施阶段 | agent |
 | v1.1 | 2026-09-30 | 回填 S1–S4 实施状态（§11）；对齐实现口径：分页超限写 `note`（§3.2/§4）、缓存失效口径改为「配置重载 / 签名变化失效 + 失败不缓存」（§3.5）、补 `McpToolsDto.note` 与 `McpServerDto.cwd/headers`（§4） | agent |
 | v1.2 | 2026-09-30 | 修复「展开 codegraph 报 `Cannot run program ... error: 2`」：起 local 进程前用登录 shell 的 PATH 补齐（§3.2 子进程 PATH、§11 补充行）；新增 `LoginShellPath` 与相应用例 | agent |
+| v1.3 | 2026-09-30 | 修 v1.2 的漏：探测上限 3s 太紧——交互登录 shell（oh-my-zsh）实测启动 3~4.5s，超时即被判失败退回窄 PATH，现象与未修一样。上限放宽到 10s，并在设置页加载时后台 `warmUp()` 预热；补 `warmUp` 幂等/无 SHELL 用例 | agent |
 
 ## 1. 结论与总览
 
@@ -102,7 +103,7 @@
 | 分页 | 若返回 `nextCursor`，带 `cursor` 再请求，**最多 10 页**（防御死循环），超限只保留已得结果并在 `note` 里记「分页超限，仅显示前 N 个」 |
 | 报文解析 | 按行读 stdout；忽略无法解析为 JSON 的行（部分 server 会打印日志到 stdout）；`id` 匹配响应用于关联（1=initialize，2=tools/list） |
 | stderr | 不阻塞读取（独立线程丢弃），**仅保留末尾 ~2KB** 用于失败时报错文案 |
-| 子进程 PATH | IDE 进程 PATH 常常只有 `/usr/bin:/bin:/usr/sbin:/sbin`（从 Finder/Dock 启动），裸命令（`codegraph`、`npx`）会 `Cannot run program ... error: 2`。起进程前用 `$SHELL -lic 'printf %s "$PATH"'` 探一次登录 shell 的 PATH（3s 超时、会话内成败都缓存），条目排在进程 PATH 之前，配置里的 `environment` 最后叠加（优先级最高） |
+| 子进程 PATH | IDE 进程 PATH 常常只有 `/usr/bin:/bin:/usr/sbin:/sbin`（从 Finder/Dock 启动），裸命令（`codegraph`、`npx`）会 `Cannot run program ... error: 2`。起进程前用 `$SHELL -lic 'printf %s "$PATH"'` 探一次登录 shell 的 PATH（**10s 上限**——交互 shell 要加载 `.zshrc`/oh-my-zsh，实测启动 3~4.5s，原来 3s 会超时误判失败），条目排在进程 PATH 之前，配置里的 `environment` 最后叠加（优先级最高）；设置页加载时后台 `warmUp()` 预热，展开卡片不再等 |
 | 超时 | 单服务器总预算 **8 秒**（initialize 3s + tools/list 5s），到点 `destroyForcibly()` |
 | I/O | 用 `ProcessBuilder` 重定向三条流，禁用 IDE 的 `OSProcessHandler` 输出接管（短命进程无需注册到 Run 工具窗口） |
 
@@ -254,7 +255,7 @@ suspend fun listMcpTools(projectId: ProjectId, serverName: String): McpToolsDto
 | S3 RPC 与缓存 | **已实施** | shared：`McpToolDto`/`McpToolsDto`(+`note`)、`SettingsRpcApi.listMcpTools`；backend：`McpToolsCache`（TTL 5min、仅缓存成功、按 key 加锁 + 双检、上限 32）、`BackendSettingsRpcApi.listMcpTools`（读配置 → 客户端拉取 → 转 DTO），`reloadConfig` 时 `invalidateAll()` |
 | S4 前端渲染 | **已实施** | `SettingsCard.withExpandable`/`setExpanded`（箭头 `AllIcons.General.ArrowRight/ArrowDown`、标题区点击切换、展开区缩进 12px）；`McpSettingsTab` 展开时 `loadTools` → `ToolListPanel` 四态（加载中/失败+重试/空/清单）、工具行（等宽加粗名 + 描述截断 + tooltip）、超 10 行内嵌滚动（上限 160px）；徽章首次成功后追加 `(N tool/tools)` |
 | 单测与验证 | **已实施** | 新增 `McpProtocolUnitTest`、`McpToolsClientUnitTest`（假 `sh -c` 进程 + `com.sun.net.httpserver` 假服务端 + SSE 响应 + 401/不可达）、`McpToolsCacheUnitTest`（TTL/失败不缓存/签名失效/清空）、`LoginShellPathUnitTest`（探测取行/只探一次/合成顺序与去重）；扩展 `SettingsMappingUnitTest`（legacy 扁平、同名优先、保留键跳过）；`./gradlew test` 相关用例全绿、`opencode-frontend:compileKotlin` 通过 |
-| 补充：子进程 PATH | **已实施** | `backend/mcp/LoginShellPath.kt`（登录 shell PATH 探测 + 缓存 + `effectivePath` 合成）；`McpToolsClient.listLocal` 起进程前套用，配置 `environment` 优先级最高。修复「从 Dock 启动 IDE 时 `codegraph` 展开失败：`Cannot run program "codegraph" ... error: 2`」 |
+| 补充：子进程 PATH | **已实施** | `backend/mcp/LoginShellPath.kt`（登录 shell PATH 探测 + 缓存 + `warmUp` + `effectivePath` 合成）；`McpToolsClient.listLocal` 起进程前套用，配置 `environment` 优先级最高；设置页加载时预热。修复「从 Dock 启动 IDE 时 `codegraph` 展开失败：`Cannot run program "codegraph" ... error: 2`」（v1.3 把探测上限 3s→10s） |
 
 > 手工冒烟（§8.2 第 1–6 项）需沙箱 IDE，尚未执行。
 

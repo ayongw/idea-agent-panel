@@ -54,6 +54,8 @@ class BackendSettingsRpcApi : SettingsRpcApi {
     override suspend fun getSnapshot(projectId: ProjectId): SettingsSnapshotDto {
         val project = projectId.findProjectOrNull()
             ?: return SettingsSnapshotDto("", "", warnings = listOf("未找到项目"))
+        // 展开 MCP 卡片时才拉工具清单，但登录 shell 探测较慢（交互 zsh 数秒），趁设置页加载先在后台预热
+        mcpToolsClient.warmUpShellPath()
         val projectDir = projectDir(project)
         val globalFile = store.resolveFile(ConfigScope.GLOBAL, projectDir)
         val projectFile = store.resolveFile(ConfigScope.PROJECT, projectDir)

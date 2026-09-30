@@ -33,6 +33,9 @@ class McpToolsClient(
     private val loginShellPath: LoginShellPath = LoginShellPath()
 ) {
 
+    /** 后台预热登录 shell 的 PATH：交互 shell 启动慢（数秒），设置页加载时先探好，展开卡片就不用等 */
+    fun warmUpShellPath() = loginShellPath.warmUp()
+
     fun listTools(server: McpServerDto, workingDir: Path? = null): McpToolsResult =
         when (server.type) {
             TYPE_REMOTE -> listRemote(server)

@@ -12,6 +12,8 @@ import java.util.concurrent.TimeUnit
  * 这里按终端口径取一次登录 shell 的 PATH（登录 + 交互，与用户手动执行为准），同一会话内缓存
  * （成败都缓存，避免每次展开都等一次 shell 启动）。
  *
+ * 交互 shell 要加载 `.zshrc`（oh-my-zsh 等），实测启动可达 4s+，故提供 [warmUp] 供设置页加载时预热。
+ *
  * 取不到（无 `SHELL`、超时、异常）返回 null，调用方退回进程自身 `PATH`。
  */
 class LoginShellPath(
@@ -22,6 +24,9 @@ class LoginShellPath(
     @Volatile
     private var probed = false
     private var result: String? = null
+
+    @Volatile
+    private var warmingUp = false
 
     /** 登录 shell 的 PATH；无法探测时为 null */
     fun resolve(): String? {
@@ -34,6 +39,19 @@ class LoginShellPath(
             probed = true
             return result
         }
+    }
+
+    /** 后台预热（幂等）：交互 shell 启动慢，提前探好，展开 MCP 卡片时就不用等 */
+    fun warmUp() {
+        if (probed || warmingUp || shell.isNullOrBlank()) return
+        warmingUp = true
+        Thread {
+            resolve()
+            warmingUp = false
+        }.apply {
+            isDaemon = true
+            name = "opencode-mcp-shell-path"
+        }.start()
     }
 
     /**
@@ -56,8 +74,11 @@ class LoginShellPath(
         ?.takeIf { it.isNotBlank() }
 }
 
-/** 探测超时：rc 卡住时不能让 MCP 拉取一直等 */
-private const val PROBE_TIMEOUT_MS = 3000L
+/**
+ * 探测超时：交互登录 shell 要加载 `.zshrc`（oh-my-zsh 等），实测启动可达 4s+，故留足 10s；
+ * 上限同时兜住「rc 卡住」的情况，避免 MCP 拉取一直等。
+ */
+private const val PROBE_TIMEOUT_MS = 10_000L
 
 /** 等待输出读完的宽限时间（进程已退出，通常立即读完） */
 private const val DRAIN_JOIN_MS = 500L
