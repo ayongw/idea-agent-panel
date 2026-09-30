@@ -107,6 +107,28 @@ class SettingsMappingUnitTest {
     }
 
     @Test
+    fun disabledModelWithoutNameFallsBackToIdDerivedName() {
+        // 服务端只返回启用模型，被禁模型的名字只能来自配置；配置里也没写 name 时按 id 兜底，列表不出现空名称
+        val global = json(
+            """
+            {"providers":{"github-copilot":{"models":{
+              "claude-opus-4.7":{"disabled":true},
+              "claude-opus-5":{"name":"Claude Opus 5","disabled":true}
+            }}}}
+            """.trimIndent()
+        )
+        val live = listOf(json("""{"id":"claude-opus-4.8","providerID":"github-copilot","name":"Claude Opus 4.8"}"""))
+
+        val models = SettingsMapping.providers(global, JsonObject(), emptyList(), live, emptyList())
+            .single().models
+
+        assertEquals(listOf("claude-opus-4.7", "claude-opus-4.8", "claude-opus-5"), models.map { it.id })
+        assertEquals("Claude Opus 4.7", models.single { it.id == "claude-opus-4.7" }.name)
+        assertEquals("Claude Opus 4.8", models.single { it.id == "claude-opus-4.8" }.name)
+        assertEquals("配置里声明过的名称优先", "Claude Opus 5", models.single { it.id == "claude-opus-5" }.name)
+    }
+
+    @Test
     fun providerModelsWithoutConfigDeclarationCannotBeRemoved() {
         val global = json("""{"providers":{"opencode":{}}}""")
         val live = listOf(json("""{"id":"gpt-5","providerID":"opencode","name":"GPT-5"}"""))

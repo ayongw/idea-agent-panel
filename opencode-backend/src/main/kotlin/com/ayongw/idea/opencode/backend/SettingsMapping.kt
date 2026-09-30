@@ -182,8 +182,18 @@ object SettingsMapping {
                 )
             }
         }
-        return result.values.sortedBy { it.id }
+        // 名称缺失时按 id 兜底（如禁用中的模型：服务端不返回它、配置里也没声明 name），列表不出现空名称
+        return result.values
+            .map { if (it.name.isNullOrBlank()) it.copy(name = displayNameOf(it.id)) else it }
+            .sortedBy { it.id }
     }
+
+    /** id 兜底显示名：`claude-opus-4.7` → `Claude Opus 4.7`（仅用于展示，不写回配置） */
+    private fun displayNameOf(id: String): String = id
+        .split('-')
+        .filter { it.isNotBlank() }
+        .joinToString(" ") { part -> part.replaceFirstChar { it.uppercaseChar() } }
+        .ifBlank { id }
 
     /** 模型是否被禁用：V2 看 `disabled`，V1 看 `status == "deprecated"`（V1 没有 `disabled` 字段） */
     private fun modelDisabled(legacy: Boolean, model: JsonObject?): Boolean? {

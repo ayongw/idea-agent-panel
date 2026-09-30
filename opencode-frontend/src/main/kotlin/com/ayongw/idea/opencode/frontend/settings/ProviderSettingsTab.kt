@@ -358,7 +358,15 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
             }
         ) {
             SettingsRpcApi.getInstance()
-                .setProviderModelEnabled(project.projectId(), writeScope(provider), provider.id, model.id, enabled)
+                .setProviderModelEnabled(
+                    project.projectId(),
+                    writeScope(provider),
+                    provider.id,
+                    model.id,
+                    enabled,
+                    // 禁用后服务端不再返回该模型，把当前显示的名写进配置，列表才不会缺名称
+                    model.name
+                )
         }
     }
 

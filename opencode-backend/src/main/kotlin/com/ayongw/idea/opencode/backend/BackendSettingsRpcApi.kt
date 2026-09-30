@@ -228,19 +228,19 @@ class BackendSettingsRpcApi : SettingsRpcApi {
         scope: ConfigScopeDto,
         providerId: String,
         modelId: String,
-        enabled: Boolean
+        enabled: Boolean,
+        name: String?
     ): SettingsWriteResultDto = write(projectId, scope) { config, text ->
         val target = SettingsMapping.providerWriteTarget(config, providerId)
         val legacy = target.container == SettingsMapping.LEGACY_PROVIDER_CONTAINER
-        val path = listOf(
-            target.container,
-            target.key,
-            "models",
-            modelId,
-            if (legacy) "status" else "disabled"
-        )
+        val base = listOf(target.container, target.key, "models", modelId)
         val disabledValue = if (legacy) JsonPrimitive(SettingsMapping.LEGACY_DISABLED_STATUS) else JsonPrimitive(true)
-        JsoncEditor.patch(text, path, if (enabled) null else disabledValue)
+        var result = JsoncEditor.patch(text, base + (if (legacy) "status" else "disabled"), if (enabled) null else disabledValue)
+        // 禁用后服务端不再返回该模型，名称就只剩配置这一个来源；把当前已知名称固化进去，列表才不会缺名称
+        if (!enabled && !name.isNullOrBlank()) {
+            result = JsoncEditor.patch(result, base + "name", JsonPrimitive(name))
+        }
+        result
     }
 
     override suspend fun saveProviderModel(

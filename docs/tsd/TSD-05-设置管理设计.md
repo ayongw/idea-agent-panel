@@ -3,7 +3,7 @@
 > 插件：OpenCode AI Assistant Panel（`com.ayongw.idea.opencode-idea-panel`）
 > 目标：在插件内管理 opencode 的设置参数（自定义模型、规则目录、技能、MCP），设置项能走接口的走接口，接口不满足的直接改 opencode 配置文件。
 > 关联文档：整体架构见《技术方案》（`docs/tech/技术方案.md`，对应 TSD-01 段位）。
-> 状态：**实施完成**（五个 Tab 全部落地；v1.5 修复 401 与布局，v1.6 修复凭据明文落盘报错并收口内容宽度，v1.7 重做模型页与连接页并改为自动加载，v1.8 把技能/规则/MCP 改为「只读展示 + 打开配置文件/文件」形态，v1.9 兼容 V1 写法的供应商配置），待再次手测与提交。
+> 状态：**实施完成**（五个 Tab 全部落地；v1.5 修复 401 与布局，v1.6 修复凭据明文落盘报错并收口内容宽度，v1.7 重做模型页与连接页并改为自动加载，v1.8 把技能/规则/MCP 改为「只读展示 + 打开配置文件/文件」形态，v1.9 兼容 V1 写法的供应商配置，v1.10 修复禁用模型名称列为空），待再次手测与提交。
 
 ## 修订历史
 
@@ -19,6 +19,7 @@
 | v1.7 | 2026-09-29 | 按手测反馈重做设置页（详见 §5.2/§5.4）：① 明确两类设置——插件自身设置（连接页，存 IDEA）与 opencode 设置（模型/规则/技能/MCP，写配置文件）；② 连接页只留 URL/用户名/密码，去掉 shell 界面（后端 `setShell` 接口保留）；③ 模型页重做为 master-detail：默认模型置顶 → 供应商表（id/名称/是否自定义 + 行内「设置」按钮）→ 选中供应商的模型表（id/名称/启用勾选，自定义供应商可增删），去掉作用域选择；模型状态改为「配置声明（含 `disabled`）∪ `/api/model` 启用清单」并集，写入一律按键 patch（不再整体覆盖 `models`）；④ 设置页改为首次显示与切换 Tab 自动加载，并对「服务端未就绪导致的静默空结果」自动重试 | agent |
 | v1.8 | 2026-09-29 | 按手测反馈把技能/规则/MCP 三页改为「只读展示 + 打开文件」形态（详见 §5.2）：① 技能页＝加载来源（配置声明 + opencode 约定目录，标注存在性）+ 技能卡片（第一行 id、第二行描述、齿轮跳转技能目录）+ 搜索过滤；② 规则页＝加载位置（AGENTS.md 目录 + `instructions` 条目）+ 规则文件卡片（文件名 + 前 150 字符、齿轮在编辑器打开），移除内嵌编辑器；③ MCP 页＝卡片列表（名称 + 状态徽标 + 启用开关 + 齿轮打开配置文件），移除详情表单、增删服务器与 `mcp.timeout` 编辑；④ 修正 `skills` 只读字符串数组导致用户 `{paths,urls}` 写法被漏展示的缺陷；⑤ 配置定位改为同目录 `opencode.jsonc` 优先、缺省新建 `opencode.jsonc`（对齐 opencode `Config.loadDirectory`/`Config.update`）；⑥ 新增 `ensureConfigFile` 与前端「在编辑器打开 / 跳转目录」能力 | agent |
 | v1.9 | 2026-09-29 | 兼容 V1 写法的供应商配置（详见 §5.2/§5.3/§5.4）：opencode 同时接受 V2 `providers`（`package`/`settings.baseURL`/模型 `disabled`）与 V1 `provider`（`npm`/`options.baseURL`，`api` 优先；模型用 `status:"deprecated"` 表达禁用），此前只读 V2 导致 V1 配置的供应商在模型页显示为空、且无法增删模型。现按 `normalize.ts` 的 `migrateProviders`/`mergeMaps` 口径读两侧（同名条目 V2 覆盖 V1、V1 历史 id 改名），写入位置与键名跟随条目现有写法（避免造出并存的 V2 条目），包名统一按 V2 的 `aisdk:` 形式展示 | agent |
+| v1.10 | 2026-09-30 | 修复「禁用模型后名称列为空」：服务端 `GET /api/model` 实测只返回启用中的模型（`enabled=true`），被禁模型既不返回也没有 `name`，而配置里禁用只写了 `disabled`。现①禁用时把当前显示名一并写入 `...models.<mid>.name`；②读侧对仍缺名称的模型按 id 生成兜底显示名；配套 `SettingsMappingUnitTest` 用例 | agent |
 
 ---
 
@@ -155,7 +156,7 @@ backend   ├─ OpenCodeConfigStore    配置文件定位 / JSONC 读 / 路径 
 | Tab | 内容 | 读来源 | 写目标 |
 |-----|------|--------|--------|
 | 连接【已落地】 | **插件自身设置**：标题 + 刷新；Server URL、Basic 用户名（默认 `opencode`）、密码（附「留空即回退环境变量 / `service.json`」提示）、测试连接。不含 shell | 插件状态（`OpenCodeSettingsState` + `OpenCodePasswordStore`）；测试连接走后端 `updateServerConfig` + `getAllSessions` + `getServerInfo` | IDE 侧：`opencode-settings.xml` 存 URL/用户名，**密码存 IDE 凭据存储**（`OpenCodePasswordStore`，v1.6）。本页由「OK」统一提交（`isModified`/`apply`） |
-| 模型【v1.7 重做 / v1.9 兼容 V1】 | **opencode 设置**（无作用域选择）：上=默认模型下拉 + 保存；中=供应商表（id / 名称 / 是否自定义 + 行内「设置」按钮 → 弹窗改名称、连接 URL、API Key；工具栏可新增/删除供应商）；下=选中供应商的模型表（模型 id / 名称 / 启用勾选；自定义供应商可新增/删除模型） | `/api/provider`、`/api/model` + 配置 `providers.*`（V2）**与 `provider.*`（V1）都读**（`ProviderModelDto` = 配置声明（含禁用状态）∪ 服务端启用清单） | 按键 patch；路径与键名**跟随条目的现有写法**：V2 写 `providers.<id>.package` / `.settings.baseURL` / `.models.<mid>.disabled`，V1 写 `provider.<id>.npm` / `.options.baseURL` / `.models.<mid>.status="deprecated"`。apiKey 走 `connect/key`。作用域由该供应商的声明作用域决定（未声明过则全局），界面不暴露 |
+| 模型【v1.7 重做 / v1.9 兼容 V1 / v1.10 名称兜底】 | **opencode 设置**（无作用域选择）：上=默认模型下拉 + 保存；中=供应商表（id / 名称 / 是否自定义 + 行内「设置」按钮 → 弹窗改名称、连接 URL、API Key；工具栏可新增/删除供应商）；下=选中供应商的模型表（模型 id / 名称 / 启用开关；自定义供应商可新增/删除模型） | `/api/provider`、`/api/model` + 配置 `providers.*`（V2）**与 `provider.*`（V1）都读**（`ProviderModelDto` = 配置声明（含禁用状态）∪ 服务端启用清单）。名称缺失时按 id 兜底（`claude-opus-4.7` → `Claude Opus 4.7`），列表不出现空名称（v1.10） | 按键 patch；路径与键名**跟随条目的现有写法**：V2 写 `providers.<id>.package` / `.settings.baseURL` / `.models.<mid>.disabled`，V1 写 `provider.<id>.npm` / `.options.baseURL` / `.models.<mid>.status="deprecated"`。apiKey 走 `connect/key`。作用域由该供应商的声明作用域决定（未声明过则全局），界面不暴露 |
 | 规则【v1.8 重做】 | **opencode 设置**：上=规则加载位置（`AGENTS.md` 所在目录 + 配置 `instructions` 条目，标注「v2 未消费」）；下=已加载规则文件卡片（文件名 + 文件前 150 字符，齿轮在编辑器中打开） | 文件系统（`ruleFiles` 带 `preview`）+ 配置 `instructions` | 不在设置页内编辑，一律打开 `AGENTS.md` 直接改 |
 | 技能【v1.8 重做】 | **opencode 设置**：上=技能加载来源（配置声明的路径/URL + opencode 约定目录 `skill`/`skills`，标注存在性）+「打开配置文件」；下=已加载技能卡片（第一行 `id`、第二行描述，齿轮跳转到技能所在目录）+ 关键词过滤 | 配置 `skills`（**字符串数组与 `{paths,urls}` 对象两种写法都读**）+ 约定目录 + `/api/skill` | 不在设置页内编辑，一律打开 opencode 配置文件改 |
 | MCP【v1.8 重做】 | **opencode 设置**：配置来源行 + 「打开配置文件」；卡片列表＝名称 + 状态徽标 + 启用开关 + 齿轮打开配置文件（无描述字段，故不显示第二行） | 配置 `mcp.servers` + `/api/mcp` | 启用/禁用写 `mcp.servers.<name>.disabled`（复用 `saveMcpServer`，保留条目内其它键）；增删改一律编辑配置文件 |
@@ -195,7 +196,7 @@ backend   ├─ OpenCodeConfigStore    配置文件定位 / JSONC 读 / 路径 
 | `getSnapshot(projectId)` | 一次性返回设置页所需全部读数据（配置路径、providers（含模型清单，V1/V2 两种写法都解析）/默认模型、技能加载来源 + 已发现技能、MCP servers + 状态 + timeout、shell/shells、instructions、`AGENTS.md` 候选（带 `preview`）、warnings） |
 | `saveProvider / removeProvider` | 写 / 删供应商（名称、包、`baseURL`）。**不写 `models`**（v1.7：整体覆盖会丢 `limit`/`capabilities` 等字段）；v1.9：目标容器与键名跟随条目现有写法（V1 写 `provider.<id>.npm` / `.options.baseURL`） |
 | `setDefaultModel` | 写 `model` |
-| `setProviderModelEnabled`（v1.7） | 启用/禁用模型：V2 写 `providers.<id>.models.<mid>.disabled`（禁用 `true`、启用删键），V1 写 `provider.<id>.models.<mid>.status = "deprecated"`（v1.9） |
+| `setProviderModelEnabled`（v1.7 / v1.10） | 启用/禁用模型：V2 写 `providers.<id>.models.<mid>.disabled`（禁用 `true`、启用删键），V1 写 `provider.<id>.models.<mid>.status = "deprecated"`（v1.9）。**禁用**时若传入了当前显示名（`name`），一并写 `...models.<mid>.name`——服务端 `/api/model` 只返回启用模型，禁用后名称就只剩配置这一来源（v1.10） |
 | `saveProviderModel`（v1.7） | 新增/改名模型：只写 `...models.<mid>.name`，条目缺失时自动补出 |
 | `removeProviderModel`（v1.7） | 删 `...models.<mid>`（仅配置声明过的模型可删） |
 | `saveSkills` | 写 `skills`（v1.8 起界面不再调用，保留接口） |

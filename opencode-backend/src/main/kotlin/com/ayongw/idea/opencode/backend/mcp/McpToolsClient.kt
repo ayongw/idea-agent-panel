@@ -28,7 +28,9 @@ import java.util.concurrent.TimeUnit
  */
 class McpToolsClient(
     private val initializeTimeoutMs: Long = DEFAULT_INITIALIZE_TIMEOUT_MS,
-    private val listTimeoutMs: Long = DEFAULT_LIST_TIMEOUT_MS
+    private val listTimeoutMs: Long = DEFAULT_LIST_TIMEOUT_MS,
+    /** 登录 shell 的 PATH 探测：IDE 进程 PATH 很窄，裸命令（`codegraph`）会找不到（见 [LoginShellPath]） */
+    private val loginShellPath: LoginShellPath = LoginShellPath()
 ) {
 
     fun listTools(server: McpServerDto, workingDir: Path? = null): McpToolsResult =
@@ -45,8 +47,12 @@ class McpToolsClient(
         }
         val builder = ProcessBuilder(server.command)
         resolveDir(server.cwd, workingDir)?.let { builder.directory(it.toFile()) }
+        val environment = builder.environment()
+        // IDE 进程 PATH 通常只有 /usr/bin:/bin:...，裸命令（codegraph / npx 装在 nvm、homebrew 下）会找不到，
+        // 用登录 shell 的 PATH 补上；配置里显式声明的 environment 优先级最高（见下）
+        loginShellPath.effectivePath(environment["PATH"])?.let { environment["PATH"] = it }
         if (server.environment.isNotEmpty()) {
-            builder.environment().putAll(server.environment.mapValues { expandHome(it.value) })
+            environment.putAll(server.environment.mapValues { expandHome(it.value) })
         }
         val process = try {
             builder.start()

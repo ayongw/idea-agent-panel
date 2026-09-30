@@ -1,5 +1,6 @@
 package com.ayongw.idea.opencode
 
+import com.ayongw.idea.opencode.backend.mcp.LoginShellPath
 import com.ayongw.idea.opencode.backend.mcp.McpToolsClient
 import com.ayongw.idea.opencode.backend.mcp.McpToolsResult
 import com.ayongw.idea.opencode.shared.McpServerDto
@@ -8,6 +9,7 @@ import com.sun.net.httpserver.HttpServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import java.net.InetSocketAddress
 import java.util.concurrent.atomic.AtomicReference
 
@@ -16,7 +18,8 @@ import java.util.concurrent.atomic.AtomicReference
  */
 class McpToolsClientUnitTest {
 
-    private fun client() = McpToolsClient(initializeTimeoutMs = 800, listTimeoutMs = 800)
+    private fun client(loginShellPath: LoginShellPath = LoginShellPath(shell = null)) =
+        McpToolsClient(initializeTimeoutMs = 800, listTimeoutMs = 800, loginShellPath = loginShellPath)
 
     /** 打印给定 JSON 行后保持存活，模拟本地 MCP server */
     private fun fakeStdioServer(vararg payloads: String, keepAliveSeconds: Int = 3): McpServerDto {
@@ -112,6 +115,45 @@ class McpToolsClientUnitTest {
         val server = McpServerDto(name = "no-command", type = "local")
 
         assertTrue(failure(client().listTools(server)).message.contains("没有 command"))
+    }
+
+    @Test
+    fun stdioGivesChildProcessTheLoginShellPath() {
+        // 从 Finder 启动的 IDE，进程 PATH 只有 /usr/bin:/bin:...，codegraph/npx 这类裸命令会找不到
+        val observed = File.createTempFile("mcp-path", ".txt").apply { deleteOnExit() }
+        val server = McpServerDto(name = "fake", type = "local", command = listOf("/bin/sh", "-c", echoPathScript(observed)))
+        val shellPath = LoginShellPath(shell = "/bin/zsh", probe = { "/opt/fake-nvm/bin" })
+
+        assertEquals(listOf("t"), success(client(shellPath).listTools(server)).tools.map { it.name })
+
+        val path = observed.readText()
+        assertTrue("登录 shell 的条目应排在最前：$path", path.startsWith("/opt/fake-nvm/bin"))
+        assertTrue("进程自身 PATH 仍作兜底：$path", path.contains("/bin"))
+    }
+
+    @Test
+    fun stdioPrefersConfiguredEnvironmentOverProbedPath() {
+        // 配置里显式声明的环境变量优先级最高，不被探测结果覆盖
+        val observed = File.createTempFile("mcp-env", ".txt").apply { deleteOnExit() }
+        val server = McpServerDto(
+            name = "fake",
+            type = "local",
+            command = listOf("/bin/sh", "-c", echoPathScript(observed)),
+            environment = mapOf("PATH" to "/only-configured")
+        )
+        val shellPath = LoginShellPath(shell = "/bin/zsh", probe = { "/opt/fake-nvm/bin" })
+
+        success(client(shellPath).listTools(server))
+
+        assertEquals("/only-configured", observed.readText())
+    }
+
+    /** 先把 `$PATH` 落到文件，再回放两份应答，最后保持存活（文件先于应答写入，读结果时不会竞态） */
+    private fun echoPathScript(observed: File): String = buildString {
+        append("printf '%s' \"\$PATH\" > ").append(observed.absolutePath).append("\n")
+        append("printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'\n")
+        append("printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"t\"}]}}'\n")
+        append("sleep 3\n")
     }
 
     // ==================== remote ====================

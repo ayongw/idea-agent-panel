@@ -53,13 +53,16 @@ interface SettingsRpcApi : RemoteApi<Unit> {
      * 服务端 `GET /api/model` 会过滤掉被禁模型，故该状态以配置文件为唯一真源。
      *
      * @param scope 写入作用域，取该供应商在配置里声明的作用域（未声明时用 GLOBAL）
+     * @param name 模型的显示名。禁用后服务端不再返回该模型、配置里若也没声明 `name` 就无从显示，
+     *   故禁用时一并把当前已知名称写进配置；启用时忽略（服务端会给）
      */
     suspend fun setProviderModelEnabled(
         projectId: ProjectId,
         scope: ConfigScopeDto,
         providerId: String,
         modelId: String,
-        enabled: Boolean
+        enabled: Boolean,
+        name: String? = null
     ): SettingsWriteResultDto
 
     /** 新增/更新供应商下的模型：按键写 `providers.<id>.models.<mid>`，不影响同层其它字段 */
