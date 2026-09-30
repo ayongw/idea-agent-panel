@@ -8,14 +8,14 @@ import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
+import okhttp3.MediaType
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URI
 import java.net.URLEncoder
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.intellij.openapi.diagnostic.Logger
@@ -465,11 +465,13 @@ class OpenCodeRestClient(
     // ==================== 认证与请求 ====================
 
     /**
-     * 按需附加 Basic 认证头（密码为空则不鉴权）
+     * 统一 HTTP 客户端（TSD-30 §5.9）：REST 侧全部走 OkHttp，
+     * 与事件流共用同一传输栈；Basic 认证按请求附加。
      */
-    private fun applyAuthHeader(connection: HttpURLConnection) {
-        authHeaderValue()?.let { connection.setRequestProperty("Authorization", it) }
-    }
+    private val httpClient: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(CONNECT_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+        .readTimeout(READ_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+        .build()
 
     /** Basic 认证头取值，密码为空时返回 null（与事件流客户端共用 [OpenCodeAuth]） */
     private fun authHeaderValue(): String? = OpenCodeAuth.basicHeader(username, password)
@@ -480,10 +482,9 @@ class OpenCodeRestClient(
         body: String? = null,
         parse: (String) -> T
     ): Result<T> {
-        val uri = URI("$base/api$path")
+        val url = "$base/api$path"
         return try {
-            // HttpURLConnection 不支持 PATCH（JDK 限制），v2 的 session 重命名与 experimental.config 依赖它
-            val response = if (method == "PATCH") patchRequest(uri, body) else connectionRequest(method, uri, body)
+            val response = withContext(Dispatchers.IO) { okHttpRequest(method, url, body) }
             if (response.code !in 200..299) {
                 // 截断响应体，避免整串原始 JSON 灌进设置页状态栏
                 log.warn("REST $method $path 失败：HTTP ${response.code}, body=${response.body.take(200)}")
@@ -497,45 +498,21 @@ class OpenCodeRestClient(
         }
     }
 
-    private fun connectionRequest(method: String, uri: URI, body: String?): RawResponse {
-        val connection = uri.toURL().openConnection() as HttpURLConnection
-        connection.connectTimeout = CONNECT_TIMEOUT_MS
-        connection.readTimeout = READ_TIMEOUT_MS
-        connection.requestMethod = method
-        connection.doOutput = body != null
-        applyAuthHeader(connection)
-
-        if (body != null) {
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            connection.outputStream.use { it.write(body.toByteArray()) }
-        }
-
-        val code = connection.responseCode
-        val text = if (code >= 400) {
-            connection.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-        } else {
-            connection.inputStream.bufferedReader().use { it.readText() }
-        }
-        connection.disconnect()
-        return RawResponse(code, text)
-    }
-
-    /** PATCH 走 JDK HttpClient（HttpURLConnection 不接受该方法） */
-    private suspend fun patchRequest(uri: URI, body: String?): RawResponse = withContext(Dispatchers.IO) {
-        val builder = HttpRequest.newBuilder(uri)
-            .timeout(Duration.ofMillis(READ_TIMEOUT_MS.toLong()))
-            .method(
-                "PATCH",
-                body?.let { HttpRequest.BodyPublishers.ofString(it) } ?: HttpRequest.BodyPublishers.noBody()
-            )
-        if (body != null) builder.header("Content-Type", "application/json; charset=utf-8")
-        authHeaderValue()?.let { builder.header("Authorization", it) }
-
-        val client = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofMillis(CONNECT_TIMEOUT_MS.toLong()))
+    /**
+     * OkHttp 同步请求（PATCH 与其余方法同路，OkHttp 的 [Request.Builder.method] 接受任意方法名）
+     */
+    private fun okHttpRequest(method: String, url: String, body: String?): RawResponse {
+        val request = Request.Builder()
+            .url(url)
+            .method(method, body?.let { RequestBody.create(JSON_MEDIA_TYPE, it) })
+            .apply {
+                if (body != null) header("Content-Type", "application/json; charset=utf-8")
+                authHeaderValue()?.let { header("Authorization", it) }
+            }
             .build()
-        val response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString())
-        RawResponse(response.statusCode(), response.body() ?: "")
+        httpClient.newCall(request).execute().use { response ->
+            return RawResponse(response.code, response.body?.string().orEmpty())
+        }
     }
 
     private class RawResponse(val code: Int, val body: String)
@@ -892,5 +869,8 @@ class OpenCodeRestClient(
 
         /** 读取超时（毫秒） */
         const val READ_TIMEOUT_MS = 30_000
+
+        /** JSON 请求体媒体类型（OkHttp） */
+        val JSON_MEDIA_TYPE: MediaType = "application/json; charset=utf-8".toMediaType()
     }
 }

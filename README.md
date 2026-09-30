@@ -108,7 +108,7 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 | Kotlin | 2.3.20 | 主开发语言 |
 | Gson | IDE 自带（2026.1 起为 2.13.x） | JSON 序列化，`compileOnly` 不随插件打包 |
 | kotlinx-serialization | 1.9.0 | RPC DTO 序列化 |
-| HTTP 客户端（REST） | JDK `HttpClient` / `HttpURLConnection`（内置） | 当前实现的 OpenCode Server REST 调用 |
+| HTTP 客户端（REST + SSE） | OkHttp 4.12.0 | REST 与事件流统一同一 OkHttp 栈（TSD-30 §5.9），随 `opencode-backend` 打包 |
 | OkHttp | 4.12.0 | SSE 事件流（`/api/event`）客户端，随 `opencode-backend` 打包 |
 | okhttp-sse | 4.12.0 | 事件流帧解析（`EventSource`），随 `opencode-backend` 打包 |
 | JetBrains Markdown | 0.7.3 | Markdown → HTML 渲染 |
