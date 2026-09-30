@@ -86,6 +86,9 @@ subprojects {
                     bundledModule("intellij.platform.kernel.backend")
                     bundledModule("intellij.platform.rpc.backend")
                     bundledModule("intellij.platform.backend")
+                    // 进程管理类（GeneralCommandLine / OSProcessHandler / KillableProcessHandler）来自公开模块
+                    // intellij.platform.util（util.jar），随 platform.backend 传递可得；无需（也不允许）声明
+                    // internal 可见性的 intellij.platform.execution，见 TSD-31 §12 A8
                 }
                 implementation(project(":opencode-shared"))
             }
