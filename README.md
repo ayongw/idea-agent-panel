@@ -22,7 +22,7 @@ IntelliJ IDEA 插件，在 IDE 内集成 [OpenCode](https://opencode.ai/) AI 编
 | **上下文注入** | 当前文件、选中代码、光标位置、显式添加文件一键注入 |
 | **会话管理** | 左侧会话列表，支持创建、切换、删除、重命名 |
 | **用量与上下文占比** | 输入框下方展示当前会话 token 用量（含缓存）与上下文占用比例，接近窗口上限时警示 |
-| **本地 Server 管理** | 自动启动/复用 `opencode serve`，健康检查、优雅终止 |
+| **本地 Server 管理** | 默认自动启动/复用 `opencode serve`（含他人实例的密钥接入），就绪探测、引用计数共享、优雅终止与自愈；面板内有状态条与重试入口 |
 
 ---
 
@@ -57,7 +57,8 @@ opencode-idea-panel/
 - IntelliJ IDEA 2026.2+（构建与验证目标为 2026.2.3，`since-build=262`）
 - JDK 21 (系统默认)
 - **JBR 25** (项目自动使用 IDE 內建，路径: `/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home/`)
-- 已安装并可在 PATH 中找到 `opencode` CLI
+- **`opencode` CLI**：已安装并可在 PATH 中找到；未安装时插件会给出引导通知，
+  也可在 `Settings → OpenCode → Connection → Server management` 中直接填写 CLI 路径（插件不代为安装）
 
 ### 构建插件
 
@@ -111,6 +112,7 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 | OkHttp | 4.12.0 | SSE 事件流（`/api/event`）客户端，随 `opencode-backend` 打包 |
 | okhttp-sse | 4.12.0 | 事件流帧解析（`EventSource`），随 `opencode-backend` 打包 |
 | JetBrains Markdown | 0.7.3 | Markdown → HTML 渲染 |
+| 进程管理（`opencode serve`） | 平台 `intellij.platform.util`（`GeneralCommandLine` / `KillableProcessHandler`） | 随 `intellij.platform.backend` 传递可得，**无需**声明 internal 的 `intellij.platform.execution`（见 [TSD-31](docs/tsd/TSD-31-进程与连接管理方案.md) §12 A8） |
 
 ---
 
@@ -148,6 +150,7 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
         ├── BackendRpcApiProvider.kt
         ├── BackendChatRepositoryModel.kt
         ├── BackendChatRepositoryRpcApi.kt
+        ├── server/               # Server 运行时：发现/探测/拉起/终止/共享注册表/自愈
         └── repository/           # 业务逻辑
 ```
 
@@ -155,7 +158,7 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 
 | 场景 | 实现方案 |
 |------|----------|
-| Server 进程管理 | `OSProcessHandler` + 随机端口 + 健康检查轮询 |
+| Server 进程管理 | `KillableProcessHandler`（`OSProcessHandler` 子类，递归销毁）+ 端口 4096→备用端口 + `GET /api/info` 就绪探测；自有实例经共享注册表引用计数（多窗口关最后一个才停）、自愈重启上限 3 次/10 分钟（见 [TSD-31](docs/tsd/TSD-31-进程与连接管理方案.md)） |
 | SSE 事件流 | `okhttp-sse` EventSource 客户端（端点 `/api/event`，指数退避重连 + 读超时存活判定）已接入会话状态：流式内容与执行态经 RPC 推到面板（见 [TSD-06](docs/tsd/TSD-06-事件流接入设计.md)） |
 | 流式渲染 | 后端按事件流累积内容并 75ms 节流推送，前端按消息 id 就地重渲染气泡（气泡内容未变则跳过） |
 | 代码块渲染 | `EditorTextField` (真实编辑器) + `JBHtmlPane` (文本) |
@@ -172,6 +175,8 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 - [设置管理设计 (TSD-05)](docs/tsd/TSD-05-%E8%AE%BE%E7%BD%AE%E7%AE%A1%E7%90%86%E8%AE%BE%E8%AE%A1.md)
 - [事件流接入设计 (TSD-06)](docs/tsd/TSD-06-%E4%BA%8B%E4%BB%B6%E6%B5%81%E6%8E%A5%E5%85%A5%E8%AE%BE%E8%AE%A1.md)
 - [主界面布局设计 (TSD-07)](docs/tsd/TSD-07-%E4%B8%BB%E7%95%8C%E9%9D%A2%E5%B8%83%E5%B1%80%E8%AE%BE%E8%AE%A1.md)
+- [会话面板整体优化方案 (TSD-30)](docs/tsd/TSD-30-%E4%BC%9A%E8%AF%9D%E9%9D%A2%E6%9D%BF%E6%95%B4%E4%BD%93%E4%BC%98%E5%8C%96%E6%96%B9%E6%A1%88.md)
+- [进程与连接管理方案 (TSD-31)](docs/tsd/TSD-31-%E8%BF%9B%E7%A8%8B%E4%B8%8E%E8%BF%9E%E6%8E%A5%E7%AE%A1%E7%90%86%E6%96%B9%E6%A1%88.md)
 - [已归档：M1–M4 历史任务分解](docs/archived/)
 
 ---

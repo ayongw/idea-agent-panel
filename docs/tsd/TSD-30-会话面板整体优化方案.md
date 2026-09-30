@@ -385,7 +385,7 @@ flowchart TB
 | G1 | **富文本渲染用 `JBHtmlPane` + `org.jetbrains:markdown` 转 HTML**（PRD §二、§4.3） | 前端**零** `JBHtmlPane` 引用；`parseMarkdownWithCodeBlocks` 为手写分段（`MessageItem.kt:454-487`）；`org.jetbrains:markdown:0.7.3` **已声明依赖但全仓零引用**（`build.gradle.kts:79`） | **降级**（PRD 选型未落地） | Phase 2 起改为「平台 markdown → HTML → `JBHtmlPane`」渲染文本块；若坚持自建需在 PRD 显式回填降级理由 |
 | G2 | **代码块用 `EditorTextField`，拿 IDE 原生语法高亮**（PRD §二/§4.3，明确写为「相比 WebView 的天然优势」） | `CodeBlockPane` 自绘（等宽字体，无语法高亮，`MessageItem.kt:619-729`） | **降级（且是产品差异化卖点）** | 二选一：① 按需创建只读 `EditorEx`（同屏/展开时创建、移出视口 `releaseEditor`）——保住卖点但需控数量；② 正式放弃并回填 PRD。**不可默认沉默** |
 | G3 | **思考过程可折叠：流式期间展开、结束后自动折叠**（PRD §4.3） | 无 `CollapsiblePanel`；reasoning 平铺常显 | 缺口 | 列入 Phase 2 交互项（与合并刷新同一批） |
-| G4 | **进程管理：`OSProcessHandler` 启动/复用 `opencode serve`、健康检查、优雅终止（`killProcessTree`）、启动失败重试 + 手动配置入口**（PRD §4.1/§五） | 全仓无 `OSProcessHandler`/`GeneralCommandLine`（零实现）；用户当前**手动启动 server 并手填地址 + 密码** | **缺口（范围性，且现实已暴露）** | 单独立项（建议 `TSD-31-进程与连接管理`）或在 PRD 明确「自管 server」为产品前提 |
+| G4 | **进程管理：`OSProcessHandler` 启动/复用 `opencode serve`、健康检查、优雅终止（`killProcessTree`）、启动失败重试 + 手动配置入口**（PRD §4.1/§五） | 全仓无 `OSProcessHandler`/`GeneralCommandLine`（零实现）；用户当前**手动启动 server 并手填地址 + 密码** | **缺口（范围性，且现实已暴露）** | **已立项并实现**：见《TSD-31-进程与连接管理方案》（发现与复用、就绪探测、凭据接入、引用计数终止、自愈、状态条与 CLI 引导），落地状态见其 §14 |
 | G5 | **OpenCode 版本升级隔离**（锁定 SDK + 适配层隔离，PRD §五） | REST/事件解析分散在 `OpenCodeRestClient`/`OpenCodeEventParser`，无显式适配层边界 | 缺口（弱） | Phase 3 拆分时抽出 `OpenCodeApiAdapter`（版本感知的协议适配层） |
 | G6 | **上下文注入含 PSI 语义分析**（PRD §4.5，「可利用 PSI 替代纯文本匹配」） | 现状为 mention/上下文芯片；PSI 深度未见 | 待确认（属 TSD-08 范围） | 在 TSD-08 中对齐，本方案不重复定义 |
 | G7 | **UI 资产复用：状态管理逻辑独立成模块，为「第二阶段独立形态」复用**（PRD §五末，PRD 自评最大隐性风险） | `opencode-backend` 已独立模块，但 857 行单类混 REST/SSE/对账/模拟/DTO 映射 | 缺口（方向一致、需强化） | §5.8 拆分时以「可脱离 IDE 复用」为验收条件（backend 不依赖 frontend UI 类型） |
@@ -413,7 +413,7 @@ flowchart TB
 2. **真正的方向性分歧只有 2 处**，都需要产品侧拍板，而不是工程侧自行取舍：
    - **G1/G2 渲染载体**：PRD 要 `JBHtmlPane` + `EditorTextField`（拿到 IDE 原生语法高亮），现状是自研分段渲染。这不只是实现细节——它决定「代码块是否与主编辑器一致」这一**卖点是否成立**。
    - **R1 会话组织形态**：PRD 的左侧列表已被顶部 tab 取代，需回填以免两文档长期互相矛盾。
-3. **最大的范围缺口是 G4（进程与连接管理）**：PRD 用整章（§4.1 + 风险两项）描述插件应自己拉起并守护 `opencode serve`，现状为零实现（用户手动起 server、手填地址与密码）。本方案按「会话面板」边界未纳入，**建议单独立项**，否则 PRD 的「开箱可用」诉求始终不成立。
+3. **最大的范围缺口 G4（进程与连接管理）已补齐**：PRD 用整章（§4.1 + 风险两项）描述插件应自己拉起并守护 `opencode serve`，立项期为零实现（用户手动起 server、手填地址与密码）。已按「会话面板」边界外单独立项并实现，见《TSD-31-进程与连接管理方案》§14。
 4. 建议动作顺序：先回填 R1/R2（文档一致性，零成本）→ 决策 G1/G2（影响 Phase 2 渲染实现）→ Phase 1 照旧执行（P0 与 PRD 无冲突）→ G4 立项排期。
 
 ### 9.6 处置结果（2026-09-30 决策落地）
@@ -426,7 +426,7 @@ flowchart TB
 | R4 `MessagePart` 模型 | **标注废弃 + 回填真源**，清理任务保留在 §2.3 P2-5 | `docs/tech/技术方案.md` §3.6.1 | ✅ 已回填（清理待 Phase 3） |
 | G1+G2 渲染载体 | **0.1.0 阶段接受降级，后续阶段必须落地**（不允许沉默降级） | 本文 Phase 4 + PRD §二实施状态 | ✅ 已登记，Phase 4 执行 |
 | G3 思考过程折叠 | 列入 Phase 2.8 | 本文 Phase 2 | ✅ 已排期 |
-| G4 进程与连接管理 | **先出方案、独立落地**（可在单独会话或子 agent 并行执行） | 新增《TSD-31-进程与连接管理方案》 | ✅ 方案已出 |
+| G4 进程与连接管理 | **先出方案、独立落地**（可在单独会话或子 agent 并行执行） | 新增《TSD-31-进程与连接管理方案》 + `opencode-backend/.../server/`、`chatApp/ui/ServerStatusStrip.kt`、设置页「Server 管理」分组 | ✅ 已实现（T1–T13；提交 `8cab69f`/`970e574`/`454e8fd`，落地状态见 TSD-31 §14） |
 | G5 协议适配层 | 随 Phase 3 拆分抽出 | 本文 §5.8 | ✅ 已登记 |
 | G6 PSI 上下文 | 归 TSD-08 范围 | 待在该文档对齐 | ⏳ 待办 |
 | G7 UI 资产复用 | 拆分验收条件（backend 不依赖 frontend UI 类型） | 本文 §5.8 | ✅ 已登记 |

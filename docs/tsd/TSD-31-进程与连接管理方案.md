@@ -10,6 +10,7 @@
 | v1.0 | 2026-09-30 | 初版：现状证据 + 目标/非目标 + 生命周期状态机 + 发现复用与端口策略 + 就绪探测与失败分类 + 进程启动与优雅终止 + 自愈 + 连接凭据 + UI 反馈 + 模块边界 + 风险 + T1~T10 任务拆分 + 验收与测试方案 + 参考来源 + 待拍板决策点 | agent |
 | v1.1 | 2026-09-30 | 按用户决策定稿：默认自动启动 + 归属识别 + 他人实例密钥接入 + CLI 引导 + 引用计数归属 + 端口 4096/备用与探测顺序；§12 改为 API 核实结果（含 2026.2.3 SDK 实证） | agent |
 | v1.2 | 2026-09-30 | T1~T4/T9/T10 落地后的实证修正：① 进程管理类实际来自**公开模块** `intellij.platform.util`（`util.jar`），**不得**声明 internal 的 `intellij.platform.execution`（沙箱会拒绝加载插件）；② 探测传输由 `HttpRequests` 改为 JDK `HttpURLConnection` + `Proxy.NO_PROXY`（`HttpRequests` 属 `intellij.platform.ide.core`，同样会扩张内部模块依赖面）；③ CLI 路径解析改为「显式配置不可用即报错」不回落 PATH | agent |
+| v1.3 | 2026-09-30 | T6~T13 落地后的回填：① §5.1 状态条按钮口径与实现对齐（进行中不提供取消、`NEEDS_CREDENTIALS` 提供接入/自启/打开设置、`FAILED` 提供重试/设置/安装引导/输出展开）；② §5.3 标注通知落地情况；③ §6.2/§6.3 补齐实际改动文件与 RPC 清单（新增 `startOwnServer`/`resetServerRegistry`，`updateServerConfig` 追加 Server 管理三项）；④ §8 T8 验证方式改为实际落地方式；⑤ 新增 §14 实现落地状态 | agent |
 
 ---
 
@@ -74,7 +75,7 @@
 ### 2.2 非目标（明确排除）
 
 - **不改《TSD-06-事件流接入设计》的 REST/SSE 契约**：端点、帧格式、事件名、对账语义一律不动；本文只改变「`baseUrl` / `username` / `password` 从哪来」。
-- **不引入新三方依赖**：只用平台 API + JDK；HTTP 探测改用平台自带的 `com.intellij.util.io.HttpRequests`（见 §3.5），不把 okhttp 引入进程管理链路。
+- **不引入新三方依赖**：只用平台 API + JDK；HTTP 探测改用 JDK `HttpURLConnection` + `Proxy.NO_PROXY`（见 §3.5），不把 okhttp 引入进程管理链路。
 - **不做跨机器/远程部署方案**：不实现「在远端主机安装并启动 opencode」；split mode 与远程开发下仅做**安全降级**（见 §7 R4）。
 - **不做 Server 版本升级/安装器**：**不**代用户安装 `opencode`，只做「提醒 + 引导 + CLI 路径覆盖」，不做版本自愈升级（G5 版本适配属另一议题，见《TSD-30-会话面板整体优化方案》§9.2 G5）。
 - **不改设置页的既有三项（地址/用户名/密码）语义与存储位置**（地址仍入 `OpenCodeSettingsState`、密码仍入 `PasswordSafe`），仅**新增** Server 管理相关项。
@@ -385,21 +386,23 @@ flowchart LR
   N["NEEDS_CREDENTIALS"]:::chg
   X["REUSING（他人实例）"]:::std
 
-  D -->|"显示：正在启动 Server…（含端口）"| D1["隐藏重试，允许取消"]:::chg
+  D -->|"显示：正在启动 Server…（含端口）"| D1["只显示进度，不提供操作按钮"]:::chg
   X -->|"整条隐藏"| X1["不暴露停止按钮"]:::std
-  N -->|"显示：需要密钥才能接入"| N1["就地输入凭据 + 改用自启/手动地址"]:::chg
+  N -->|"显示：需要密钥才能接入"| N1["就地输入凭据 + 改用自启 + 打开设置"]:::chg
   R -->|"整条隐藏"| R1["无 UI 占用"]:::okn
-  F -->|"显示：失败分类文案 + 输出摘要（可展开）"| F1["重试按钮 + 打开设置按钮"]:::err
+  F -->|"显示：失败分类文案 + 输出摘要（可展开）"| F1["重试 + 打开设置（CLI 缺失时加安装引导）"]:::err
 ```
 
 | 状态 | 状态条内容 | 可用操作 |
 |---|---|---|
-| `DISCOVERING`/`STARTING` | 「正在启动 OpenCode Server（端口 4096）…」+ 进度指示 | 取消（→ `STOPPING`）、无重试 |
+| `DISCOVERING`/`STARTING`/`STOPPING` | 「正在探测/启动 OpenCode Server（端口 4096）…」+ 进度指示 | 无操作按钮（不提供重试，避免与进行中的编排竞争） |
 | `REUSING`（他人实例） | 默认隐藏 | 不暴露停止按钮 |
-| `NEEDS_CREDENTIALS` | 「该 Server 不是本插件启动，需要密钥才能接入」+ 凭据输入 | **接入**、**改用插件自启实例**、**改用手动地址** |
+| `NEEDS_CREDENTIALS` | 「该 Server 不是本插件启动，需要密钥才能接入」+ 凭据输入 | **接入**、**改用插件自启实例**、**打开设置**（改地址走连接页） |
 | `READY` | 隐藏 | — |
-| `FAILED` | 分类文案（§3.5）+ 可展开输出尾巴（脱敏） | **重试**、**打开设置**（连接页）、**手动配置 Server 地址**入口 |
+| `FAILED` | 分类文案（§3.5）+ 可展开输出尾巴（脱敏） | **重试**、**打开设置**（连接页）；CLI 缺失时加**安装引导**；有输出尾巴时加**展开输出** |
 | `STOPPED` | 隐藏（项目即将关闭） | — |
+
+> 「打开设置」直达连接页，「手动配置 Server 地址」即在该页完成填写（不再单设入口）；进行中状态不提供「取消」——编排为同步阻塞过程，中止语义未定义，故不暴露该按钮。
 
 `ServerStatusStrip` 订阅 `S1` 的状态流（经 RPC `Flow` 透传），UI 更新一律经 EDT；其生命周期挂 `Content.setDisposer` 或 ViewModel（继承《TSD-30-会话面板整体优化方案》§5.4 的订阅纪律，不复用 project 级 scope）。
 
@@ -427,9 +430,9 @@ flowchart LR
 
   （`notificationGroup` 扩展点写法取自 IDE 内置插件实证，见 §12 A10。）
 - **触发场景**（均遵守「不弹凭据、不给可执行外链、外链仅指向官方文档/官网」）：
-  1. `CLI_NOT_FOUND`：WARNING 通知，正文给「未找到 opencode CLI」，action 为**打开官方安装文档/官网**，并提示可在设置页填写 CLI 路径。
-  2. 后台自愈重启失败（`FAILED` 且 Tool Window 不可见）：WARNING 通知，action 为「打开面板/设置」。
-  3. （可选）`NEEDS_CREDENTIALS` 且用户未打开 Tool Window：一次性 INFORMATION 提示，**不**在通知内联凭据输入，仅引导打开面板。
+  1. `CLI_NOT_FOUND`：WARNING 通知，正文给「未找到 opencode CLI」，action 为**打开官方安装文档/官网**，并提示可在设置页填写 CLI 路径。**已落地**：订阅挂在 project 级服务（`FrontendChatRepositoryModel`）上，面板未打开时也会提示；同一次失败只提示一次，恢复后重置。
+  2. 后台自愈重启失败（`FAILED` 且 Tool Window 不可见）：WARNING 通知，action 为「打开面板/设置」。——**未落地**（面板内已有状态条承载该信息，通知去重与「面板是否可见」判定留待后续）。
+  3. （可选）`NEEDS_CREDENTIALS` 且用户未打开 Tool Window：一次性 INFORMATION 提示，**不**在通知内联凭据输入，仅引导打开面板。——**未落地**（同上）。
 
 ---
 
@@ -463,11 +466,14 @@ flowchart LR
 
 | 文件 | 职责 |
 |---|---|
-| `chatApp/ui/ServerStatusStrip.kt` | 状态条组件（§5.1，含 `NEEDS_CREDENTIALS` 凭据输入） |
-| `chatApp/ui/OpenCodeChatApp.kt`（改） | 装配状态条到 `TopBar` 与 `ChatList` 之间；订阅状态流 |
-| `settings/ConnectionSettingsTab.kt`（改） | 新增「Server 管理」分组 + CLI 路径 + 凭据交互（§5.2） |
+| `chatApp/ui/ServerStatusStrip.kt` | 状态条组件（§5.1，含 `NEEDS_CREDENTIALS` 凭据输入、`FAILED` 输出尾巴展开） |
+| `chatApp/OpenCodeChatApp.kt`（改） | 装配状态条到 `TopBar` 与 `ChatList` 之间；订阅状态流；转发重试/自启/凭据/设置/安装引导五个动作 |
+| `chatApp/viewmodel/ChatRepositoryApi.kt`、`FrontendChatRepositoryModel.kt`、`ChatViewModel.kt`（改） | 暴露 Server 运行时能力（状态流 + 4 个动作）；CLI 缺失的一次性引导通知（§5.3）挂在此项目级服务上 |
+| `chatApp/ui/utils/ChatAppColors.kt`（改） | 状态条配色（进行中/失败底色与文字色） |
+| `settings/ConnectionSettingsTab.kt`（改） | 新增「Server 管理」分组 + CLI 路径 + 停止自有实例 / 重置注册表（§5.2） |
 | `settings/OpenCodeSettingsState.kt`（改） | 新增 `autoStartServer` / `reuseExternalServer` / `cliPath` 三个字段（密码字段不动） |
-| `messages/OpencodeFrontendBundle.properties`（改） | 新增状态条、设置项与通知文案 |
+| `settings/OpenCodeSettingsConfigurable.kt`（改） | 新增 `CONNECTION_TAB_INDEX`（状态条「打开设置」直达连接页） |
+| `messages/OpencodeFrontendBundle.properties`（改） | 新增状态条、失败分类、设置项与通知文案 |
 | `opencode-frontend/src/main/resources/opencode-idea-panel.opencode-frontend.xml`（改） | 注册 `notificationGroup` 扩展点（§5.3） |
 
 ### 6.3 对既有连接层的影响（仅「地址来源」变化）
@@ -478,7 +484,7 @@ flowchart LR
 | `backend/event/OpenCodeEventClient.kt` | **无改动**（构造仍为 `baseUrl/username/password`，`:25-34`） | 重连/退避/401/读超时语义 |
 | `OpenCodeCredentials.kt` | 不改解析链；自有实例密码的取值在 `Resolver` 层优先于它 | `service.json` 定位（`:34`） |
 | `BackendChatRepositoryModel.kt` | **仅**新增：`updateServerConfig` 的调用方由「设置页」扩展为「设置页 + `S1`」；`dispose()`（`:852-856`）需保证顺序正确（先 `S1` 释放引用/终止自有进程 → 再停事件流） | 消息/事件/对账全部逻辑 |
-| `shared/ChatRepositoryRpcApi.kt` + `BackendChatRepositoryRpcApi.kt` | 新增 `getServerStateFlow` / `retryServerStart` / `stopServer`（自有实例）/ `submitServerCredentials`（他人实例凭据） | 既有全部 RPC |
+| `shared/ChatRepositoryRpcApi.kt` + `BackendChatRepositoryRpcApi.kt` | 新增 `getServerStateFlow` / `retryServerStart` / `startOwnServer`（改用自启）/ `stopServer`（自有实例）/ `submitServerCredentials`（他人实例凭据）/ `resetServerRegistry`（排障兜底）；`ServerStateDto` 增加状态与失败分类枚举名常量；`updateServerConfig` **追加** `cliPath` / `autoStartServer` / `reuseExternalServer` 三个带默认值的参数（只增不改，既有调用方不受影响） | 既有全部 RPC |
 
 ### 6.4 对《TSD-30-会话面板整体优化方案》§5.4 生命周期契约的继承
 
@@ -495,7 +501,7 @@ flowchart LR
 |---|---|---|---|
 | R1 | **Windows 进程树残留** | 文件锁定 → 插件升级/卸载失败（PRD §五） | `KillableProcessHandler` + `setShouldDestroyProcessRecursively(true)`：`destroyProcess()` 后宽限再 `killProcess()`；`dispose()` 必须同步等待或至少确认已发出终止；**Windows 行为需实测**（§12 A3/A4） |
 | R2 | `opencode` CLI 未安装 / PATH 发现失败 | 自动启动永久失败 | 分类 `CLI_NOT_FOUND` + **通知引导安装（打开文档/官网）** + 设置页「CLI 路径」覆盖项；**不**做自动安装（非目标） |
-| R3 | **代理污染回环探测** | 探测被中间件改写或拒绝 | 探测改用 `HttpRequests.request(url).useProxy(false)`（§12 A13），显式关闭代理；仅用 `127.0.0.1` 回环 |
+| R3 | **代理污染回环探测** | 探测被中间件改写或拒绝 | 探测改用 JDK `HttpURLConnection` + `Proxy.NO_PROXY`（§12 A13），显式关闭代理；仅用 `127.0.0.1` 回环 |
 | R4 | **split mode / 远程开发** | 后端可能在**远端主机**运行，此处在远端拉起 `opencode serve` 与用户本机「装没装 CLI」无关，界面提示会误导 | 降级：检测到「后端运行主机非本机」时**默认关闭自动启动**，只做「探测 + 提示」，并引导手填地址。判定 API 已实证（§12 A9：`EelProviderUtil.getEelDescriptor(project)` vs `LocalEelDescriptor.INSTANCE`） |
 | R5 | 进程输出含敏感信息 | 日志泄漏 | 输出默认只进 `debug` 且受 category 控制；缓冲逐行脱敏；`FAILED` 展示前再脱敏一次 |
 | R6 | 与用户手动启动的 server 冲突 | 双实例抢端口 / 误杀用户进程 | 归属判据用「注册表 + pid 匹配」；他人实例只复用（或经密钥接入）不终止；新实例优先 4096、冲突走备用端口（§3.4） |
@@ -522,7 +528,7 @@ flowchart LR
 | **T5** 生命周期编排与自愈 | 状态机（含 `NEEDS_CREDENTIALS` 转移）、编排 T2/T3/T4、退出监听、退避重启与上限、健康轮询、状态流 `StateFlow` | `server/OpenCodeServerManager.kt` | T1–T4 | `OpenCodeServerManagerUnitTest`（注入假 Discovery/Launcher/Registry）：状态转移全覆盖、自愈上限、401 分流（他人→NEEDS_CREDENTIALS / 自有→FAILED）、他人实例不终止 | 否（依赖 T1–T4） |
 | **T6** 连接层接线 | `S1` 端点到 `BackendChatRepositoryModel.updateServerConfig`；`dispose()` 顺序（先释放引用 → 再停事件流）；`Project.basePath` 作为工作目录来源 | `BackendChatRepositoryModel.kt`（小改） | T5 | 既有全量单测不回归 + `OpenCodeServerManagerUnitTest` 的「端点变化触发一次下发」断言 | 否 |
 | **T7** RPC 与 shared 契约 | `getServerStateFlow` / `retryServerStart` / `stopServer`（自有实例）/ `submitServerCredentials`（他人实例凭据）（含 DTO：状态、失败分类、端口、是否自有、refCount） | `opencode-shared/.../ChatRepositoryRpcApi.kt`、`opencode-shared/.../dtos.kt`、`BackendChatRepositoryRpcApi.kt` | T5（接口冻结即可开工） | 契约单测（DTO 序列化往返）+ 编译（`rpc` 插件对接口变更的校验） | 可与 T6 并行 |
-| **T8** 前端状态条与设置项 | `ServerStatusStrip`（含凭据输入）、装配进 `OpenCodeChatApp`、设置页「Server 管理」分组、`notificationGroup` 注册、bundle 文案、（可选）「测试连接」复用 Discovery 分类 | `chatApp/ui/ServerStatusStrip.kt`、`chatApp/OpenCodeChatApp.kt`、`settings/ConnectionSettingsTab.kt`、`settings/OpenCodeSettingsState.kt`、`messages/OpencodeFrontendBundle.properties`、`opencode-idea-panel.opencode-frontend.xml` | T7 | Swing 冒烟（Platform test framework + `dispatchAllInvocationEventsInIdeEventQueue`，断言状态条显隐与按钮可用性）；装机验收见 §9.2 | 否（依赖 T7） |
+| **T8** 前端状态条与设置项 | `ServerStatusStrip`（含凭据输入）、装配进 `OpenCodeChatApp`、设置页「Server 管理」分组、`notificationGroup` 注册、bundle 文案、（可选）「测试连接」复用 Discovery 分类 | `chatApp/ui/ServerStatusStrip.kt`、`chatApp/OpenCodeChatApp.kt`、`settings/ConnectionSettingsTab.kt`、`settings/OpenCodeSettingsState.kt`、`messages/OpencodeFrontendBundle.properties`、`opencode-idea-panel.opencode-frontend.xml` | T7 | `ServerStatusStripUnitTest`（Platform test framework 构造组件，按状态序列断言整条显隐、按钮可见性、凭据输入可用与按钮回调）；装机验收见 §9.2 | 否（依赖 T7） |
 | **T9** 测试横切基建 | 短命进程桩脚本（模拟 `opencode serve`：解析 `--port`、暴露 `GET /api/info` 返回 `pid`、可注入「慢启动/拒绝/401」形态）、HTTP 桩工具类 | `src/test/resources/server/` + `src/test/kotlin/.../server/*Support.kt` | 无（可先于 T2/T4 落地，供其复用） | 自身跑通「桩可启停、可切形态」的用例 | 是（应最先/与 T1 并行） |
 | **T10** 共享注册表与引用计数 | 引用计数 acquire/release、「最后一个引用者」判定（锁内 refCount==0 且 references 为空）、心跳与崩溃残留清理、强制归零（用户停止 / 重置） | `server/OpenCodeServerRegistry.kt`（扩展）、`server/OpenCodeServerManager.kt`（接入） | T3、T5 | `OpenCodeServerRegistryUnitTest`：两引用者场景（关一不停、关最后一才停）、崩溃残留（心跳过期）清理、并发 release 只终止一次 | 否（依赖 T3/T5） |
 | **T11** 他人实例的凭据交互 | `NEEDS_CREDENTIALS` 交互链路：状态透出 → 前端凭据输入 → `submitServerCredentials` → 验证 → `REUSING`/保持 | `server/OpenCodeServerManager.kt`、RPC（T7）、`chatApp/ui/ServerStatusStrip.kt` | T5、T7、T8 | `OpenCodeServerManagerUnitTest`（凭据通过/不通过转移 + 不终止他人进程）+ UI 冒烟（凭据输入可用） | 否 |
@@ -544,11 +550,12 @@ flowchart LR
 | `OpenCodeServerEndpointResolverUnitTest` | 设置项 > 环境变量 > 默认 4096 的优先级；**探测顺序 4096 → 备用端口**；显式端口用于自有实例绑定；值为空/空白/非法 URL 的回落 |
 | `OpenCodePortAllocatorUnitTest` | 4096 可用时首选 4096；4096 被占用时依次取备用端口；备用端口耗尽的上报 |
 | `OpenCodeServerOutputBufferUnitTest` | 行数上限、单行截断、密码脱敏（含 `Authorization`/`password=` 形态）、并发写入 |
-| `OpenCodeServerDiscoveryUnitTest` | 就绪 / SPA-HTML 伪 200 / 401 / 503 / 连接拒绝 / 超时 → 分类映射；**代理已关闭**（`useProxy(false)`）；轮询退避顺序；总超时触发点 |
+| `OpenCodeServerDiscoveryUnitTest` | 就绪 / SPA-HTML 伪 200 / 401 / 503 / 连接拒绝 / 超时 → 分类映射；**代理已关闭**（`Proxy.NO_PROXY`）；轮询退避顺序；总超时触发点 |
 | `OpenCodeServerRegistryUnitTest` | 并发写入不互相覆盖；陈旧条目（pid 已不存在）被清理；pid 不匹配不判为自有；**引用计数：两引用者关一不停、关最后一才停**；崩溃残留（心跳过期）清理 |
 | `OpenCodeServerLauncherITest` | 短命进程桩：启动成功 + 输出采集；启动失败（不存在命令）→ `CLI_NOT_FOUND`；终止后进程不再存活 |
 | `OpenCodeServerManagerUnitTest` | 状态机全转移（§3.2 每条边）；`REUSING`/`NEEDS_CREDENTIALS` 下终止被拒绝；他人实例 401 → `NEEDS_CREDENTIALS`、自有实例 401 → `FAILED` 立即停重试；自愈 3 次上限后转 `FAILED`；端点变化触发一次下发 |
 | `ServerStateDtoUnitTest`（shared） | 状态/失败分类 DTO 序列化往返与向后兼容新增字段 |
+| `ServerStatusStripUnitTest`（frontend） | 状态条显隐（就绪/空闲隐藏）、进行中不提供重试、`FAILED` 提供重试与设置、CLI 缺失额外给安装引导与输出展开、`NEEDS_CREDENTIALS` 提供自启入口与可用凭据输入、按钮回调触发 |
 
 ### 9.2 装机验收清单（不跑 `verifyPlugin`）
 
@@ -649,7 +656,7 @@ flowchart LR
 1. **A12** `FileLock` 多 IDE 实例 + macOS/Windows 行为（R13 必须准备降级方案）。
 2. **A11** 「父进程 `withEnvironment` 注入的环境变量对子进程可见」的实际语义（含 `ParentEnvironmentType` 默认值实测）。
 3. **A4** `destroyProcess()` 与 `killProcess()` 在 Windows 上是否带走子进程树、组合顺序（R1）。
-4. **A13** 回环探测是否被 IDE `ProxySelector` 改写（已用 `useProxy(false)` 缓解，仍需实测确认 okhttp 事件流侧）。
+4. **A13** 回环探测是否被 IDE `ProxySelector` 改写（探测侧已用 `Proxy.NO_PROXY` 显式关代理缓解，仍需实测确认 okhttp 事件流侧）。
 
 ---
 
@@ -662,6 +669,33 @@ flowchart LR
 | 3 | CLI 未安装 | **提醒并引导安装**：通知（可打开文档/官网）+ 设置页可填 CLI 路径；**不**代用户安装 | §2.1-5、§3.5（`CLI_NOT_FOUND`）、§5.2、§5.3 |
 | 4 | 自有进程生命周期归属 | **引用计数**：同一 IDE 多工作区/多窗口共享同一 server；单个引用者关闭**不终止**；**最后一个引用者**关闭时才终止。引用计数存于共享注册表，含「最后一个引用者」判定与崩溃残留清理 | §3.7、§6.4、T10 |
 | 5 | 端口策略 | 插件启动的与默认启动的**都用 4096**；冲突时启用**备用端口**；探测顺序 **默认端口 4096 → 备用端口** | §3.4、§3.5、§9.2 |
+
+---
+
+## 14. 实现落地状态（2026-09-30）
+
+| 任务 | 落地位置 | 验证方式 |
+|---|---|---|
+| T1 状态与纯逻辑底座 | `server/OpenCodeServerState.kt`、`OpenCodeServerEndpoint.kt`、`OpenCodeServerEndpointResolver.kt`、`OpenCodePortAllocator.kt`、`OpenCodeServerOutputBuffer.kt` | `OpenCodeServerEndpointResolverUnitTest` / `OpenCodePortAllocatorUnitTest` / `OpenCodeServerOutputBufferUnitTest` |
+| T2 发现与就绪探测 | `server/OpenCodeServerDiscovery.kt`、`OpenCodeServerHttpProbe.kt` | `OpenCodeServerDiscoveryUnitTest`（HTTP 桩覆盖 200-JSON / 200-HTML / 401 / 503 / 连接拒绝 / 超时） |
+| T3 共享注册表基础 | `server/OpenCodeServerRegistry.kt` | `OpenCodeServerRegistryUnitTest` |
+| T4 进程拉起与终止 | `server/OpenCodeServerLauncher.kt`、`OpenCodeServerCliLocator.kt` | `OpenCodeServerLauncherITest`（`-Pit=true`）、`OpenCodeServerCliLocatorUnitTest` |
+| T5 生命周期编排与自愈 | `server/OpenCodeServerManager.kt` | `OpenCodeServerManagerUnitTest`（15 例） |
+| T6 连接层接线 | `BackendChatRepositoryModel.kt`、`server/ProjectServerHost.kt`、`BackendChatRepositoryRpcApi.kt` | 全量单测不回归 |
+| T7 RPC 与 shared 契约 | `opencode-shared/.../ChatRepositoryRpcApi.kt`、`BackendChatRepositoryRpcApi.kt` | `ServerStateDtoUnitTest` |
+| T8 前端状态条与设置项 | `opencode-frontend/.../chatApp/ui/ServerStatusStrip.kt`（新）、`chatApp/OpenCodeChatApp.kt`、`settings/ConnectionSettingsTab.kt`、`settings/OpenCodeSettingsState.kt`、`messages/OpencodeFrontendBundle.properties`、`opencode-idea-panel.opencode-frontend.xml` | `ServerStatusStripUnitTest`（5 例：显隐 / 按钮可见性 / 凭据输入 / 回调） |
+| T9 测试横切基建 | `src/test/kotlin/.../server/stub/OpenCodeServerStubMain.kt` | 被 T2/T4 用例复用（`ok` / `unauthorized` / `notjson` / `slow` / `exit` 形态） |
+| T10 共享注册表引用计数 | `server/OpenCodeServerRegistry.kt` + `server/OpenCodeServerManager.kt` | `OpenCodeServerRegistryUnitTest` + `OpenCodeServerManagerUnitTest`（关一个不停 / 关最后一个才停） |
+| T11 他人实例的凭据交互 | `ServerStatusStrip.kt`（凭据输入）+ `ChatViewModel` / `FrontendChatRepositoryModel` + `submitServerCredentials` | `OpenCodeServerManagerUnitTest`（凭据通过/不通过、不终止他人进程）+ `ServerStatusStripUnitTest` |
+| T12 CLI 检测与引导安装 | `OpenCodeServerCliLocator.kt`（解析在 T4）+ 通知（挂 `FrontendChatRepositoryModel`）+ 设置页 CLI 路径 | `OpenCodeServerCliLocatorUnitTest` + 装机验收 §9.2 第 4 条 |
+| T13 文档回填 | 本文 + 《TSD-30》§9.2/§9.6 + `README.md` + 《产品说明》§4.1 | 人工核对文档与实现一致 |
+
+提交：`8cab69f`（T1–T5/T9/T10）→ `970e574`（T6/T7）→ `454e8fd`（T8/T11/T12）→ 本文回填（T13）。
+
+**明确未落地（避免文档与实现不一致）**：
+- §5.3 第 2/3 条通知（自愈失败、`NEEDS_CREDENTIALS` 且面板未打开）——`FAILED`/`NEEDS_CREDENTIALS` 目前由面板内状态条承载。
+- §9.2 装机验收清单为**真机手工**项（Windows 进程树、双窗口引用计数、端口冲突、CLI 引导），需在真实 IDE 环境按清单执行，本轮未跑。
+- §12 中标注「需运行时实测」的 4 条（`FileLock` 跨实例语义、子进程环境变量可见性、Windows `destroyProcess`/`killProcess` 进程树行为、回环探测是否被代理改写）仍未实测，随 §9.2 一并验证。
 
 ---
 
