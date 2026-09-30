@@ -22,6 +22,7 @@
 | v1.10 | 2026-09-29 | S6 落地：工具调用/结果卡片化 —— 补抓 REST 工具部件实测契约（§4.7）；shared 新增 `ToolCallDto`；后端解析 `content[]` 的 `text`/`tool` 部件并一消息多气泡；`SessionStreamState` 消费 `session.tool.*` 就地更新卡片、执行终态收尾；前端工具卡片渲染与统一就地刷新；§2/§5.5/§5.7/§5.9/§6/§7/§9/§10 回填 | agent |
 | v1.11 | 2026-09-30 | S6b：实测 `GET /api/session/{id}/message` 的 `data[]` 为**最新在前**，对账/加载统一反转为「最早在前」（修复收到回复后列表看似被清空）；新增运行日志（事件流状态、REST 失败、会话加载与对账结果、流式入列），见 §5.10；消息区渲染稳定性修复见《TSD-07-主界面布局设计》§3.4 | agent |
 | v1.12 | 2026-09-30 | S6c：本地回声气泡改用 `/prompt` 返回的 user 消息 id（§5.7 实测契约：与消息列表同一 id），消除对账换 key 导致的闪烁；发送期间流式气泡先到时按「发送前条数」插入用户消息，保证问答顺序 | agent |
+| v1.13 | 2026-09-30 | 传输层决策变更：REST 与事件流**统一到同一 OkHttp 客户端**（§2 结论 3、§3 现状表更新为「三种传输并存 → 统一」）；迁移任务与验收见《TSD-30》Phase 2.7。最低支持平台提升至 2026.2（`sinceBuild=262`），官方 `DebouncedUpdates` 转为可用 | agent |
 
 ---
 
@@ -38,7 +39,7 @@
 
 1. 接入 `/api/event`，将事件映射为面板状态：文本/推理增量、权限请求、工具调用与结果、错误、空闲态。
 2. 断线自愈：指数退避重连 + 状态对账，不丢终态、不重复渲染。
-3. 不改变现有 REST 形态（仍走 JDK 自带），仅为事件流引入 okhttp + okhttp-sse。
+3. REST 传输：立项期决定「不改变现有形态（仍走 JDK 自带）」，仅为事件流引入 okhttp + okhttp-sse；**2026-09-30 决策变更为「REST 与事件流统一到同一个 OkHttp 客户端」**（一套认证 / 超时 / 代理 / 日志配置，且 `mockwebserver` 测试栈已在仓库），迁移任务与验收见《TSD-30-会话面板整体优化方案》Phase 2.7。
 
 ## 2. 结论先行
 
@@ -61,7 +62,7 @@
 
 | 项 | 现状 | 证据 |
 |---|---|---|
-| REST 客户端 | JDK 自带：`HttpURLConnection`；PATCH 单独走 `java.net.http.HttpClient` | `opencode-backend/.../repository/OpenCodeRestClient.kt` |
+| REST 客户端 | 现状：JDK 自带 `HttpURLConnection`，PATCH 单独走 `java.net.http.HttpClient`（与事件流的 okhttp 并存 = **三种传输方式**）；目标：统一到 okhttp 客户端（见 §2 结论 3 与《TSD-30》Phase 2.7） | `opencode-backend/.../repository/OpenCodeRestClient.kt` |
 | 鉴权 | HTTP Basic，用户名默认 `opencode`，密码为空则不鉴权；`authHeaderValue()` 已封装 | 同上 |
 | 事件消费 | `OpenCodeEventClient` + `SessionStreamState`：事件驱动的流式内容与运行态（S3a 已实施） | `opencode-backend/.../event/` |
 | 状态流 | `messagesFlow`（`ChatMessage` 列表）承接流式内容；`sessionRunningFlow` 承接运行态；`getSessionStateFlow` 仍为旧映射，未被前端订阅 | `BackendChatRepositoryModel` / `BackendChatRepositoryRpcApi` |

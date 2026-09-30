@@ -119,15 +119,15 @@ intellijPlatform {
 
     pluginConfiguration {
         ideaVersion {
-            // 最低支持 2026.1（build 261）；不设 until-build，保持向上兼容
-            sinceBuild = "261"
+            // 最低支持 2026.2（build 262）：Phase 2 需要平台 2026.2+ 的 API（如 DebouncedUpdates）；不设 until-build，保持向上兼容
+            sinceBuild = "262"
         }
     }
 
     // 针对最低支持版本做 API 兼容性校验（首次执行会下载对应 IDE 发行版）
     pluginVerification {
         ides {
-            create(IntelliJPlatformType.IntellijIdeaUltimate, "2026.1")
+            create(IntelliJPlatformType.IntellijIdeaUltimate, "2026.2")
         }
     }
 }

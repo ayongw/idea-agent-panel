@@ -54,7 +54,7 @@ opencode-idea-panel/
 ## 🚀 快速开始
 
 ### 环境要求
-- IntelliJ IDEA 2026.1+（构建与验证目标为 2026.2.3，`since-build=261`）
+- IntelliJ IDEA 2026.2+（构建与验证目标为 2026.2.3，`since-build=262`）
 - JDK 21 (系统默认)
 - **JBR 25** (项目自动使用 IDE 內建，路径: `/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home/`)
 - 已安装并可在 PATH 中找到 `opencode` CLI
@@ -103,7 +103,7 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 
 | 依赖 | 版本 | 用途 |
 |------|------|------|
-| IntelliJ Platform | 2026.2.3（最低支持 2026.1） | 插件开发框架 |
+| IntelliJ Platform | 2026.2.3（最低支持 2026.2） | 插件开发框架 |
 | Kotlin | 2.3.20 | 主开发语言 |
 | Gson | IDE 自带（2026.1 起为 2.13.x） | JSON 序列化，`compileOnly` 不随插件打包 |
 | kotlinx-serialization | 1.9.0 | RPC DTO 序列化 |
