@@ -205,7 +205,13 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
         val currentIds = messages.map { it.id }.toSet()
         messageBubbles.keys
             .filter { it !in currentIds }
-            .forEach { id -> messageBubbles.remove(id) }
+            .forEach { id ->
+                messageBubbles.remove(id)?.let { bubble ->
+                    // 气泡不再显示：释放其内部 Disposable 子组件（如思考动画）
+                    bubble.dispose()
+                    messagesContainer.remove(bubble)
+                }
+            }
     }
 
     /**
@@ -296,6 +302,7 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
     }
 
     private fun clearMessages() {
+        messageBubbles.values.forEach { it.dispose() }
         messagesContainer.removeAll()
         messageBubbles.clear()
         listModel.sync(emptyList())
@@ -354,6 +361,8 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
     override fun dispose() {
         streamingController.dispose()
         uiScope.cancel()
+        // 面板销毁：释放仍挂载的气泡（含思考动画等 Disposable 子组件）
+        messageBubbles.values.forEach { it.dispose() }
     }
 }
 

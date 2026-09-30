@@ -1,5 +1,6 @@
 package com.ayongw.idea.opencode.frontend.chatApp.ui
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -38,7 +39,7 @@ class MessageBubble(
     private val message: ChatMessage,
     private var isMatchingSearch: Boolean = false,
     private var isHighlightedInSearch: Boolean = false
-) : JPanel() {
+) : JPanel(), Disposable {
 
     private val isMyMessage = message.isMyMessage
 
@@ -56,6 +57,9 @@ class MessageBubble(
 
     /** 折叠箭头（▸/▾）引用，切换时更新 */
     private var reasoningChevron: JBLabel? = null
+
+    /** 思考动画组件（思考气泡初始态）：被内容骨架替换或气泡被删除时必须 dispose，否则 animator 挂到 ROOT 泄漏 */
+    private var thinkingIndicator: ThinkingIndicator? = null
 
     /** 当前渲染的内容段落 */
     private var currentSegments: List<MarkdownSegment> = emptyList()
@@ -91,7 +95,7 @@ class MessageBubble(
                 message.isAIThinkingMessage() -> {
                     // 已完成的历史思考（非空内容）默认折叠；流式刚开始（空内容）先显示动画
                     if (message.content.isBlank()) {
-                        add(ThinkingIndicator())
+                        add(ThinkingIndicator().also { thinkingIndicator = it })
                     } else {
                         buildReasoningStructure(expanded = false)
                     }
@@ -241,6 +245,9 @@ class MessageBubble(
 
     /** 思考区骨架：折叠标题行 + 内容容器（[expanded] 决定初始展开态） */
     private fun buildReasoningStructure(expanded: Boolean) {
+        // 动画组件被内容骨架替换：先释放，否则 animator 挂到 ROOT_DISPOSABLE 泄漏
+        thinkingIndicator?.dispose()
+        thinkingIndicator = null
         removeAll()
         setupAppearance()
         add(AuthorName(message))
@@ -287,6 +294,15 @@ class MessageBubble(
         reasoningExpanded = expanded
         contentContainer?.isVisible = expanded
         reasoningChevron?.text = if (expanded) COLLAPSE_CHEVRON else EXPAND_CHEVRON
+    }
+
+    /**
+     * 气泡被列表删除/清空时释放内部 Disposable 子组件（当前只有思考动画），
+     * 避免 animator 注册树残留到 ROOT_DISPOSABLE（Disposer 泄漏检测在 IDE 关闭时报警）。
+     */
+    override fun dispose() {
+        thinkingIndicator?.dispose()
+        thinkingIndicator = null
     }
 
     /** 更新工具卡片（运行中 → 完成 / 失败） */
