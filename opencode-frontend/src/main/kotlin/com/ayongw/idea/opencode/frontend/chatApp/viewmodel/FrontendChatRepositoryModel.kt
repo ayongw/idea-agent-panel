@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -23,6 +24,7 @@ import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ChatRepositoryRpcApi
 import com.ayongw.idea.opencode.shared.CommandDto
 import com.ayongw.idea.opencode.shared.ContextFileDto
+import com.ayongw.idea.opencode.shared.DefaultModelDto
 import com.ayongw.idea.opencode.shared.ModelDto
 import com.ayongw.idea.opencode.shared.ModelProviderDto
 import com.ayongw.idea.opencode.shared.PendingPermissionDto
@@ -117,6 +119,22 @@ class FrontendChatRepositoryModel(
     override suspend fun listModelProviders(): List<ModelProviderDto> =
         ChatRepositoryRpcApi.getInstance().listModelProviders(project.projectId())
 
+    /**
+     * 拉取本工作区会话列表（由后端按 `Project.basePath` 过滤），并更新对外流
+     *
+     * 服务不可达时返回上一次缓存，避免把「拉取失败」当成「没有会话」。
+     */
+    override suspend fun loadSessions(): List<SessionStateDto> {
+        val sessions = runCatching {
+            ChatRepositoryRpcApi.getInstance().getAllSessions(project.projectId()).first()
+        }.getOrNull() ?: return _allSessionsFlow.value
+        _allSessionsFlow.value = sessions
+        return sessions
+    }
+
+    override suspend fun getDefaultModel(): DefaultModelDto? =
+        runCatching { ChatRepositoryRpcApi.getInstance().getDefaultModel(project.projectId()) }.getOrNull()
+
     override suspend fun getSessionSelection(sessionId: String): SessionSelectionDto? =
         runCatching { ChatRepositoryRpcApi.getInstance().getSessionSelection(project.projectId(), sessionId) }
             .getOrNull()
@@ -186,11 +204,7 @@ class FrontendChatRepositoryModel(
     }
 
     private fun refreshSessions() {
-        coroutineScope.launch {
-            ChatRepositoryRpcApi.getInstance().getAllSessions(project.projectId()).collect { sessions ->
-                _allSessionsFlow.value = sessions
-            }
-        }
+        coroutineScope.launch { loadSessions() }
     }
 
     /** 订阅「随当前会话变化」的状态（执行态 / 待决权限 / 会话附件）；切换会话时重启，无当前会话时归零 */

@@ -12,6 +12,7 @@ import com.ayongw.idea.opencode.shared.ModelDto
 import com.ayongw.idea.opencode.shared.ModelProviderDto
 import javax.swing.Box
 import javax.swing.BoxLayout
+import javax.swing.ButtonGroup
 import javax.swing.JComponent
 import javax.swing.JMenuItem
 import javax.swing.JPanel
@@ -153,12 +154,15 @@ class InputToolbar(
         if (items.isEmpty()) {
             menu.add(JMenuItem(message("chat.input.loading")).apply { isEnabled = false })
         } else {
+            // 单选组 + 选中项加 ✓：不依赖 LAF 对 JRadioButtonMenuItem 圆点的渲染
+            val group = ButtonGroup()
             items.forEach { (value, label) ->
-                menu.add(
-                    JRadioButtonMenuItem(label, value == selected).apply {
-                        addActionListener { onSelect(value) }
-                    }
-                )
+                val isCurrent = value == selected
+                val item = JRadioButtonMenuItem(if (isCurrent) "✓ $label" else label)
+                item.isSelected = isCurrent
+                item.addActionListener { onSelect(value) }
+                group.add(item)
+                menu.add(item)
             }
         }
         // 工具条在底部，菜单向上弹出（y 取负的菜单高度）。

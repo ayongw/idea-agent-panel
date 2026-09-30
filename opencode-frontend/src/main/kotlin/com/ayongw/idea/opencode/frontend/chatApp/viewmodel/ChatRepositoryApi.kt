@@ -5,6 +5,7 @@ import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.CommandDto
 import com.ayongw.idea.opencode.shared.ContextFileDto
+import com.ayongw.idea.opencode.shared.DefaultModelDto
 import com.ayongw.idea.opencode.shared.ModelDto
 import com.ayongw.idea.opencode.shared.ModelProviderDto
 import com.ayongw.idea.opencode.shared.PendingPermissionDto
@@ -91,6 +92,16 @@ interface ChatRepositoryApi {
 
     /** 按供应商分组的模型清单（模型选择弹窗） */
     suspend fun listModelProviders(): List<ModelProviderDto>
+
+    /**
+     * 拉取当前工作区会话列表（启动时拉一次，供「全部会话」弹窗与 tab 恢复使用）
+     *
+     * @return 本次拉到的会话列表；服务不可达时沿用上一次缓存
+     */
+    suspend fun loadSessions(): List<SessionStateDto>
+
+    /** 服务端默认模型（配置里的 `model`；未配置或不可达时为 null） */
+    suspend fun getDefaultModel(): DefaultModelDto?
 
     /** 指定会话当前选中的模式与模型（切换会话后回读）；不可达时为 null */
     suspend fun getSessionSelection(sessionId: String): SessionSelectionDto?

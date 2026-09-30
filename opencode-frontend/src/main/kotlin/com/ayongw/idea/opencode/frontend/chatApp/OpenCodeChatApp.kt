@@ -22,6 +22,7 @@ import com.ayongw.idea.opencode.shared.SessionStateDto
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Dimension
+import java.io.File
 import javax.swing.JPanel
 
 class OpenCodeChatApp(
@@ -84,12 +85,21 @@ class OpenCodeChatApp(
     }
 
     /**
-     * 当前工作区内的会话（按 opencode session.location.directory 过滤）
+     * 当前工作区内的会话
+     *
+     * 服务端已按 `?directory=` 过滤，这里再做路径归一化兜底：去尾斜杠 + canonicalPath，
+     * 兼容符号链接（如 `/var` 与 `/private/var`）与结尾斜杠差异。
      */
     private fun workspaceSessions(): List<SessionStateDto> {
         val basePath = project.basePath
-        return allSessions.filter { it.directory == null || basePath == null || it.directory == basePath }
+        return allSessions.filter { session ->
+            val directory = session.directory
+            directory == null || basePath == null || normalizePath(directory) == normalizePath(basePath)
+        }
     }
+
+    private fun normalizePath(path: String): String =
+        (runCatching { File(path).canonicalPath }.getOrNull() ?: path).trimEnd('/')
 
     /**
      * 「全部会话」弹窗：查看当前工作区内的所有会话
@@ -97,6 +107,8 @@ class OpenCodeChatApp(
     private fun showAllSessionsPopup(anchor: Component) {
         allSessionsPopup?.cancel()
         allSessionsPopup = null
+        // 打开前刷新一次本工作区会话（启动后其他窗口/工具新建的会话也能看到）
+        viewModel.loadSessions()
 
         val sessionList = SessionList(
             project = project,

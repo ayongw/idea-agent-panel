@@ -10,6 +10,7 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <applicationService serviceImplementation="com.ayongw.idea.opencode.frontend.settings.OpenCodeSettingsState"/>
+        <projectService serviceImplementation="com.ayongw.idea.opencode.frontend.chatApp.viewmodel.OpenCodeSessionTabsState"/>
         <toolWindow factoryClass="com.ayongw.idea.opencode.frontend.toolWindow.OpenCodeToolWindowFactory"
                     id="OpenCode"
                     icon="/icons/opencode.svg"/>

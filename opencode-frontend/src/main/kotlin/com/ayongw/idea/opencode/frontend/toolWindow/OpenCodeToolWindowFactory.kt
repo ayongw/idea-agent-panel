@@ -10,6 +10,7 @@ import com.ayongw.idea.opencode.frontend.CoroutineScopeHolder
 import com.ayongw.idea.opencode.frontend.chatApp.OpenCodeChatApp
 import com.ayongw.idea.opencode.frontend.chatApp.viewmodel.ChatViewModel
 import com.ayongw.idea.opencode.frontend.chatApp.viewmodel.FrontendChatRepositoryModel
+import com.ayongw.idea.opencode.frontend.chatApp.viewmodel.OpenCodeSessionTabsState
 
 class OpenCodeToolWindowFactory : ToolWindowFactory, DumbAware {
     override fun shouldBeAvailable(project: Project) = true
@@ -22,7 +23,8 @@ class OpenCodeToolWindowFactory : ToolWindowFactory, DumbAware {
         val viewModel = ChatViewModel(
             CoroutineScopeHolder.getInstance(project).createScope(ChatViewModel::class.java.simpleName),
             FrontendChatRepositoryModel.getInstance(project),
-            project.basePath
+            project.basePath,
+            OpenCodeSessionTabsState.getInstance(project)
         )
         Disposer.register(toolWindow.disposable, viewModel)
 

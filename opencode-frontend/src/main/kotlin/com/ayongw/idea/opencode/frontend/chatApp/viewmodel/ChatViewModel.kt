@@ -119,13 +119,18 @@ interface ChatViewModelApi : Disposable {
 
     /** 刷新按供应商分组的模型 */
     fun loadModelProviders()
+
+    /** 重新拉取本工作区会话列表（打开「全部会话」弹窗前刷新） */
+    fun loadSessions()
 }
 
 class ChatViewModel(
     private val coroutineScope: CoroutineScope,
     private val repository: ChatRepositoryApi,
     /** 工作区根目录，用于 `#` mention 的相对路径换算 */
-    private val basePath: String? = null
+    private val basePath: String? = null,
+    /** 项目级 tab 持久化（IDE 重启后恢复打开的会话） */
+    private val tabsState: OpenCodeSessionTabsState? = null
 ) : ChatViewModelApi {
 
     private val _chatMessagesFlow = MutableStateFlow(emptyList<ChatMessage>())
@@ -152,18 +157,36 @@ class ChatViewModel(
 
     private var currentSendMessageJob: Job? = null
 
+    private val _currentSessionId = MutableStateFlow<String?>(null)
+
+    private val _openedSessionIds = MutableStateFlow(emptyList<String>())
+    override val openedSessionIds: StateFlow<List<String>> = _openedSessionIds.asStateFlow()
+
+    /** IDE 重启后待恢复的会话（由持久化状态读入） */
+    private var restoredSessionId: String? = null
+
     init {
         repository
             .messagesFlow
             .onEach { messages -> _chatMessagesFlow.value = messages }
             .launchIn(coroutineScope)
 
-        // 同步当前会话 ID
+        // 恢复上次打开的会话 tab（IDE 重启后由项目级状态读入）
+        tabsState?.let { state ->
+            _openedSessionIds.value = state.openedSessionIds.toList()
+            restoredSessionId = state.currentSessionId
+        }
+
+        // 同步当前会话 ID（并落盘 tab 状态）
         coroutineScope.launch {
             repository.currentSessionId.onEach { sessionId ->
                 _currentSessionId.value = sessionId
+                persistTabs()
             }.launchIn(coroutineScope)
         }
+
+        // 启动即拉取本工作区历史会话，并按需恢复 / 兜底创建
+        coroutineScope.launch { bootstrapSessions() }
 
         // 执行态：运行中切「停止」，结束后回到可发送并刷新用量
         coroutineScope.launch {
@@ -183,11 +206,6 @@ class ChatViewModel(
             null -> MessageInputState.Disabled
             else -> MessageInputState.Enabled(input)
         }
-
-    private val _currentSessionId = MutableStateFlow<String?>(null)
-
-    private val _openedSessionIds = MutableStateFlow(emptyList<String>())
-    override val openedSessionIds: StateFlow<List<String>> = _openedSessionIds.asStateFlow()
 
     private val _agentsFlow = MutableStateFlow(emptyList<AgentDto>())
     override val agentsFlow: StateFlow<List<AgentDto>> = _agentsFlow.asStateFlow()
@@ -266,6 +284,9 @@ class ChatViewModel(
         coroutineScope.launch {
             val sessionId = repository.createSession(initialTitle)
             openTab(sessionId)
+            // 把当前展示的模式/模型下发到新会话，避免「界面显示 A、实际按服务端默认 B 执行」
+            _selectedAgentId.value?.let { agentId -> runCatching { repository.switchAgent(agentId) } }
+            _selectedModel.value?.let { model -> runCatching { repository.switchModel(model.providerID, model.modelID) } }
             _usageFlow.value = null
             refreshUsage()
             refreshAgentsAndModels()
@@ -291,19 +312,55 @@ class ChatViewModel(
 
     override fun closeSessionTab(sessionId: String) {
         _openedSessionIds.value = _openedSessionIds.value - sessionId
+        persistTabs()
+    }
+
+    override fun loadSessions() {
+        coroutineScope.launch { repository.loadSessions() }
+    }
+
+    /**
+     * 启动引导：拉取本工作区历史会话 → 恢复上次的 tab / 会话 → 一个都没有时默认创建一个
+     */
+    private suspend fun bootstrapSessions() {
+        val sessions = runCatching { repository.loadSessions() }.getOrDefault(emptyList())
+        val existingIds = sessions.map { it.sessionId }.toSet()
+        // 会话已被删除的 tab 不再恢复；只在拉取成功且非空时裁剪，避免服务不可达时清空 tab
+        if (existingIds.isNotEmpty()) {
+            _openedSessionIds.value = _openedSessionIds.value.filter { it in existingIds }
+        }
+
+        val target = restoredSessionId?.takeIf { it in existingIds || existingIds.isEmpty() }
+            ?: _openedSessionIds.value.lastOrNull()
+            ?: sessions.firstOrNull()?.sessionId
+        restoredSessionId = null
+
+        when (target) {
+            null -> createSession(null)
+            else -> switchSession(target)
+        }
+    }
+
+    /** 落盘 tab 状态（项目级持久化，IDE 重启后恢复） */
+    private fun persistTabs() {
+        tabsState?.apply {
+            openedSessionIds = _openedSessionIds.value.toMutableList()
+            currentSessionId = _currentSessionId.value
+        }
     }
 
     private fun openTab(sessionId: String) {
         val opened = _openedSessionIds.value
         if (opened.contains(sessionId)) return
         _openedSessionIds.value = opened + sessionId
+        persistTabs()
     }
 
     override fun loadAgentsAndModels() {
         coroutineScope.launch { refreshAgentsAndModels() }
     }
 
-    /** 拉取 Agent / 模型列表并补齐默认选中（顺序：build → plan → 首项） */
+    /** 拉取 Agent / 模型列表并补齐默认选中（模式：build → plan → 首项；模型：服务端默认 → 首项） */
     private suspend fun refreshAgentsAndModels() {
         runCatching { repository.listAgents() }.onSuccess { agents ->
             _agentsFlow.value = agents
@@ -314,9 +371,20 @@ class ChatViewModel(
         runCatching { repository.listModels() }.onSuccess { models ->
             _modelsFlow.value = models
             if (_selectedModel.value == null) {
-                _selectedModel.value = models.firstOrNull()
+                _selectedModel.value = resolveInitialModel(models)
             }
         }
+    }
+
+    /**
+     * 初始模型：服务端默认模型（配置里的 `model`，即设置页展示的 Default model）优先，
+     * 不在本机模型清单里或取不到时退回列表首项
+     */
+    private suspend fun resolveInitialModel(models: List<ModelDto>): ModelDto? {
+        val fallback = models.firstOrNull() ?: return null
+        val preferred = runCatching { repository.getDefaultModel() }.getOrNull() ?: return fallback
+        return models.firstOrNull { it.providerID == preferred.providerID && it.modelID == preferred.modelID }
+            ?: fallback
     }
 
     /** 默认模式：build 优先，其次 plan，最后取首项 */
@@ -512,6 +580,8 @@ class ChatViewModel(
     override fun deleteSession(sessionId: String) {
         coroutineScope.launch {
             repository.deleteSession(sessionId)
+            // 会话已删除，对应 tab 一并关闭（否则会留下点不开的死 tab，并被持久化）
+            if (_openedSessionIds.value.contains(sessionId)) closeSessionTab(sessionId)
             if (_currentSessionId.value == null) _usageFlow.value = null
         }
     }
