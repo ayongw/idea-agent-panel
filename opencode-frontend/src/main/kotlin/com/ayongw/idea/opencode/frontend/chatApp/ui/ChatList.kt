@@ -42,8 +42,14 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
 
     private val messageBubbles = mutableMapOf<String, MessageBubble>()
 
-    /** 诊断用：上次打印逐气泡几何时的气泡数量（只在与上次不同时打印，避免刷屏） */
-    private var lastLoggedBubbleCount = -1
+    /** 消息 id 顺序的唯一真源：gridy 由它派生（TSD-30 §5.2，消除下标错配） */
+    private val listModel = MessageListModel()
+
+    /** 粘底判定（TSD-30 §5.2）：用户不在底部时不抢滚动 */
+    private val scrollPolicy = ScrollPolicy(JBUI.scale(ScrollPolicy.DEFAULT_THRESHOLD))
+
+    /** 底部占位 filler 的显式引用（不再靠组件数量推断） */
+    private val filler = Box.createVerticalGlue()
 
     /** 流式渲染控制器 */
     private val streamingController: StreamingRenderController
@@ -139,12 +145,13 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
         // 已有气泡：内容变化时就地重渲染（事件流累积的流式内容）
         syncExistingMessages(messages)
 
+        // 集合变化：更新顺序模型与气泡映射，统一重排（增删后 gridy 由模型派生）
         removeDeletedMessages(messages)
-        removeSpaceFillerIfPresent()
-
+        listModel.sync(messages.map { it.id })
         addNewMessages(messages)
+        relayoutMessages()
 
-        refresh()
+        requestLayout()
         scrollToBottom()
     }
 
@@ -173,39 +180,49 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
     }
 
 
+    /** 只把「新消息」建成气泡缓存；挂载顺序由 [relayoutMessages] 统一决定 */
     private fun addNewMessages(messages: List<ChatMessage>) {
-        val gbc = baseConstraints()
-
-        messages.forEachIndexed { index, message ->
+        messages.forEach { message ->
             if (message.id !in messageBubbles) {
-                val bubble = MessageBubble(message)
-                messageBubbles[message.id] = bubble
-
-                gbc.gridy = index
-                if (message.isMyMessage) {
-                    // 用户消息：气泡自适应宽度，右对齐
-                    gbc.anchor = GridBagConstraints.EAST
-                    gbc.fill = GridBagConstraints.NONE
-                } else {
-                    // 助手消息：整行块（无气泡底），占满可视宽度，长内容在块内裁剪/滚动
-                    gbc.anchor = GridBagConstraints.WEST
-                    gbc.fill = GridBagConstraints.HORIZONTAL
-                }
-
-                messagesContainer.add(bubble, gbc)
+                messageBubbles[message.id] = MessageBubble(message)
             }
         }
-
-        fillRemainingSpace(messages.size, gbc)
     }
 
     private fun removeDeletedMessages(messages: List<ChatMessage>) {
         val currentIds = messages.map { it.id }.toSet()
         messageBubbles.keys
             .filter { it !in currentIds }
-            .forEach { id ->
-                messageBubbles.remove(id)?.let { messagesContainer.remove(it) }
+            .forEach { id -> messageBubbles.remove(id) }
+    }
+
+    /**
+     * 按模型顺序统一重排：gridy 由 [MessageListModel] 索引派生，filler 显式引用。
+     *
+     * 气泡对象保持不变（不重建，避免闪烁），只重新挂载；增删后一律走这里，
+     * 不再依赖「全表下标」或「组件数量推断 filler」（P1-4）。
+     */
+    private fun relayoutMessages() {
+        messagesContainer.removeAll()
+        val gbc = baseConstraints()
+        listModel.ids.forEachIndexed { index, id ->
+            val bubble = messageBubbles[id] ?: return@forEachIndexed
+            gbc.gridy = index
+            if (bubble.isMy) {
+                // 用户消息：气泡自适应宽度，右对齐
+                gbc.anchor = GridBagConstraints.EAST
+                gbc.fill = GridBagConstraints.NONE
+            } else {
+                // 助手消息：整行块（无气泡底），占满可视宽度
+                gbc.anchor = GridBagConstraints.WEST
+                gbc.fill = GridBagConstraints.HORIZONTAL
             }
+            messagesContainer.add(bubble, gbc)
+        }
+        gbc.gridy = listModel.size
+        gbc.weighty = 1.0
+        gbc.anchor = GridBagConstraints.NORTHWEST
+        messagesContainer.add(filler, gbc)
     }
 
     private fun showEmptyPanel() {
@@ -224,61 +241,26 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
         insets = JBUI.insets(ChatUIConstants.Spacing.TINY)
     }
 
-    private fun fillRemainingSpace(row: Int, gbc: GridBagConstraints) {
-        gbc.gridy = row
-        gbc.weighty = 1.0
-        gbc.anchor = GridBagConstraints.NORTHWEST
-        messagesContainer.add(Box.createVerticalGlue(), gbc)
-    }
-
-    private fun removeSpaceFillerIfPresent() {
-        if (messagesContainer.componentCount > messageBubbles.size) {
-            messagesContainer.remove(messagesContainer.componentCount - 1)
-        }
-    }
-
     /**
-     * 滚动到底部（最新消息）。
+     * 粘底滚动（最新消息）：仅在用户已在底部（阈值内）时执行，上翻阅读期间不抢滚动（TSD-30 §5.2）。
      *
      * 必须在 EDT 上「布局完成之后」执行：`setMessages` 里刚 add 的气泡此刻还没有
      * bounds，直接 `scrollRectToVisible` 会按旧高度滚动，落到空白区域。
      */
     private fun scrollToBottom() {
         ApplicationManager.getApplication().invokeLater {
-            if (messagesContainer.height > 0) {
+            val viewport = scrollPane.viewport
+            if (messagesContainer.height > 0 &&
+                scrollPolicy.shouldStickToBottom(
+                    viewPositionY = viewport.viewPosition.y.toInt(),
+                    extentHeight = viewport.extentSize.height,
+                    viewSizeHeight = viewport.viewSize.height,
+                )
+            ) {
                 messagesContainer.scrollRectToVisible(
                     Rectangle(0, messagesContainer.height - 1, 1, messagesContainer.height)
                 )
             }
-            logGeometry("after-scroll")
-        }
-    }
-
-    /** 诊断日志：打印容器/视口/各气泡的真实几何，用于排查「消息区空白」（仅 DEBUG 开启时输出） */
-    private fun logGeometry(tag: String) {
-        val viewport = scrollPane.viewport
-        log.debug(
-            "geometry($tag): chatList=${size.width}x${size.height} showing=$isShowing " +
-                "card=${visibleCard()} bubbles=${messageBubbles.size} " +
-                "container=${messagesContainer.size.width}x${messagesContainer.size.height} " +
-                "pref=${messagesContainer.preferredSize.width}x${messagesContainer.preferredSize.height} " +
-                "valid=${messagesContainer.isValid} " +
-                "viewport=${viewport.extentSize.width}x${viewport.extentSize.height} " +
-                "viewPos=${viewport.viewPosition.x},${viewport.viewPosition.y} " +
-                "viewSize=${viewport.viewSize.width}x${viewport.viewSize.height}"
-        )
-        if (messageBubbles.size == lastLoggedBubbleCount) return
-        lastLoggedBubbleCount = messageBubbles.size
-        val gridBag = messagesContainer.layout as? GridBagLayout
-        messagesContainer.components.forEach { child ->
-            val gbc = gridBag?.getConstraints(child)
-            log.debug(
-                "  child ${child.javaClass.simpleName}: " +
-                    "bounds=${child.bounds.x},${child.bounds.y},${child.bounds.width}x${child.bounds.height} " +
-                    "pref=${child.preferredSize.width}x${child.preferredSize.height} visible=${child.isVisible} " +
-                    "grid=(${gbc?.gridx},${gbc?.gridy}) weight=(${gbc?.weightx},${gbc?.weighty}) " +
-                    "fill=${gbc?.fill} anchor=${gbc?.anchor}"
-            )
         }
     }
 
@@ -296,12 +278,14 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
     private fun clearMessages() {
         messagesContainer.removeAll()
         messageBubbles.clear()
+        listModel.sync(emptyList())
         streamingController.cancelStreaming()
         showEmptyPanel()
-        refresh()
+        requestLayout()
     }
 
-    private fun refresh() {
+    /** 布局单一入口（TSD-30 §5.1）：revalidate + 几何自愈兜底 + repaint 收敛到一处 */
+    private fun requestLayout() {
         messagesContainer.revalidate()
         ensureLaidOut()
         messagesContainer.repaint()

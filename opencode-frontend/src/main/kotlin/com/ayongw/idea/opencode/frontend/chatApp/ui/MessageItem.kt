@@ -38,6 +38,9 @@ class MessageBubble(
 
     private val isMyMessage = message.isMyMessage
 
+    /** 是否用户消息（决定对齐与气泡样式；供列表重排时取用） */
+    val isMy: Boolean get() = isMyMessage
+
     /** 内容容器 - 用于动态更新 */
     private var contentContainer: JPanel? = null
 
