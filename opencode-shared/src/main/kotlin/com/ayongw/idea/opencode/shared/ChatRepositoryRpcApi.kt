@@ -204,7 +204,57 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
      * @return null 表示当前无待决项（已回复 / 已结束 / 非当前会话）
      */
     suspend fun getPendingPermissionFlow(projectId: ProjectId, sessionId: String): Flow<PendingPermissionDto?>
+
+    // ==================== Server 运行时（进程与连接管理，TSD-31） ====================
+
+    /**
+     * Server 运行状态流（状态条订阅）：状态、失败分类、端口、是否自有、引用计数、输出尾巴
+     */
+    suspend fun getServerStateFlow(projectId: ProjectId): Flow<ServerStateDto>
+
+    /**
+     * 重试启动 Server（等价于重新探测 → 复用 / 拉起）
+     */
+    suspend fun retryServerStart(projectId: ProjectId)
+
+    /**
+     * 停止**本插件启动的** Server（强制归零引用后优雅终止）
+     *
+     * @return false 表示当前端点非自有实例（他人实例一律不终止）
+     */
+    suspend fun stopServer(projectId: ProjectId): Boolean
+
+    /**
+     * 提交他人实例的接入凭据（`NEEDS_CREDENTIALS` 交互）
+     *
+     * @return true 表示凭据校验通过并已复用该实例
+     */
+    suspend fun submitServerCredentials(projectId: ProjectId, username: String, password: String): Boolean
 }
+
+/**
+ * Server 运行时状态快照（TSD-31 §6.3）
+ *
+ * 枚举以字符串下发，避免 RPC 侧对枚举序列化形态的额外约束；新增字段一律带默认值以保持向后兼容。
+ */
+@Serializable
+data class ServerStateDto(
+    /** 状态枚举名：IDLE / DISCOVERING / REUSING / NEEDS_CREDENTIALS / STARTING / READY / FAILED / STOPPING / STOPPED */
+    val state: String,
+    /** 失败分类枚举名：CLI_NOT_FOUND / PORT_IN_USE / AUTH_FAILED / READY_TIMEOUT / PROCESS_EXITED / UNREACHABLE */
+    val failure: String? = null,
+    /** 面向用户的补充说明（已脱敏） */
+    val detail: String? = null,
+    /** 当前端点地址（已剥离 userinfo） */
+    val baseUrl: String? = null,
+    val port: Int? = null,
+    /** 端点是否由本插件拉起（决定能否「停止 Server」） */
+    val owned: Boolean = false,
+    /** 共享注册表上的引用者数量（自有实例才有意义） */
+    val refCount: Int = 0,
+    /** 失败时的输出尾巴（已脱敏，供展开查看） */
+    val outputTail: List<String> = emptyList(),
+)
 
 /** Server 连接信息 */
 @Serializable

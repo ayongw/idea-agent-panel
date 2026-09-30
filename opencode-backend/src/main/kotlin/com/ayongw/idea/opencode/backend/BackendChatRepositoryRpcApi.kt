@@ -3,6 +3,8 @@
 package com.ayongw.idea.opencode.backend
 
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
+import com.ayongw.idea.opencode.backend.server.OpenCodeServerManager
+import com.ayongw.idea.opencode.backend.server.OpenCodeServerStatus
 import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessageDto
 import com.ayongw.idea.opencode.shared.CommandDto
@@ -17,6 +19,7 @@ import com.ayongw.idea.opencode.shared.PermissionResponse
 import com.ayongw.idea.opencode.shared.PromptContextDto
 import com.ayongw.idea.opencode.shared.ReferenceDto
 import com.ayongw.idea.opencode.shared.ServerInfoDto
+import com.ayongw.idea.opencode.shared.ServerStateDto
 import com.ayongw.idea.opencode.shared.SessionSelectionDto
 import com.ayongw.idea.opencode.shared.SessionStateDto
 import com.ayongw.idea.opencode.shared.SessionUsageDto
@@ -24,11 +27,13 @@ import com.ayongw.idea.opencode.shared.SkillDto
 import com.ayongw.idea.opencode.shared.WorkspaceEntryDto
 import com.intellij.platform.project.ProjectId
 import com.intellij.platform.project.findProjectOrNull
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 
 class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
     override suspend fun getMessagesFlow(projectId: ProjectId): Flow<List<ChatMessageDto>> {
@@ -321,6 +326,42 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
 
     private fun parsePort(serverUrl: String): Int? =
         runCatching { java.net.URI(serverUrl).port }.getOrNull()?.takeIf { it > 0 }
+
+    // ==================== Server 运行时（进程与连接管理，TSD-31） ====================
+
+    override suspend fun getServerStateFlow(projectId: ProjectId): Flow<ServerStateDto> {
+        val backendProject = projectId.findProjectOrNull() ?: return emptyFlow()
+        return OpenCodeServerManager.getInstance(backendProject).status.map { it.toServerStateDto() }
+    }
+
+    override suspend fun retryServerStart(projectId: ProjectId) {
+        val backendProject = projectId.findProjectOrNull() ?: return
+        // 探测/拉起是阻塞编排，放到 IO 线程，避免占住 RPC 线程
+        withContext(Dispatchers.IO) { OpenCodeServerManager.getInstance(backendProject).retry() }
+    }
+
+    override suspend fun stopServer(projectId: ProjectId): Boolean {
+        val backendProject = projectId.findProjectOrNull() ?: return false
+        return withContext(Dispatchers.IO) { OpenCodeServerManager.getInstance(backendProject).stopOwnedServer() }
+    }
+
+    override suspend fun submitServerCredentials(projectId: ProjectId, username: String, password: String): Boolean {
+        val backendProject = projectId.findProjectOrNull() ?: return false
+        return withContext(Dispatchers.IO) {
+            OpenCodeServerManager.getInstance(backendProject).submitCredentials(username, password)
+        }
+    }
+
+    private fun OpenCodeServerStatus.toServerStateDto() = ServerStateDto(
+        state = state.name,
+        failure = failure?.name,
+        detail = detail,
+        baseUrl = endpoint?.displayUrl,
+        port = port,
+        owned = owned,
+        refCount = refCount,
+        outputTail = outputTail,
+    )
 
     private fun OpenCodeRestClient.OpenCodeModel.toModelDto(providerName: String?) = ModelDto(
         id = id,

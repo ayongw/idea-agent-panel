@@ -9,6 +9,9 @@ import com.ayongw.idea.opencode.backend.repository.AIResponseGenerator
 import com.ayongw.idea.opencode.backend.repository.ChatMessageFactory
 import com.ayongw.idea.opencode.backend.repository.OpenCodeCredentials
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
+import com.ayongw.idea.opencode.backend.server.OpenCodeServerConnectionConfig
+import com.ayongw.idea.opencode.backend.server.OpenCodeServerEndpoint
+import com.ayongw.idea.opencode.backend.server.OpenCodeServerManager
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ChatMessageDto
 import com.ayongw.idea.opencode.shared.ContextFileDto
@@ -41,7 +44,7 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 
 @Service(Service.Level.PROJECT)
-class BackendChatRepositoryModel : Disposable {
+class BackendChatRepositoryModel(private val project: Project) : Disposable {
     companion object {
         /** 默认 Server 地址 */
         const val DEFAULT_SERVER_URL = "http://127.0.0.1:4096"
@@ -82,6 +85,19 @@ class BackendChatRepositoryModel : Disposable {
     @Volatile
     private var restClient = OpenCodeRestClient(serverUrl, username, password)
 
+    /**
+     * 最近一次由设置页下发的连接配置（含 Server 管理项）
+     *
+     * Server 运行时（[OpenCodeServerManager]）据此决定探测目标与自动启动行为；
+     * 插件自行选定端点后经 [applyManagedEndpoint] 下发，**不覆盖**本字段。
+     */
+    @Volatile
+    private var pushedConfig = OpenCodeServerConnectionConfig(
+        serverUrl = DEFAULT_SERVER_URL,
+        username = OpenCodeRestClient.DEFAULT_USERNAME,
+        password = OpenCodeCredentials.resolvePassword(null),
+    )
+
     /** 本地消息缓存（当前会话的消息） */
     private val _messages = MutableStateFlow(emptyList<ChatMessage>())
 
@@ -119,6 +135,8 @@ class BackendChatRepositoryModel : Disposable {
             loadSessions()
             ensureEventStream()
         }
+        // Server 运行时：首次触达后端即开始探测（复用 / 拉起自有实例），不等待面板打开（TSD-31 §3.3）
+        scope.launch { OpenCodeServerManager.getInstance(project).startIfIdle() }
     }
 
     fun getMessagesFlow(): Flow<List<ChatMessageDto>> {
@@ -667,17 +685,38 @@ class BackendChatRepositoryModel : Disposable {
         val normalizedUsername = username.trim().ifEmpty { OpenCodeRestClient.DEFAULT_USERNAME }
         // 密码留空时回退 OPENCODE_SERVER_PASSWORD / service.json，避免设置页空值把兜底覆盖掉
         val normalizedPassword = OpenCodeCredentials.resolvePassword(password)
-        if (normalizedUrl == this.serverUrl &&
-            normalizedUsername == this.username &&
-            normalizedPassword == this.password
+        pushedConfig = pushedConfig.copy(
+            serverUrl = normalizedUrl,
+            username = normalizedUsername,
+            password = normalizedPassword,
+        )
+        applyConnection(normalizedUrl, normalizedUsername, normalizedPassword)
+    }
+
+    /**
+     * Server 运行时选定端点后下发（TSD-31 §3.1）
+     *
+     * 与设置页下发共用同一套连接重建逻辑，但**不覆盖**用户配置：运行时的探测依据始终是用户配置。
+     */
+    fun applyManagedEndpoint(endpoint: OpenCodeServerEndpoint) {
+        applyConnection(endpoint.baseUrl.trimEnd('/'), endpoint.username, endpoint.password.orEmpty())
+    }
+
+    /** 当前用户配置（Server 运行时读取） */
+    fun currentServerConfig(): OpenCodeServerConnectionConfig = pushedConfig
+
+    private fun applyConnection(serverUrl: String, username: String, password: String) {
+        if (serverUrl == this.serverUrl &&
+            username == this.username &&
+            password == this.password
         ) {
             ensureEventStream()
             return
         }
-        this.serverUrl = normalizedUrl
-        this.username = normalizedUsername
-        this.password = normalizedPassword
-        this.restClient = OpenCodeRestClient(normalizedUrl, normalizedUsername, normalizedPassword)
+        this.serverUrl = serverUrl
+        this.username = username
+        this.password = password
+        this.restClient = OpenCodeRestClient(serverUrl, username, password)
         restartEventStream()
         scope.launch { loadSessions() }
     }
@@ -848,8 +887,15 @@ class BackendChatRepositoryModel : Disposable {
         return chunks
     }
 
-    /** Project 销毁：关闭事件流并取消内部协程 */
+    /**
+     * Project 销毁：先释放 Server 引用（仅最后一个引用者会终止自有进程），再关闭事件流、取消协程
+     *
+     * 顺序不可颠倒（TSD-31 §6.3）：先释放引用再断连接，避免「事件流还在重连、Server 已被终止」的空转。
+     */
     override fun dispose() {
+        runCatching {
+            project.getServiceIfCreated(OpenCodeServerManager::class.java)?.dispose()
+        }.onFailure { log.info("释放 Server 引用失败", it) }
         eventClient?.stop()
         eventClient = null
         scope.cancel()

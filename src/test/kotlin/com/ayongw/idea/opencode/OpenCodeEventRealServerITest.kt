@@ -4,6 +4,9 @@ import com.ayongw.idea.opencode.backend.BackendChatRepositoryModel
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ChatMessageDto
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectManager
+import com.intellij.testFramework.TestApplicationManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -15,6 +18,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
+import java.nio.file.Files
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
@@ -35,17 +39,23 @@ class OpenCodeEventRealServerITest {
     private val password: String = System.getenv("OPENCODE_IT_PASSWORD") ?: "itest-oc-panel"
 
     private lateinit var model: BackendChatRepositoryModel
+    private lateinit var project: Project
 
     @Before
     fun setUp() {
         assumeTrue("需要 -Dopencode.it=true 且本机有可达的 opencode serve", System.getProperty("opencode.it") == "true")
-        model = BackendChatRepositoryModel()
+        // BackendChatRepositoryModel 是 Project 服务（需 Project 以在销毁时释放 Server 引用）
+        TestApplicationManager.getInstance()
+        project = ProjectManager.getInstance()
+            .createProject("opencode-itest", Files.createTempDirectory("opencode-itest").toString())
+        model = BackendChatRepositoryModel(project)
         model.updateServerConfig(baseUrl, "opencode", password)
     }
 
     @After
     fun tearDown() {
         if (::model.isInitialized) model.dispose()
+        if (::project.isInitialized) runCatching { ProjectManager.getInstance().closeAndDispose(project) }
     }
 
     @Test

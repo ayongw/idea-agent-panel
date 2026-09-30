@@ -4,7 +4,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.Project
 import java.nio.file.Path
 
 /** 当前连接配置（由设置页下发；密码已按「显式值 → 环境变量 → service.json」解析） */
@@ -101,10 +103,14 @@ data class OpenCodeServerStatus(
  * - 自有实例生命周期由共享注册表的**引用计数**决定：`refCount > 0` 时只递减，归零才优雅终止；
  * - 自愈上限 3 次 / 10 分钟窗口，超限转 `FAILED`（原因 `PROCESS_EXITED`）等用户重试。
  */
+@Service(Service.Level.PROJECT)
 class OpenCodeServerManager(
     private val host: OpenCodeServerHost,
     private val deps: OpenCodeServerDeps,
 ) : Disposable {
+
+    /** 平台装配入口（Project 侧实现 host，依赖用默认实现） */
+    constructor(project: Project) : this(ProjectServerHost(project), defaultDeps())
 
     private val log = Logger.getInstance(OpenCodeServerManager::class.java)
 
@@ -133,7 +139,7 @@ class OpenCodeServerManager(
     @Volatile
     private var disposed: Boolean = false
 
-    /** 插件启动（项目打开）时调用：探测 → 复用 / 引导 / 启动 */
+    /** 插件启动时调用：探测 → 复用 / 引导 / 启动 */
     fun ensureStarted() {
         if (disposed) return
         transition(OpenCodeServerState.DISCOVERING)
@@ -143,6 +149,15 @@ class OpenCodeServerManager(
             log.info("Server 发现失败", e)
             fail(OpenCodeServerFailure.UNREACHABLE, "发现过程异常：${e.message}")
         }
+    }
+
+    /**
+     * 仅当尚未决定端点（`IDLE`）时执行一次探测
+     *
+     * 幂等：插件启动、面板打开等多个入口都可安全调用，不会重复触发探测轮次。
+     */
+    fun startIfIdle() {
+        if (_status.value.state == OpenCodeServerState.IDLE) ensureStarted()
     }
 
     /** 用户点「重试」 */
@@ -515,6 +530,14 @@ class OpenCodeServerManager(
     }
 
     companion object {
+        /** 平台服务入口 */
+        fun getInstance(project: Project): OpenCodeServerManager =
+            project.getService(OpenCodeServerManager::class.java)
+
+        /** 生产装配：注册表落在 IDE 系统目录（跨 IDE 实例共享），其余用默认实现 */
+        fun defaultDeps(): OpenCodeServerDeps =
+            OpenCodeServerDeps(registry = OpenCodeServerRegistry(OpenCodeServerRegistry.defaultStoreFile()))
+
         /** 自愈上限与窗口（§3.8） */
         const val MAX_RESTARTS = 3
         const val RESTART_WINDOW_MS = 10 * 60 * 1000L
