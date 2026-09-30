@@ -19,6 +19,7 @@ import com.ayongw.idea.opencode.shared.SessionUsageDto
 import com.ayongw.idea.opencode.shared.TokenUsageDto
 import com.ayongw.idea.opencode.shared.ToolCallDto
 import com.ayongw.idea.opencode.shared.toChatMessageDto
+import com.google.gson.JsonObject
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
@@ -55,6 +56,15 @@ class BackendChatRepositoryModel : Disposable {
 
     /** 当前活跃会话 ID */
     private var currentSessionId: String? = null
+
+    /**
+     * 当前工作区目录（按 Project.basePath 下发）
+     *
+     * 用于 `GET /api/session?directory=` 只取本工作区会话，以及新建会话时绑定工作区；
+     * 首次由 RPC 层传入后固定，供内部刷新（创建/切换/删除/重命名后的重载）复用。
+     */
+    @Volatile
+    private var workspaceDirectory: String? = null
 
     /** Server 连接地址（由设置页下发覆盖） */
     @Volatile
@@ -422,14 +432,17 @@ class BackendChatRepositoryModel : Disposable {
     }
 
     /**
-     * 创建新会话
+     * 创建新会话（绑定当前工作区）
+     *
+     * @param directory 工作区目录；不传时复用已记录的工作区
      */
-    suspend fun createNewSession(title: String? = null): String? {
-        val result = restClient.createSession(title)
+    suspend fun createNewSession(title: String? = null, directory: String? = null): String? {
+        directory?.takeIf { it.isNotBlank() }?.let { workspaceDirectory = it }
+        val result = restClient.createSession(title, workspaceDirectory)
         if (result.isSuccess()) {
             val sessionId = result.getOrThrow()
             currentSessionId = sessionId
-            log.info("新建会话 session=$sessionId, title=${title ?: "-"}")
+            log.info("新建会话 session=$sessionId, title=${title ?: "-"}, directory=${workspaceDirectory ?: "-"}")
             loadSessions()
             loadMessages(sessionId)
             return sessionId
@@ -484,10 +497,16 @@ class BackendChatRepositoryModel : Disposable {
     }
 
     /**
-     * 获取所有会话
+     * 加载当前工作区的会话列表
+     *
+     * `GET /api/session?directory=` 只返回本工作区会话；服务端不认 `location[...]` 过滤形式，
+     * 因此必须显式传目录，否则会拿到全机所有目录的会话。
+     *
+     * @param directory 工作区目录；不传时复用已记录的工作区
      */
-    suspend fun loadSessions() {
-        val result = restClient.getAllSessions()
+    suspend fun loadSessions(directory: String? = null) {
+        directory?.takeIf { it.isNotBlank() }?.let { workspaceDirectory = it }
+        val result = restClient.getAllSessions(workspaceDirectory)
         if (result.isSuccess()) {
             _allSessions.value = result.getOrThrow()
             _serverConnected.value = true
@@ -495,6 +514,22 @@ class BackendChatRepositoryModel : Disposable {
             _serverConnected.value = false
         }
     }
+
+    /**
+     * 服务端默认模型（配置里的 `model`，即设置页展示的 Default model）
+     *
+     * `GET /api/model/default` 无默认时返回 null。
+     */
+    suspend fun getDefaultModel(): Pair<String, String>? {
+        val obj = restClient.getDefaultModel().getOrNull() ?: return null
+        val providerId = obj.primitiveString("providerID") ?: return null
+        val modelId = obj.primitiveString("modelID") ?: obj.primitiveString("id") ?: return null
+        return providerId to modelId
+    }
+
+    /** 取 JSON 原始值中的字符串（缺失或非原始类型时返回 null） */
+    private fun JsonObject.primitiveString(key: String): String? =
+        get(key)?.takeIf { it.isJsonPrimitive }?.asString?.takeIf { it.isNotBlank() }
 
     /**
      * 加载指定会话的消息

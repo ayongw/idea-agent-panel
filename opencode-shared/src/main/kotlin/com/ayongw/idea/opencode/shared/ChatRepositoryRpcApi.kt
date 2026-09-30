@@ -166,6 +166,11 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
     suspend fun listModelProviders(projectId: ProjectId): List<ModelProviderDto>
 
     /**
+     * 服务端默认模型（配置里的 `model`），对应 v2 GET /api/model/default；未配置时为 null
+     */
+    suspend fun getDefaultModel(projectId: ProjectId): DefaultModelDto?
+
+    /**
      * 会话当前选中的模式与模型（切换会话后回读）
      */
     suspend fun getSessionSelection(projectId: ProjectId, sessionId: String): SessionSelectionDto

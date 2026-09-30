@@ -38,3 +38,14 @@ data class ModelProviderDto(
     val name: String,
     val models: List<ModelDto>
 )
+
+/**
+ * 服务端默认模型（配置里的 `model`，对应 `GET /api/model/default`）
+ *
+ * 只保留定位所需字段：前端用它在本机模型列表里预选，避免展示成列表第一项。
+ */
+@Serializable
+data class DefaultModelDto(
+    val providerID: String,
+    val modelID: String
+)

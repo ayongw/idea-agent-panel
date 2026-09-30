@@ -43,11 +43,15 @@ class OpenCodeRestClient(
     suspend fun healthCheck(): Boolean = executeRequest("GET", "/project") { true }.isSuccess()
 
     /**
-     * 获取所有会话列表
+     * 获取会话列表
      * GET /api/session
+     *
+     * @param directory 工作区目录；实测服务端只认 `?directory=<绝对路径>`（`location[...]` 形式会被忽略），
+     *                  不传则返回本机全部目录的会话
      */
-    suspend fun getAllSessions(): Result<List<OpenCodeSession>> {
-        return executeRequest("GET", "/session") { json ->
+    suspend fun getAllSessions(directory: String? = null): Result<List<OpenCodeSession>> {
+        val query = queryString(listOfNotNull(directory?.takeIf { it.isNotBlank() }?.let { "directory" to it }))
+        return executeRequest("GET", "/session$query") { json ->
             parseDataObjects(json).map { parseSession(it) }
         }
     }
@@ -55,9 +59,15 @@ class OpenCodeRestClient(
     /**
      * 创建新会话
      * POST /api/session
+     *
+     * @param directory 会话归属的工作区；实测只认请求体里的 `location.directory`（顶层 `directory` 会被忽略），
+     *                  不传则服务端按自身进程 cwd 归属
      */
-    suspend fun createSession(title: String? = null): Result<String> {
-        val body = gson.toJson(if (title.isNullOrBlank()) emptyMap<String, Any>() else mapOf("title" to title))
+    suspend fun createSession(title: String? = null, directory: String? = null): Result<String> {
+        val body = gson.toJson(buildMap<String, Any> {
+            title?.takeIf { it.isNotBlank() }?.let { put("title", it) }
+            directory?.takeIf { it.isNotBlank() }?.let { put("location", mapOf("directory" to it)) }
+        })
         return executeRequest("POST", "/session", body) { json ->
             parseSession(dataObject(json)).id
         }

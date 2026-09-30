@@ -6,6 +6,7 @@ import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
 import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessageDto
 import com.ayongw.idea.opencode.shared.CommandDto
+import com.ayongw.idea.opencode.shared.DefaultModelDto
 import com.ayongw.idea.opencode.shared.ModelDto
 import com.ayongw.idea.opencode.shared.ModelProviderDto
 import com.ayongw.idea.opencode.shared.ChatRepositoryRpcApi
@@ -78,8 +79,8 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
         val backendProject = projectId.findProjectOrNull() ?: return emptyFlow()
         val model = BackendChatRepositoryModel.getInstance(backendProject)
 
-        // 加载会话列表
-        model.loadSessions()
+        // 加载会话列表（按项目目录过滤，只取本工作区会话）
+        model.loadSessions(backendProject.basePath)
 
         return model.getAllSessionsFlow().map { sessions ->
             sessions.map { session ->
@@ -104,7 +105,8 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
     override suspend fun createSession(projectId: ProjectId, initialTitle: String?): String {
         val backendProject = projectId.findProjectOrNull() ?: return java.util.UUID.randomUUID().toString()
         val model = BackendChatRepositoryModel.getInstance(backendProject)
-        val sessionId = model.createNewSession(initialTitle)
+        // 绑定项目目录：否则服务端按自身进程 cwd 归属，会话不会出现在本工作区列表里
+        val sessionId = model.createNewSession(initialTitle, backendProject.basePath)
         return sessionId ?: java.util.UUID.randomUUID().toString()
     }
 
@@ -215,6 +217,13 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
                     models = models.map { it.toModelDto(providerNames[providerId]) }
                 )
             }
+    }
+
+    override suspend fun getDefaultModel(projectId: ProjectId): DefaultModelDto? {
+        val backendProject = projectId.findProjectOrNull() ?: return null
+        val model = BackendChatRepositoryModel.getInstance(backendProject)
+        val selection = runCatching { model.getDefaultModel() }.getOrNull() ?: return null
+        return DefaultModelDto(providerID = selection.first, modelID = selection.second)
     }
 
     override suspend fun getSessionSelection(projectId: ProjectId, sessionId: String): SessionSelectionDto {
