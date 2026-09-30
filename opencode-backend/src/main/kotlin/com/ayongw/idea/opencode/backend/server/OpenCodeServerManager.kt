@@ -1,5 +1,6 @@
 package com.ayongw.idea.opencode.backend.server
 
+import com.ayongw.idea.opencode.backend.repository.OpenCodeCredentials
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -211,6 +212,10 @@ class OpenCodeServerManager(
         return when (val result = deps.discovery.probe(candidate)) {
             is OpenCodeServerProbeResult.Ready -> {
                 reuseExternal(candidate)
+                // 用户手输密钥持久化到 IDE 凭据存储：重启后 REST 兜底可复现，历史会话/列表不再 401
+                if (password?.isNotBlank() == true) {
+                    OpenCodeCredentials.writePasswordSafe(candidate.password)
+                }
                 true
             }
 

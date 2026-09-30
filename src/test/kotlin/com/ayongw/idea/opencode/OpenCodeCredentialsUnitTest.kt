@@ -8,9 +8,10 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * Basic 密码发现顺序：显式值 → `OPENCODE_SERVER_PASSWORD` → `service.json`
+ * Basic 密码发现顺序：显式值 → PasswordSafe → `OPENCODE_SERVER_PASSWORD` → `service.json`
  *
- * 回归点：设置页密码留空（`""`）不得把环境变量 / 文件里的密码覆盖成空串（曾导致设置页 401）。
+ * 回归点：设置页密码留空（`""`）不得把环境变量 / 文件里的密码覆盖成空串（曾导致设置页 401）；
+ * 用户手输密钥进 PasswordSafe 后重启仍可复现（历史会话列表不再 401）。
  */
 class OpenCodeCredentialsUnitTest {
 
@@ -20,25 +21,29 @@ class OpenCodeCredentialsUnitTest {
     fun explicitPasswordWinsAndIsTrimmed() {
         assertEquals(
             "explicit",
-            OpenCodeCredentials.resolvePassword(" explicit ", "env-pwd", passwordFile("from-file"))
+            OpenCodeCredentials.resolvePassword(" explicit ", "env-pwd", "safe-pwd", passwordFile("from-file"))
         )
     }
 
     @Test
-    fun blankExplicitFallsBackToEnvThenFile() {
+    fun blankExplicitFallsBackToPasswordSafeThenEnvThenFile() {
+        assertEquals(
+            "safe-pwd",
+            OpenCodeCredentials.resolvePassword("", "env-pwd", " safe-pwd ", passwordFile("from-file"))
+        )
         assertEquals(
             "env-pwd",
-            OpenCodeCredentials.resolvePassword("", " env-pwd ", passwordFile("from-file"))
+            OpenCodeCredentials.resolvePassword("", " env-pwd ", null, passwordFile("from-file"))
         )
         assertEquals(
             "from-file",
-            OpenCodeCredentials.resolvePassword(null, "  ", passwordFile("from-file"))
+            OpenCodeCredentials.resolvePassword(null, "  ", null, passwordFile("from-file"))
         )
     }
 
     @Test
     fun noSourceResolvesToEmpty() {
-        assertEquals("", OpenCodeCredentials.resolvePassword("", null, absent))
+        assertEquals("", OpenCodeCredentials.resolvePassword("", null, null, absent))
     }
 
     @Test
