@@ -8,6 +8,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
+import com.ayongw.idea.opencode.frontend.chatApp.ui.bubble.MessageBubble
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppColors
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatUIConstants
 import kotlinx.coroutines.CoroutineScope

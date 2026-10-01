@@ -1,7 +1,7 @@
 package com.ayongw.idea.opencode.frontend
 
 import com.ayongw.idea.opencode.frontend.chatApp.ui.ChatList
-import com.ayongw.idea.opencode.frontend.chatApp.ui.MessageBubble
+import com.ayongw.idea.opencode.frontend.chatApp.ui.bubble.MessageBubble
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
