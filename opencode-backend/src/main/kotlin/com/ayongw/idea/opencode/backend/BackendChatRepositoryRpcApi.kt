@@ -13,7 +13,6 @@ import com.ayongw.idea.opencode.shared.ModelDto
 import com.ayongw.idea.opencode.shared.ModelProviderDto
 import com.ayongw.idea.opencode.shared.ChatRepositoryRpcApi
 import com.ayongw.idea.opencode.shared.ContextFileDto
-import com.ayongw.idea.opencode.shared.MessagePartDto
 import com.ayongw.idea.opencode.shared.PendingPermissionDto
 import com.ayongw.idea.opencode.shared.PermissionResponse
 import com.ayongw.idea.opencode.shared.PromptContextDto
@@ -52,34 +51,6 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
 
     // ==================== 会话管理 ====================
 
-    override suspend fun getSessionStateFlow(projectId: ProjectId, sessionId: String): Flow<SessionStateDto> {
-        val backendProject = projectId.findProjectOrNull() ?: return emptyFlow()
-        val model = BackendChatRepositoryModel.getInstance(backendProject)
-        // 切换到指定会话并返回状态流
-        model.switchSession(sessionId)
-        return model.getMessagesFlow().map { messages ->
-            SessionStateDto(
-                sessionId = sessionId,
-                title = getSessionTitle(model, sessionId),
-                parts = messages.map { msgDto ->
-                    MessagePartDto(
-                        id = msgDto.id,
-                        type = com.ayongw.idea.opencode.shared.MessagePart.PartType.TEXT,
-                        content = msgDto.content,
-                        metadata = emptyMap(),
-                        timestamp = msgDto.timestamp,
-                        isStreaming = false
-                    )
-                },
-                status = com.ayongw.idea.opencode.shared.SessionStatus.IDLE,
-                pendingPermission = null,
-                createdAt = java.time.LocalDateTime.now(),
-                updatedAt = java.time.LocalDateTime.now(),
-                contextFiles = emptyList()
-            )
-        }
-    }
-
     override suspend fun getAllSessions(projectId: ProjectId): Flow<List<SessionStateDto>> {
         val backendProject = projectId.findProjectOrNull() ?: return emptyFlow()
         val model = BackendChatRepositoryModel.getInstance(backendProject)
@@ -92,11 +63,7 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
                 SessionStateDto(
                     sessionId = session.id,
                     title = session.title,
-                    parts = emptyList(),
-                    status = if (model.getCurrentSessionId() == session.id)
-                        com.ayongw.idea.opencode.shared.SessionStatus.IDLE
-                    else
-                        com.ayongw.idea.opencode.shared.SessionStatus.IDLE,
+                    status = com.ayongw.idea.opencode.shared.SessionStatus.IDLE,
                     pendingPermission = null,
                     createdAt = toLocalDateTime(session.createdAtMillis),
                     updatedAt = toLocalDateTime(session.updatedAtMillis),
@@ -417,14 +384,4 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
 
     private fun toLocalDateTime(epochMillis: Long): java.time.LocalDateTime =
         java.time.Instant.ofEpochMilli(epochMillis).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
-
-    private suspend fun getSessionTitle(model: BackendChatRepositoryModel, sessionId: String): String {
-        // 从会话列表中查找标题
-        return try {
-            val sessions = model.getAllSessionsFlow().first()
-            sessions.firstOrNull { it.id == sessionId }?.title ?: "会话 $sessionId"
-        } catch (e: Exception) {
-            "会话 $sessionId"
-        }
-    }
 }

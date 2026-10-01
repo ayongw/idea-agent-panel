@@ -15,11 +15,13 @@ import java.awt.Container
 import java.awt.GridBagLayout
 import java.nio.file.Files
 import javax.swing.Box
+import javax.swing.SwingUtilities
 
 /**
  * 消息列表布局冒烟（TSD-30 §5.7 Swing 层）
  *
- * 断言：气泡挂载顺序与模型一致（gridy 派生）、删除中间消息后重排正确、filler 显式引用在末位。
+ * 断言：气泡挂载顺序与模型一致（gridy 派生）、删除中间消息后重排正确、filler 显式引用在末位、
+ * 布局后无零尺寸可见气泡（§5.7 必过项）。
  */
 class ChatListSwingSmokeUnitTest {
 
@@ -123,5 +125,47 @@ class ChatListSwingSmokeUnitTest {
             }
         }
         return null
+    }
+
+    @Test
+    fun 布局后无零尺寸可见气泡() {
+        // 测试 JVM 为 headless，不能建 JFrame：手动 setSize + 递归 doLayout 让消息容器拿到真实宽度
+        SwingUtilities.invokeAndWait {
+            chatList.setSize(600, 400)
+            chatList.setMessages(messages())
+            layoutTree(chatList)
+        }
+        // 越过 ListUpdateCoalescer 合并窗口（20ms），使下一次 setMessages 放行一次完整布局
+        Thread.sleep(30)
+        SwingUtilities.invokeAndWait {
+            chatList.setMessages(messages())
+        }
+        // 二次 setMessages 放行 requestLayout，ensureLaidOut 在容器宽度 > 0 下真正执行；
+        // §5.7 断言：布局后所有已挂载气泡不得为零尺寸（首帧容器 0 高缺陷的回归防护）
+        val bubbles = gridBagContainer(chatList)
+            ?.components
+            ?.filterIsInstance<MessageBubble>()
+            ?: emptyList()
+        assertEquals("消息容器应挂载 3 个气泡", 3, bubbles.size)
+        bubbles.forEach { bubble ->
+            assertTrue(
+                "可见气泡不应为零尺寸：${bubble.messageId} = ${bubble.width}x${bubble.height}",
+                bubble.width > 0 && bubble.height > 0
+            )
+        }
+    }
+
+    private fun messages() = listOf(
+        ChatMessage(id = "u1", content = "你好", author = "me", isMyMessage = true),
+        ChatMessage(id = "a1", content = "第一条助手回复，内容足够长以撑出可布局高度", author = "opencode"),
+        ChatMessage(id = "a2", content = "第二条助手回复，用于验证布局后的气泡尺寸", author = "opencode"),
+    )
+
+    /** 深度优先 doLayout（headless 下替代真实窗口校验，让每个容器拿到父级分配的尺寸） */
+    private fun layoutTree(root: Container) {
+        root.doLayout()
+        root.components.forEach { child ->
+            if (child is Container) layoutTree(child)
+        }
     }
 }

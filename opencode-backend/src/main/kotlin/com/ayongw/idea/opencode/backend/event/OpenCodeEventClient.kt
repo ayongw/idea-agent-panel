@@ -1,6 +1,7 @@
 package com.ayongw.idea.opencode.backend.event
 
 import com.ayongw.idea.opencode.backend.repository.OpenCodeAuth
+import com.ayongw.idea.opencode.backend.repository.OpenCodeHttpClientFactory
 import com.intellij.openapi.diagnostic.Logger
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -39,11 +40,8 @@ class OpenCodeEventClient(
 
     private val log = Logger.getInstance(OpenCodeEventClient::class.java)
 
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(CONNECT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
-        .readTimeout(readTimeoutMillis, TimeUnit.MILLISECONDS)
-        .retryOnConnectionFailure(false)   // 重连由本类统一控制
-        .build()
+    private val client: OkHttpClient =
+        OpenCodeHttpClientFactory.forEventStream(readTimeoutMillis)
 
     private val factory = EventSources.createFactory(client)
     private val lock = Any()
@@ -69,7 +67,7 @@ class OpenCodeEventClient(
         connect()
     }
 
-    /** 关闭连接并释放线程/连接池；关闭后不可再 start */
+    /** 关闭连接并停止重连调度；共享 OkHttpClient（连接池/dispatcher 归属工厂），此处只取消自己的事件流 */
     fun stop() {
         synchronized(lock) {
             if (stopped) return
@@ -78,8 +76,6 @@ class OpenCodeEventClient(
             eventSource = null
         }
         scheduler.shutdownNow()
-        client.dispatcher.executorService.shutdown()
-        client.connectionPool.evictAll()
         updateState(State.STOPPED)
     }
 
@@ -145,7 +141,6 @@ class OpenCodeEventClient(
 
     private companion object {
         const val EVENT_PATH = "/api/event"
-        const val CONNECT_TIMEOUT_MILLIS = 5_000L
         const val BACKOFF_FACTOR = 2
         const val HTTP_UNAUTHORIZED = 401
         const val HTTP_FORBIDDEN = 403

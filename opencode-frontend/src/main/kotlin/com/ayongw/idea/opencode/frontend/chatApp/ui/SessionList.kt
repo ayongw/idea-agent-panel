@@ -308,10 +308,8 @@ data class SessionItem(
 ) {
     val sessionId: String = sessionState.sessionId
     val title: String = SessionTitles.display(sessionState.title)
-    val preview: String = sessionState.lastUserMessagePreview ?: sessionState.parts.lastOrNull()?.content ?: ""
+    val preview: String = sessionState.lastUserMessagePreview ?: ""
     val timestamp: String = sessionState.updatedAt.format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))
-    val messageCount: Int = sessionState.messageCount
-    val isActive: Boolean = sessionState.hasStreamingPart
 }
 
 /**
@@ -366,16 +364,6 @@ private class SessionCellRenderer : ListCellRenderer<SessionItem> {
                 alignmentX = Component.RIGHT_ALIGNMENT
             }
             add(timeLabel)
-
-            if (value.isActive) {
-                add(Box.createVerticalStrut(JBUI.scale(4)))
-                val activeBadge = JBLabel("●").apply {
-                    font = JBFont.small()
-                    foreground = ChatAppColors.MessageBubble.myBackgroundBorder
-                    alignmentX = Component.RIGHT_ALIGNMENT
-                }
-                add(activeBadge)
-            }
         }
         panel.add(rightPanel, BorderLayout.EAST)
 

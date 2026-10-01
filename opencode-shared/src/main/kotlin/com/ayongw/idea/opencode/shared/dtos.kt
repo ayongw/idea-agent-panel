@@ -42,49 +42,12 @@ fun ChatMessage.toChatMessageDto(): ChatMessageDto {
     )
 }
 
-// ==================== 新增 DTO: MessagePart ====================
-
-@Serializable
-data class MessagePartDto(
-    val id: String,
-    val type: MessagePart.PartType,
-    val content: String,
-    val metadata: Map<String, String>,
-    @Serializable(with = LocalDateTimeSerializer::class)
-    val timestamp: LocalDateTime,
-    val isStreaming: Boolean = false
-)
-
-fun MessagePartDto.toMessagePart(): MessagePart {
-    val part = MessagePart(
-        id = id,
-        type = type,
-        content = content,
-        metadata = metadata,
-        timestamp = timestamp
-    )
-    part.isStreaming = isStreaming
-    return part
-}
-
-fun MessagePart.toMessagePartDto(): MessagePartDto {
-    return MessagePartDto(
-        id = id,
-        type = type,
-        content = content,
-        metadata = metadata,
-        timestamp = timestamp,
-        isStreaming = isStreaming
-    )
-}
-
 // ==================== 新增 DTO: SessionState ====================
 
 @Serializable
 data class SessionStateDto(
     val sessionId: String,
     val title: String,
-    val parts: List<MessagePartDto>,
     val status: SessionStatus,
     val pendingPermission: PermissionRequestDto?,
     @Serializable(with = LocalDateTimeSerializer::class)
@@ -93,19 +56,21 @@ data class SessionStateDto(
     val updatedAt: LocalDateTime,
     val contextFiles: List<ContextFileDto>,
     /** 会话所属工作目录（opencode v2 session.location.directory），用于按工作区过滤 */
-    val directory: String? = null
+    val directory: String? = null,
+    /** 会话最后一条用户消息预览（会话列表展示用；后端当前不填充，为 null） */
+    val lastUserMessagePreview: String? = null
 )
 
 fun SessionStateDto.toSessionState(): SessionState {
     return SessionState(
         sessionId = sessionId,
         title = title,
-        parts = parts.map { it.toMessagePart() },
         status = status,
         pendingPermission = pendingPermission?.toPermissionRequest(),
         createdAt = createdAt,
         updatedAt = updatedAt,
-        contextFiles = contextFiles.map { it.toContextFile() }
+        contextFiles = contextFiles.map { it.toContextFile() },
+        lastUserMessagePreview = lastUserMessagePreview
     )
 }
 
@@ -113,12 +78,12 @@ fun SessionState.toSessionStateDto(): SessionStateDto {
     return SessionStateDto(
         sessionId = sessionId,
         title = title,
-        parts = parts.map { it.toMessagePartDto() },
         status = status,
         pendingPermission = pendingPermission?.toPermissionRequestDto(),
         createdAt = createdAt,
         updatedAt = updatedAt,
-        contextFiles = contextFiles.map { it.toContextFileDto() }
+        contextFiles = contextFiles.map { it.toContextFileDto() },
+        lastUserMessagePreview = lastUserMessagePreview
     )
 }
 

@@ -266,7 +266,13 @@ class MessageBubble(
         }
     }
 
-    /** 流式结束：自动折叠思考区（G3），仍可手动展开查看 */
+    /**
+     * 程序化折叠思考区（G3 流式结束自动折叠）：由 [ChatList] 在执行终态信号/非运行态对账时调用，
+     * 仍可手动展开查看。
+     *
+     * 注：流式期间的展开由 [updateReasoningContent] 保证；本方法只负责收尾折叠，
+     * 已手动展开的历史思考在重连对账时也会被收起（对账即刷新，可接受）。
+     */
     fun completeReasoning() {
         if (message.isAIThinkingMessage() && contentContainer != null) {
             setReasoningExpanded(false)

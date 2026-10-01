@@ -34,27 +34,16 @@ enum class PermissionResponse {
 data class SessionState(
     val sessionId: String = UUID.randomUUID().toString(),
     val title: String = "新会话",
-    val parts: List<MessagePart> = emptyList(),
     val status: SessionStatus = SessionStatus.IDLE,
     val pendingPermission: PermissionRequest? = null,
     @Serializable(with = LocalDateTimeSerializer::class)
     val createdAt: LocalDateTime = LocalDateTime.now(),
     @Serializable(with = LocalDateTimeSerializer::class)
     val updatedAt: LocalDateTime = LocalDateTime.now(),
-    val contextFiles: List<ContextFile> = emptyList()
-) {
-    /** 获取最后一条用户消息的预览 */
-    val lastUserMessagePreview: String?
-        get() = parts.lastOrNull { it.type == MessagePart.PartType.TEXT && !it.content.isBlank() }?.content?.take(50)
-
-    /** 获取消息数量 */
-    val messageCount: Int
-        get() = parts.size
-
-    /** 是否有活跃的流式部件 */
-    val hasStreamingPart: Boolean
-        get() = parts.any { it.isStreaming }
-}
+    val contextFiles: List<ContextFile> = emptyList(),
+    /** 会话最后一条用户消息预览（会话列表展示用；后端当前不填充，为 null） */
+    val lastUserMessagePreview: String? = null
+)
 
 /** 权限请求 */
 @Serializable

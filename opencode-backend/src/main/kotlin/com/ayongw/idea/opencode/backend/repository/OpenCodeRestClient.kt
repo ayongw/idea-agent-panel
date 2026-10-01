@@ -15,7 +15,6 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import java.io.IOException
 import java.net.URLEncoder
-import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.intellij.openapi.diagnostic.Logger
@@ -465,13 +464,10 @@ class OpenCodeRestClient(
     // ==================== 认证与请求 ====================
 
     /**
-     * 统一 HTTP 客户端（TSD-30 §5.9）：REST 侧全部走 OkHttp，
-     * 与事件流共用同一传输栈；Basic 认证按请求附加。
+     * 统一 HTTP 客户端（TSD-30 §5.9）：REST 与事件流共用 [OpenCodeHttpClientFactory.shared]
+     * 基座实例（同一连接池/一份配置）；Basic 认证按请求附加。
      */
-    private val httpClient: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(CONNECT_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
-        .readTimeout(READ_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
-        .build()
+    private val httpClient: OkHttpClient = OpenCodeHttpClientFactory.shared
 
     /** Basic 认证头取值，密码为空时返回 null（与事件流客户端共用 [OpenCodeAuth]） */
     private fun authHeaderValue(): String? = OpenCodeAuth.basicHeader(username, password)
@@ -867,12 +863,6 @@ class OpenCodeRestClient(
 
     companion object {
         const val DEFAULT_USERNAME = OpenCodeAuth.DEFAULT_USERNAME
-
-        /** 连接超时（毫秒） */
-        const val CONNECT_TIMEOUT_MS = 10_000
-
-        /** 读取超时（毫秒） */
-        const val READ_TIMEOUT_MS = 30_000
 
         /** JSON 请求体媒体类型（OkHttp） */
         val JSON_MEDIA_TYPE: MediaType = "application/json; charset=utf-8".toMediaType()

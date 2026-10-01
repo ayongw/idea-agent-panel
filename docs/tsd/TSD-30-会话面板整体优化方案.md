@@ -9,6 +9,7 @@
 | v1.0 | 2026-09-30 | 初版：四路调研汇总 + 问题清单 + 分层目标架构 + 分期实施计划 | agent |
 | v1.1 | 2026-09-30 | 新增 §9 附录：与《产品说明》诉求的差异对照（7 项缺口/降级、4 项待回填、2 项方向性分歧） | agent |
 | v1.2 | 2026-09-30 | 决策落定：最低平台提升至 2026.2（`sinceBuild=262`，官方 `DebouncedUpdates` 转为可用，见 §1.3/§5.3/§7）；REST 与事件流统一到同一 OkHttp 客户端（新增 §5.9、Phase 2.7）；G1/G2 定为「0.1.0 阶段降级 + 后续阶段落地」（新增 Phase 4）；Phase 2 补思考过程折叠（G3）；§9 新增 §9.6 处置结果 | agent |
+| v1.3 | 2026-10-01 | §5.3 合并刷新参数按实现定稿：`ListUpdateCoalescer` 落地为 20ms leading-edge 节流（后端已有 75ms 节流，前端只合并同一事件循环内的重复请求，不叠加端到端延迟），同步 §4.2/§5.3/§7 相关表述 | agent |
 
 ---
 
@@ -118,7 +119,7 @@ flowchart TB
   end
 
   subgraph L3["渲染协调层（本方案新增，纯逻辑可单测）"]
-    B1["ListUpdateCoalescer：合并刷新（自建，50~100ms）"]:::chgEmph
+    B1["ListUpdateCoalescer：合并刷新（自建，20ms 节流）"]:::chgEmph
     B2["ScrollPolicy：粘底判定 + 插入位置保持"]:::chg
     B3["LayoutCoordinator：布局单一入口 + 缺失几何自愈"]:::chgEmph
   end
@@ -162,7 +163,7 @@ flowchart TB
 | **C-布局** | 动态增删子组件后，**只允许**调用 `LayoutCoordinator.requestLayout()`；它内部对**校验根**（外层容器或 `JScrollPane`）执行 `revalidate()`，仅在「几何缺失」时补同步 `validate()`；所有布局保证集中在一次调用内 | 在业务代码里散落 `repaint()`、`doLayout()`、`revalidate()`；在渲染回调里逐个组件调布局 |
 | **C-顺序** | 一条消息 = 一个稳定 id + 一个有序块数组（`text` / `reasoning` / `tool`）；列表顺序与「最早在前」一致；`gridy` 由 `MessageListModel` 的索引派生，增删后统一重排 | 以「数组下标」当布局槽位；以「组件总数 - 气泡数」推断 filler |
 | **C-增量** | 流式只做「按 id 覆盖该条消息的指定块内容」；流结束/重连时**一次全量对账**（REST 权威） | 每个 delta 全量重建气泡；每个 delta 直接触发布局与滚动 |
-| **C-刷新** | UI 刷新统一经 `ListUpdateCoalescer`（窗口 50~100ms，参数由实测定）；同一窗口内多次变更合并为一次布局 + 一次滚动判定 | 在事件回调里直接操作 Swing 组件 |
+| **C-刷新** | UI 刷新统一经 `ListUpdateCoalescer`（20ms leading-edge 节流：后端已有 75ms 节流，前端只合并同一事件循环内的重复请求，不叠加端到端延迟）；窗口内多次变更合并为一次布局 + 一次滚动判定 | 在事件回调里直接操作 Swing 组件 |
 | **C-滚动** | 仅当「用户已在底部（阈值内）」时自动贴底；用户上滑期间不抢滚动；插入历史（分页加载）时保持视口锚点 | 无条件 `scrollRectToVisible` 到底 |
 | **C-生命周期** | 每个会话面板 / 渲染控制器都有 `Disposable`，挂到 `Content.setDisposer(...)` 或 ViewModel 之下；定时器与协程 scope 在 `dispose()` 内释放 | 自建 `CoroutineScope` 不绑定 Disposable；`Timer` 常驻 |
 | **C-主题** | 颜色只经 `JBColor.namedColor(...)`（或收敛到 `ChatAppColors`），间距/尺寸经 `JBUI.scale/insets`，文案经 `OpencodeFrontendBundle` | 行内 `Color(r,g,b)`、行内中文文案、裸 `Insets` |
@@ -197,9 +198,9 @@ flowchart TB
 - **块级增量**：`MessageBubble.syncWith(message)` 已按「内容指纹」短路，保留；`updateStreamingText` 改为**复用现有内容容器**（文本块 `JBTextArea` 直接 `setText`/`document` 替换，代码块只替换代码文本并重算折叠行数），去掉「删除重建 + 硬编码 index 2」。
 - **首帧防御**：思考气泡的 `renderedContent` 初值改为 `null`，null 时首次渲染不做「变更」判定，避免无谓重建。
 - **合并刷新**（自建 `ListUpdateCoalescer`，官方 `DebouncedUpdates` 作为可选实现）：
-  - 自建形态：`forComponent` 语义（组件不可见时暂停处理）、窗口 50~100ms、窗口内多次请求只保留最后一次 + 一次布局 + 一次滚动判定；窗口结束调 `LayoutCoordinator.requestLayout()`。
-  - 官方形态（`sinceBuild=262` 起可用）：`com.intellij.util.ui.update.DebouncedUpdates.forComponent(component, name, delay)` + `runLatest`，语义与我们所需一致且由平台维护；但它标 `@ApiStatus.Experimental`，故**用薄封装 `ListUpdateCoalescer` 隔离**，一旦行为不符（如可见性暂停语义差异）直接切回自建实现，调用方无感。
-  - 参数取自实测：先用 75ms（与后端 `SessionStreamState` 的节流窗口对齐，避免两段节流叠加导致延迟感），用 §5.7 的流式回放用例量化 EDT 占用后定稿。
+  - 自建形态（已落地）：leading-edge 节流——距上次执行已过窗口期（20ms）才放行，否则合并跳过；放行时执行一次布局（`LayoutCoordinator.requestLayout()`）+ 一次滚动判定，保证「一次布局 + 一次滚动判定」的收口。组件不可见暂停（`forComponent` 语义）未实现，当前无此诉求。
+  - 官方形态（`sinceBuild=262` 起可用）：`com.intellij.util.ui.update.DebouncedUpdates.forComponent(component, name, delay)` + `runLatest`，语义接近且由平台维护；但它标 `@ApiStatus.Experimental`，故**用薄封装 `ListUpdateCoalescer` 隔离**，一旦行为不符直接切回官方实现，调用方无感。
+  - 参数定稿：20ms（后端 `SessionStreamState` 已有 75ms 节流，前端取更小值只合并同一事件循环内的重复请求，不叠加端到端延迟）。
 - **结束态**：`ExecutionSucceeded/Failed/Interrupted` → 全量对账（已是现状），对账后**不改动可见顺序**，只覆盖内容与补齐缺失气泡。
 
 ### 5.4 生命周期与线程
@@ -280,7 +281,7 @@ flowchart TB
 |----|------|-------|
 | 2.1 | 引入 `MessageListModel`（id 顺序 + gridy 唯一真源）与 filler 显式引用；删除路径同步重排 | `ChatList.kt` |
 | 2.2 | `LayoutCoordinator` 单一布局入口；`forceLayout` 收敛为调试期自愈兜底 | `ChatList.kt` |
-| 2.3 | `ListUpdateCoalescer` 合并刷新（50~100ms 实测定参） | 新增 + `ChatList.kt` |
+| 2.3 | `ListUpdateCoalescer` 合并刷新（20ms leading-edge 节流） | 新增 + `ChatList.kt` |
 | 2.4 | `ScrollPolicy` 粘底判定 + 插入锚点保持 | `ChatList.kt` |
 | 2.5 | 流式块级增量：复用内容容器、去掉硬编码 index 2、修思考气泡首帧重建 | `MessageItem.kt` |
 | 2.6 | 布局与流式回放测试（§5.7 必过项） | `src/test/kotlin/...` |
@@ -357,7 +358,7 @@ flowchart TB
 **明确未证实项（实现前需在本地 SDK 核对）**
 - `MarkdownJCEFHtmlPanel` 在 IJ 2026.2 是否已移除（社区报告，未取到官方源码路径）。
 - `com.intellij.ui.JBHtmlPane` 的包路径与推荐度（官方论坛提及，未在官方文档确认）。
-- 「每 50~100ms 合并刷新」无官方出处（官方示例量为 300~500ms）——本项目按实测定参。
+- 「合并刷新窗口」无官方统一出处（官方示例量为 300~500ms）——本项目按后端 75ms 节流定 20ms leading-edge（只合并同一事件循环内的重复请求，不叠加端到端延迟）。
 
 ---
 

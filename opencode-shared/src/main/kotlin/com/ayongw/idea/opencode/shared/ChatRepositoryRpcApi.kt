@@ -23,11 +23,9 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
     }
 
     /**
-     * Flow that emits a list of chat messages.
+     * 消息流（REST/事件流对账后的 ChatMessage 列表），前端订阅为消息渲染真源。
      * Updates with new messages as they are received or edited.
-     * @deprecated Use getSessionStateFlow instead
      */
-    @Deprecated("Use getSessionStateFlow", ReplaceWith("getSessionStateFlow(projectId)"))
     suspend fun getMessagesFlow(projectId: ProjectId): Flow<List<ChatMessageDto>>
 
     /**
@@ -40,11 +38,6 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
     )
 
     // ==================== 新增方法 ====================
-
-    /**
-     * 获取会话状态流（包含完整会话状态：消息、状态、权限请求等）
-     */
-    suspend fun getSessionStateFlow(projectId: ProjectId, sessionId: String): Flow<SessionStateDto>
 
     /**
      * 获取所有会话列表

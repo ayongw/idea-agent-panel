@@ -17,7 +17,6 @@ import kotlinx.coroutines.cancel
 import kotlin.math.max
 import java.awt.BorderLayout
 import java.awt.CardLayout
-import java.awt.Container
 import java.awt.Dimension
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
@@ -28,7 +27,6 @@ import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JScrollPane
 import javax.swing.Scrollable
-import javax.swing.SwingUtilities
 
 /**
  * 消息列表容器：卡片切换、按消息 id 同步/增删气泡、滚动与布局。
@@ -56,8 +54,11 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
     /** 底部占位 filler 的显式引用（不再靠组件数量推断） */
     private val filler = Box.createVerticalGlue()
 
-    /** 流式渲染控制器 */
-    private val streamingController: StreamingRenderController
+    /** 会话执行态（G3）：运行中思考气泡保持展开，结束后折叠（由装配方经 [setStreamRunning] 注入） */
+    private var streamRunning = false
+
+    /** 布局单一入口（TSD-30 §5.1）：revalidate + 几何自愈兜底 + repaint 收敛到一处 */
+    private val layoutCoordinator: LayoutCoordinator
 
     /** UI 协程作用域 */
     private val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -73,6 +74,7 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
         setupAppearance()
 
         messagesContainer = createMessagesContainer()
+        layoutCoordinator = LayoutCoordinator(messagesContainer)
         scrollPane = createScrollPane()
         emptyPlaceholder = createEmptyPlaceholder()
 
@@ -82,25 +84,6 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
         }
 
         add(cardPanel, BorderLayout.CENTER)
-
-        // 初始化流式渲染控制器
-        streamingController = StreamingRenderController(
-            project = project,
-            uiScope = uiScope,
-            onMessageUpdate = { messageId, content ->
-                messageBubbles[messageId]?.updateStreamingText(content)
-            },
-            onMessageComplete = { messageId ->
-                // 流式完成，可选：触发最终渲染优化
-            },
-            onReasoningUpdate = { messageId, content ->
-                messageBubbles[messageId]?.updateReasoningContent(content)
-            },
-            onReasoningComplete = { messageId ->
-                // 流式结束：自动折叠思考区（G3），可手动展开
-                messageBubbles[messageId]?.completeReasoning()
-            }
-        )
     }
 
     private fun setupAppearance() {
@@ -162,9 +145,30 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
 
         // 布局经合并器收口（窗口内一次布局），滚动/越界校准每次都执行（安全且必要）
         if (updateCoalescer.request()) {
-            requestLayout()
+            layoutCoordinator.requestLayout(messageBubbles.values)
+        }
+        // 非运行态下迟到的思考内容更新不再重新展开（后端 running=false 先于最后一批消息发布）
+        if (!streamRunning) {
+            collapseThinkingBubbles()
         }
         scrollToBottom()
+    }
+
+    /**
+     * 注入会话执行态（G3 思考折叠）：false 边沿折叠全部思考气泡；
+     * setMessages 尾部的折叠兜住「终态信号先到、最后一条推理内容后到」的乱序。
+     */
+    fun setStreamRunning(running: Boolean) {
+        val wasRunning = streamRunning
+        streamRunning = running
+        if (wasRunning && !running) {
+            collapseThinkingBubbles()
+        }
+    }
+
+    /** 折叠当前所有思考气泡（[MessageBubble.completeReasoning] 自判是否思考消息） */
+    private fun collapseThinkingBubbles() {
+        messageBubbles.values.forEach { it.completeReasoning() }
     }
 
     /**
@@ -286,6 +290,8 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
             }
             if (scrollPolicy.shouldStickToBottom(viewport.viewPosition.y.toInt(), extentHeight, viewSizeHeight)) {
                 viewport.viewPosition = Point(0, maxY)
+                // 视口已挪到底部，确保容器尺寸与内容一致（首帧消息的 viewSize 可能滞后为 0）
+                layoutCoordinator.ensureLaidOut(messageBubbles.values)
             }
         }
     }
@@ -306,60 +312,14 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
         messagesContainer.removeAll()
         messageBubbles.clear()
         listModel.sync(emptyList())
-        streamingController.cancelStreaming()
         showEmptyPanel()
-        requestLayout()
+        layoutCoordinator.requestLayout(messageBubbles.values)
     }
 
-    /** 布局单一入口（TSD-30 §5.1）：revalidate + 几何自愈兜底 + repaint 收敛到一处 */
-    private fun requestLayout() {
-        messagesContainer.revalidate()
-        ensureLaidOut()
-        messagesContainer.repaint()
-    }
-
-    /**
-     * 保证容器子树已完成布局。
-     *
-     * 实测结论（JDK 21 源码 + `[diag]` 日志）：
-     * `Container.validate()` 的条件是 `!isValid() && peer != null`——轻量组件（scroll pane 里的 JPanel）
-     * `peer == null`，所以 `validate()` 是**空操作**；`revalidate()` 的延迟校验在该链路里同样没落到
-     * `layoutContainer`。结果是视口按 `preferredSize` 给容器 `setSize`（滚动条正常），但气泡 `bounds`
-     * 恒为 `0x0`，一个都画不出来（整屏只剩面板底色）。
-     *
-     * 因此这里不依赖 Swing 的校验机制，直接同步跑布局。
-     *
-     * 判定条件注意：气泡内容被就地更新（流式）后，`preferredSize` 会变，但 `bounds` 保持旧值，
-     * 此时**容器 `isValid` 不受影响**——若只看 `isValid` 会漏掉「高度滞后」的布局，导致气泡画在
-     * 旧尺寸上（内容被截断 / 整屏空白，resize 触发全量 validate 才恢复）。
-     * 所以改为检查「气泡高度是否滞后于其 preferredSize」。
-     */
-    private fun ensureLaidOut() {
-        if (!SwingUtilities.isEventDispatchThread() || messagesContainer.width <= 0) return
-        val staleGeometry = messageBubbles.values.any {
-            it.parent === messagesContainer && (it.width == 0 || it.height != it.preferredSize.height)
-        }
-        if (messagesContainer.isValid && !staleGeometry) return
-        messagesContainer.revalidate()
-        forceLayout(messagesContainer)
-        log.debug(
-            "ensureLaidOut: forced stale=$staleGeometry valid=${messagesContainer.isValid} " +
-                "children=${messagesContainer.componentCount} size=${messagesContainer.size.width}x${messagesContainer.size.height}"
-        )
-    }
-
-    /**
-     * 递归强制布局（`doLayout` 直接调布局管理器，绕开 isValid / RepaintManager 的延迟校验）。
-     */
-    private fun forceLayout(container: Container) {
-        container.doLayout()
-        container.components.forEach { child ->
-            if (child is Container && child.isVisible) forceLayout(child)
-        }
-    }
+    /** 布局单一入口（TSD-30 §5.1）已收敛至 [LayoutCoordinator]：动态增删子组件后
+     *  只允许调 [LayoutCoordinator.requestLayout]，此处不再持有散落的布局方法 */
 
     override fun dispose() {
-        streamingController.dispose()
         uiScope.cancel()
         // 面板销毁：释放仍挂载的气泡（含思考动画等 Disposable 子组件）
         messageBubbles.values.forEach { it.dispose() }

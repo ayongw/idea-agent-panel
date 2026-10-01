@@ -221,6 +221,15 @@ class OpenCodeChatApp(
             }
         }
 
+        // 会话执行态 → 思考折叠（G3）：运行中保持展开，结束后自动折叠思考气泡
+        coroutineScope.launch {
+            viewModel.sessionRunningFlow.collect { running ->
+                ApplicationManager.getApplication().invokeLater {
+                    chatList.setStreamRunning(running)
+                }
+            }
+        }
+
         coroutineScope.launch {
             viewModel.searchChatMessagesHandler().searchStateFlow.collect { searchState ->
                 ApplicationManager.getApplication().invokeLater {

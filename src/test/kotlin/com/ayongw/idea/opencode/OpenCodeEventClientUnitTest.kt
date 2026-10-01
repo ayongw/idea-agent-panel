@@ -152,7 +152,18 @@ class OpenCodeEventClientUnitTest {
         server.enqueue(sseResponse(fixture("real-session-success.txt")))
         val events = CopyOnWriteArrayList<OpenCodeEvent>()
         val states = CopyOnWriteArrayList<OpenCodeEventClient.State>()
-        val client = client(events, states)
+        // 大 backoff：fixture 流立即结束会触发重连排程，20ms 快速重连在负载高时
+        // 会与 stop() 赛跑导致断言偶发失败；此处只验证 stop 语义，用 5s backoff 消除竞态
+        val client = OpenCodeEventClient(
+            baseUrl = server.url("/").toString(),
+            username = "opencode",
+            password = "secret",
+            onEvent = { events += it },
+            onStateChanged = { states += it },
+            initialBackoffMillis = 5_000,
+            maxBackoffMillis = 5_000,
+            readTimeoutMillis = 3_000
+        )
 
         client.start()
         awaitUntil("应建立连接") { states.contains(OpenCodeEventClient.State.CONNECTED) }
