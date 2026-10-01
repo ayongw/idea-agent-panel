@@ -41,9 +41,9 @@ class TopBar(
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
 
         sessionTabs = SessionTabs(
-            onSelect = { sessionId -> viewModel.switchSession(sessionId) },
+            onSelect = { sessionId -> viewModel.sessions.switchSession(sessionId) },
             onClose = { sessionId -> viewModel.closeSessionTab(sessionId) },
-            onNewSession = { viewModel.createSession(null) },
+            onNewSession = { viewModel.sessions.createSession(null) },
             onShowAllSessions = onShowAllSessions,
             onToggleSearch = { visible -> toggleSearch(visible) },
             onOpenSettings = onOpenSettings

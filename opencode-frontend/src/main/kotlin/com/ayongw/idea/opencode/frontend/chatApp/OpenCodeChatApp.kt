@@ -65,18 +65,18 @@ class OpenCodeChatApp(
             onOpenSettings = { openSettings() }
         )
         serverStatusStrip = ServerStatusStrip(
-            onRetry = { viewModel.retryServerStart() },
-            onStartOwnInstance = { viewModel.startOwnServer() },
-            onSubmitCredentials = { username, password -> viewModel.submitServerCredentials(username, password) },
+            onRetry = { viewModel.server.retryServerStart() },
+            onStartOwnInstance = { viewModel.server.startOwnServer() },
+            onSubmitCredentials = { username, password -> viewModel.server.submitServerCredentials(username, password) },
             onOpenSettings = { openSettings(OpenCodeSettingsConfigurable.CONNECTION_TAB_INDEX) },
             onOpenCliDocs = { BrowserUtil.browse(CLI_DOCS_URL) }
         )
         inputToolbar = InputToolbar(
-            onApprovalModeSelected = { mode -> viewModel.setApprovalMode(mode) },
-            onAgentSelected = { agent -> viewModel.switchAgent(agent.id) },
-            onModelSelected = { model -> viewModel.switchModel(model) },
-            onBeforeMenuOpen = { viewModel.loadAgentsAndModels() },
-            onBeforeModelMenuOpen = { viewModel.loadModelProviders() },
+            onApprovalModeSelected = { mode -> viewModel.compose.setApprovalMode(mode) },
+            onAgentSelected = { agent -> viewModel.compose.switchAgent(agent.id) },
+            onModelSelected = { model -> viewModel.compose.switchModel(model) },
+            onBeforeMenuOpen = { viewModel.compose.loadAgentsAndModels() },
+            onBeforeModelMenuOpen = { viewModel.compose.loadModelProviders() },
             onManageModels = { openSettings(OpenCodeSettingsConfigurable.MODELS_TAB_INDEX) }
         )
         chatList = ChatList(project)
@@ -90,11 +90,11 @@ class OpenCodeChatApp(
             contextChipBar = contextChipBar,
             inputToolbar = inputToolbar,
             basePath = project.basePath,
-            onAddAttachments = { attachments -> viewModel.addAttachments(attachments) },
-            onRemoveAttachment = { attachment -> viewModel.removeAttachment(attachment.path) },
-            onMentionCandidatesNeeded = { viewModel.ensureMentionCandidates() },
-            onSearchWorkspace = { query -> viewModel.searchWorkspace(query) },
-            onBrowseDirectory = { path -> viewModel.browseWorkspaceDirectory(path) }
+            onAddAttachments = { attachments -> viewModel.compose.addAttachments(attachments) },
+            onRemoveAttachment = { attachment -> viewModel.compose.removeAttachment(attachment.path) },
+            onMentionCandidatesNeeded = { viewModel.compose.ensureMentionCandidates() },
+            onSearchWorkspace = { query -> viewModel.compose.searchWorkspace(query) },
+            onBrowseDirectory = { path -> viewModel.compose.browseWorkspaceDirectory(path) }
         )
 
         add(topBar, BorderLayout.NORTH)
@@ -139,20 +139,20 @@ class OpenCodeChatApp(
         allSessionsPopup?.cancel()
         allSessionsPopup = null
         // 打开前刷新一次本工作区会话（启动后其他窗口/工具新建的会话也能看到）
-        viewModel.loadSessions()
+        viewModel.sessions.loadSessions()
 
         val sessionList = SessionList(
             project = project,
             onSessionClick = { sessionId ->
                 allSessionsPopup?.cancel()
-                viewModel.switchSession(sessionId)
+                viewModel.sessions.switchSession(sessionId)
             },
             onNewSession = {
                 allSessionsPopup?.cancel()
-                viewModel.createSession(null)
+                viewModel.sessions.createSession(null)
             },
-            onRenameSession = { sessionId, newTitle -> viewModel.renameSession(sessionId, newTitle) },
-            onDeleteSession = { sessionId -> viewModel.deleteSession(sessionId) }
+            onRenameSession = { sessionId, newTitle -> viewModel.sessions.renameSession(sessionId, newTitle) },
+            onDeleteSession = { sessionId -> viewModel.sessions.deleteSession(sessionId) }
         )
         sessionList.updateSessions(workspaceSessions(), viewModel.currentSessionId.value)
 
@@ -194,7 +194,7 @@ class OpenCodeChatApp(
 
         // 顶部：Server 运行时状态条（非就绪状态才显示）
         coroutineScope.launch {
-            viewModel.serverStateFlow.collect { state ->
+            viewModel.server.serverStateFlow.collect { state ->
                 ApplicationManager.getApplication().invokeLater {
                     serverStatusStrip.update(state)
                 }
@@ -207,9 +207,9 @@ class OpenCodeChatApp(
                 if (sessionId != lastBoundSessionId) {
                     val oldId = lastBoundSessionId
                     lastBoundSessionId = sessionId
-                    if (oldId != null) viewModel.saveDraft(oldId, promptInput.currentText())
-                    val draft = viewModel.loadDraft(sessionId)
-                    viewModel.restoreDraft(sessionId, draft)
+                    if (oldId != null) viewModel.sessions.saveDraft(oldId, promptInput.currentText())
+                    val draft = viewModel.sessions.loadDraft(sessionId)
+                    viewModel.sessions.restoreDraft(sessionId, draft)
                     promptInput.setDraftText(draft)
                 }
             }
@@ -247,7 +247,7 @@ class OpenCodeChatApp(
         // 顶部：已打开会话 tab
         coroutineScope.launch {
             combine(
-                viewModel.allSessionsFlow,
+                viewModel.sessions.allSessionsFlow,
                 viewModel.openedSessionIds,
                 viewModel.currentSessionId
             ) { sessions, openedIds, currentSessionId ->
@@ -263,10 +263,10 @@ class OpenCodeChatApp(
         // 底部：审核类型 / 模式 / 模型
         coroutineScope.launch {
             combine(
-                viewModel.approvalMode,
-                viewModel.agentsFlow,
-                viewModel.selectedAgentId,
-                viewModel.selectedModel
+                viewModel.compose.approvalMode,
+                viewModel.compose.agentsFlow,
+                viewModel.compose.selectedAgentId,
+                viewModel.compose.selectedModel
             ) { approvalMode, agents, selectedAgentId, selectedModel ->
                 InputToolbarState(approvalMode, agents, selectedAgentId, selectedModel)
             }.collect { state ->
@@ -283,7 +283,7 @@ class OpenCodeChatApp(
 
         // 底部：会话用量与上下文占比
         coroutineScope.launch {
-            viewModel.usageFlow.collect { usage ->
+            viewModel.compose.usageFlow.collect { usage ->
                 ApplicationManager.getApplication().invokeLater {
                     promptInput.updateUsage(usage)
                 }
@@ -301,7 +301,7 @@ class OpenCodeChatApp(
 
         // 输入区：会话附件（chips 右段）
         coroutineScope.launch {
-            viewModel.contextFilesFlow.collect { attachments ->
+            viewModel.compose.contextFilesFlow.collect { attachments ->
                 ApplicationManager.getApplication().invokeLater {
                     promptInput.updateSessionAttachments(attachments)
                 }
@@ -310,7 +310,7 @@ class OpenCodeChatApp(
 
         // 输入区：`/` 候选（命令 / 技能 / 规则）
         coroutineScope.launch {
-            viewModel.mentionCandidatesFlow.collect { candidates ->
+            viewModel.compose.mentionCandidatesFlow.collect { candidates ->
                 ApplicationManager.getApplication().invokeLater {
                     promptInput.updateMentionCandidates(candidates)
                 }
@@ -319,7 +319,7 @@ class OpenCodeChatApp(
 
         // 输入区：`#` 候选（工作区文件 / 目录）
         coroutineScope.launch {
-            viewModel.workspaceCandidatesFlow.collect { candidates ->
+            viewModel.compose.workspaceCandidatesFlow.collect { candidates ->
                 ApplicationManager.getApplication().invokeLater {
                     promptInput.updateWorkspaceCandidates(candidates)
                 }
@@ -328,7 +328,7 @@ class OpenCodeChatApp(
 
         // 底部：按供应商分组的模型
         coroutineScope.launch {
-            viewModel.modelProvidersFlow.collect { providers ->
+            viewModel.compose.modelProvidersFlow.collect { providers ->
                 ApplicationManager.getApplication().invokeLater {
                     inputToolbar.updateProviders(providers)
                 }
