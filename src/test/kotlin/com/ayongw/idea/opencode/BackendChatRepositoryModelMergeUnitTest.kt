@@ -1,6 +1,6 @@
 package com.ayongw.idea.opencode
 
-import com.ayongw.idea.opencode.backend.BackendChatRepositoryModel
+import com.ayongw.idea.opencode.backend.event.mergeReconcile
 import com.ayongw.idea.opencode.shared.ChatMessage
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -30,7 +30,7 @@ class BackendChatRepositoryModelMergeUnitTest {
         // REST：正文更新了内容，无思考
         val rest = listOf(msg("msg_1", "REST 权威正文", t1))
 
-        val merged = BackendChatRepositoryModel.mergeReconcile(existing, rest)
+        val merged = mergeReconcile(existing, rest)
 
         assertEquals("正文被 REST 覆盖", "REST 权威正文", merged[0].content)
         assertEquals("思考保留不丢", "本地思考", merged[1].content)
@@ -48,7 +48,7 @@ class BackendChatRepositoryModelMergeUnitTest {
             msg("msg_2", "断线正文", t2),
         )
 
-        val merged = BackendChatRepositoryModel.mergeReconcile(existing, rest)
+        val merged = mergeReconcile(existing, rest)
 
         assertEquals("断线轮整段插入且顺序正确", listOf("msg_0", "msg_2#reasoning", "msg_2"), merged.map { it.id })
     }
@@ -56,14 +56,14 @@ class BackendChatRepositoryModelMergeUnitTest {
     @Test
     fun `REST 空时保留本地不整屏清空`() {
         val existing = listOf(msg("msg_1", "内容", t1))
-        val merged = BackendChatRepositoryModel.mergeReconcile(existing, emptyList())
+        val merged = mergeReconcile(existing, emptyList())
         assertEquals("REST 空不清空本地", existing, merged)
     }
 
     @Test
     fun `本地空时直接用 REST`() {
         val rest = listOf(msg("msg_1", "内容", t1))
-        assertEquals(rest, BackendChatRepositoryModel.mergeReconcile(emptyList(), rest))
+        assertEquals(rest, mergeReconcile(emptyList(), rest))
     }
 
     @Test
@@ -76,7 +76,7 @@ class BackendChatRepositoryModelMergeUnitTest {
             msg("msg_3", "断线正文", t2),
         )
 
-        val merged = BackendChatRepositoryModel.mergeReconcile(existing, rest)
+        val merged = mergeReconcile(existing, rest)
 
         // 以 REST 的 parts 顺序（思考在前）整段插入，不因同时间戳错位
         assertEquals(listOf("msg_0", "msg_3#reasoning", "msg_3"), merged.map { it.id })
@@ -91,7 +91,7 @@ class BackendChatRepositoryModelMergeUnitTest {
         )
         val rest = listOf(msg("msg_1", "正文终态", t1))
 
-        val merged = BackendChatRepositoryModel.mergeReconcile(existing, rest)
+        val merged = mergeReconcile(existing, rest)
 
         assertEquals("工具中间态保留（REST 无则不动）", ChatMessage.ChatMessageType.TOOL, merged[0].type)
         assertEquals("正文被覆盖为终态", "正文终态", merged[1].content)
