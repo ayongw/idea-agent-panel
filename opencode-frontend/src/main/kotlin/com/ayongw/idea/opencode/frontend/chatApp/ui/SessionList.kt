@@ -20,7 +20,6 @@ import com.ayongw.idea.opencode.shared.SessionStateDto
 import com.ayongw.idea.opencode.shared.toSessionState
 import com.intellij.icons.AllIcons
 import java.awt.BorderLayout
-import java.awt.Color
 import java.awt.Component
 import java.awt.Container
 import java.awt.Dimension
@@ -328,7 +327,7 @@ private class SessionCellRenderer : ListCellRenderer<SessionItem> {
 
         val panel = JPanel(BorderLayout()).apply {
             isOpaque = isSelected
-            background = if (isSelected) JBColor(Color(200, 220, 255), Color(40, 60, 90)) else null
+            background = if (isSelected) ChatAppColors.Selection.rowHighlight else null
             border = JBUI.Borders.empty(JBUI.scale(ChatUIConstants.Spacing.NORMAL), JBUI.scale(ChatUIConstants.Spacing.XLARGE))
         }
 

@@ -1,6 +1,5 @@
 package com.ayongw.idea.opencode.frontend.chatApp.ui
 
-import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -18,7 +17,6 @@ import com.ayongw.idea.opencode.shared.PendingPermissionDto
 import com.ayongw.idea.opencode.shared.PermissionResponse
 import com.ayongw.idea.opencode.shared.SessionUsageDto
 import java.awt.BorderLayout
-import java.awt.Color
 import java.awt.Dimension
 import java.awt.event.ActionEvent
 import java.awt.event.InputEvent
@@ -504,7 +502,7 @@ class PromptInput(
                     val label = JBLabel(value ?: "").apply {
                         border = JBUI.Borders.empty(8, 12)
                         if (isSelected) {
-                            background = JBColor(Color(200, 220, 255), Color(40, 60, 90))
+                            background = ChatAppColors.Selection.rowHighlight
                             isOpaque = true
                         }
                     }

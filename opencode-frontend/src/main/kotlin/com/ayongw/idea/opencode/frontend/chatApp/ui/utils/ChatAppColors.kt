@@ -90,6 +90,16 @@ object ChatAppColors {
         val border: Color = JBColor.border()
     }
 
+    object Selection {
+        /** 行/条目高亮底色（会话行、mention 高亮等） */
+        val rowHighlight: Color = JBColor(Color(200, 220, 255), Color(40, 60, 90))
+    }
+
+    object Status {
+        /** 警示红（用量超限、权限提示等） */
+        val warning: Color = JBColor(Color(0xC0, 0x39, 0x2B), Color(0xFF, 0x8A, 0x80))
+    }
+
     object Tab {
         val selectedBackground: Color = JBColor(Color(232, 241, 254), Color(45, 55, 70))
         val selectedIndicator: Color = JBColor(Color(66, 165, 245), Color(100, 181, 246))

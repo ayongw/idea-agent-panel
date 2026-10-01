@@ -1,15 +1,14 @@
 package com.ayongw.idea.opencode.frontend.chatApp.ui
 
+import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ButtonUtils
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppColors
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatUIConstants
 import com.ayongw.idea.opencode.shared.PendingPermissionDto
 import com.ayongw.idea.opencode.shared.PermissionResponse
-import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
-import java.awt.Color
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JPanel
@@ -35,16 +34,16 @@ class PermissionPrompt(
 
         messageLabel.apply {
             font = JBFont.small()
-            foreground = WARNING
+            foreground = ChatAppColors.Status.warning
         }
 
         add(messageLabel)
         add(Box.createHorizontalGlue())
-        add(createDecideButton(REJECT_LABEL) { PermissionResponse.REJECT })
+        add(createDecideButton(OpencodeFrontendBundle.message("chat.permission.reject")) { PermissionResponse.REJECT })
         add(Box.createHorizontalStrut(JBUI.scale(ChatUIConstants.Spacing.NORMAL)))
-        add(createDecideButton(ALWAYS_LABEL) { PermissionResponse.ALLOW_ALWAYS })
+        add(createDecideButton(OpencodeFrontendBundle.message("chat.permission.always")) { PermissionResponse.ALLOW_ALWAYS })
         add(Box.createHorizontalStrut(JBUI.scale(ChatUIConstants.Spacing.NORMAL)))
-        add(createDecideButton(ONCE_LABEL) { PermissionResponse.ALLOW_ONCE })
+        add(createDecideButton(OpencodeFrontendBundle.message("chat.permission.once")) { PermissionResponse.ALLOW_ONCE })
 
         isVisible = false
     }
@@ -57,11 +56,12 @@ class PermissionPrompt(
             return
         }
 
+        val title = OpencodeFrontendBundle.message("chat.permission.title")
         val resources = permission.resources.joinToString(RESOURCE_SEPARATOR)
         messageLabel.text = if (resources.isBlank()) {
-            "$TITLE${permission.action}"
+            "$title${permission.action}"
         } else {
-            "$TITLE${permission.action}$SEPARATOR$resources"
+            "$title${permission.action}$SEPARATOR$resources"
         }
         isVisible = true
         revalidate()
@@ -82,14 +82,7 @@ class PermissionPrompt(
         }
 
     private companion object {
-        /** 权限类提示用警示色（双主题） */
-        val WARNING: Color = JBColor(Color(0xC0, 0x39, 0x2B), Color(0xFF, 0x8A, 0x80))
-
-        const val TITLE = "权限请求："
         const val SEPARATOR = " · "
         const val RESOURCE_SEPARATOR = ", "
-        const val ONCE_LABEL = "允许一次"
-        const val ALWAYS_LABEL = "始终允许"
-        const val REJECT_LABEL = "拒绝"
     }
 }
