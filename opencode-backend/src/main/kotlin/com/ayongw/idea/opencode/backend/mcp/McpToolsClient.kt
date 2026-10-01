@@ -1,18 +1,18 @@
 package com.ayongw.idea.opencode.backend.mcp
 
+import com.ayongw.idea.opencode.backend.repository.OpenCodeHttpClientFactory
 import com.ayongw.idea.opencode.shared.McpServerDto
 import com.google.gson.JsonObject
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.Response
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path
-import java.time.Duration
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
@@ -24,7 +24,8 @@ import java.util.concurrent.TimeUnit
  * - `remote`：Streamable HTTP（POST + `Accept: application/json, text/event-stream`），
  *   回带 `Mcp-Session-Id` 与 `MCP-Protocol-Version`
  *
- * 只依赖 JDK（不使用平台 API），便于单测直接构造；opencode 侧没有该数据，故由本插件自连（见 TSD-32）。
+ * remote 走共享 OkHttp 传输（与 REST/事件流同栈，TSD-30 §5.9）；local 只依赖 JDK 子进程（不使用平台 API），
+ * 便于单测直接构造；opencode 侧没有该数据，故由本插件自连（见 TSD-32）。
  */
 class McpToolsClient(
     private val initializeTimeoutMs: Long = DEFAULT_INITIALIZE_TIMEOUT_MS,
@@ -88,16 +89,17 @@ class McpToolsClient(
     private fun listRemote(server: McpServerDto): McpToolsResult {
         val url = server.url?.takeIf { it.isNotBlank() }
             ?: return McpToolsResult.Failure("配置里没有 url，无法连接该服务器")
-        val client = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofMillis(initializeTimeoutMs))
+        // 共享 OkHttp 基座（TSD-30 §5.9）：只派生连接超时，连接池/dispatcher 与 REST/事件流共用
+        val client = OpenCodeHttpClientFactory.shared.newBuilder()
+            .connectTimeout(initializeTimeoutMs, TimeUnit.MILLISECONDS)
             .build()
         var sessionId: String? = null
         var protocolVersion: String? = null
         var unavailableReason: String? = null
 
         fun post(body: String, timeoutMs: Long): JsonObject? {
-            val request = HttpRequest.newBuilder(URI.create(url))
-                .timeout(Duration.ofMillis(timeoutMs))
+            val request = Request.Builder()
+                .url(url)
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream")
                 .apply {
@@ -105,21 +107,27 @@ class McpToolsClient(
                     sessionId?.let { header("Mcp-Session-Id", it) }
                     protocolVersion?.let { header("MCP-Protocol-Version", it) }
                 }
-                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                .post(RequestBody.create(JSON_MEDIA_TYPE, body))
+                .build()
+            // callTimeout 对齐原 JDK HttpRequest.timeout：整个调用（连接+发送+读取）的总时长
+            val callClient = client.newBuilder()
+                .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
                 .build()
             val response = try {
-                client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+                callClient.newCall(request).execute()
             } catch (e: Exception) {
                 unavailableReason = "网络不可达：${e.message ?: e.toString()}"
                 return null
             }
-            val code = response.statusCode()
-            if (code !in 200..299) {
-                unavailableReason = httpError(code, url, response.body())
-                return null
+            return response.use {
+                if (it.code !in 200..299) {
+                    unavailableReason = httpError(it.code, url, it.body?.string().orEmpty())
+                    null
+                } else {
+                    it.header("Mcp-Session-Id")?.let { sid -> sessionId = sid }
+                    parseBody(it)
+                }
             }
-            response.headers().firstValue("Mcp-Session-Id").orElse(null)?.let { sessionId = it }
-            return parseBody(response)
         }
 
         val initialize = post(McpProtocol.initializeRequest(INITIALIZE_ID), initializeTimeoutMs)
@@ -138,10 +146,10 @@ class McpToolsClient(
     }
 
     /** 响应体解析：`text/event-stream` 时按 `data:` 取第一段可用 JSON；空体（如通知的 202）返回 null */
-    private fun parseBody(response: HttpResponse<String>): JsonObject? {
-        val body = response.body().orEmpty()
+    private fun parseBody(response: Response): JsonObject? {
+        val body = response.body?.string().orEmpty()
         if (body.isBlank()) return null
-        val contentType = response.headers().firstValue("Content-Type").orElse("")
+        val contentType = response.header("Content-Type").orEmpty()
         return if (contentType.contains("text/event-stream", ignoreCase = true)) {
             body.lineSequence()
                 .filter { it.startsWith("data:") }
@@ -288,6 +296,9 @@ class McpToolsClient(
 
     companion object {
         const val TYPE_REMOTE = "remote"
+
+        /** JSON 请求体媒体类型（OkHttp） */
+        private val JSON_MEDIA_TYPE = "application/json".toMediaType()
 
         private const val INITIALIZE_ID = 1
         private const val TOOLS_ID = 2

@@ -1,6 +1,6 @@
 package com.ayongw.idea.opencode.server
 
-import com.ayongw.idea.opencode.backend.server.JdkHttpProbe
+import com.ayongw.idea.opencode.backend.server.OkHttpProbe
 import com.ayongw.idea.opencode.backend.server.OpenCodeServerDiscovery
 import com.ayongw.idea.opencode.backend.server.OpenCodeServerEndpoint
 import com.ayongw.idea.opencode.backend.server.OpenCodeServerEndpointSource
@@ -86,7 +86,7 @@ class OpenCodeServerDiscoveryUnitTest {
         totalTimeoutMs = totalTimeoutMs,
     )
 
-    private fun discovery() = OpenCodeServerDiscovery(JdkHttpProbe())
+    private fun discovery() = OpenCodeServerDiscovery(OkHttpProbe())
 
     private fun assertNotReady(
         result: OpenCodeServerProbeResult,

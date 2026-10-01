@@ -45,7 +45,7 @@ sealed interface OpenCodeServerProbeResult {
  * - 401/403 与「2xx 但非 opencode 服务」立即返回，不做无意义轮询（§3.5 / §4.3）。
  */
 open class OpenCodeServerDiscovery(
-    private val http: OpenCodeServerHttpProbe = JdkHttpProbe(),
+    private val http: OpenCodeServerHttpProbe = OkHttpProbe(),
     private val sleeper: (Long) -> Unit = { Thread.sleep(it) },
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) {
