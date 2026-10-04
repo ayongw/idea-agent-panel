@@ -16,7 +16,6 @@ import kotlinx.coroutines.launch
  *
  * @param afterSessionCreated 新会话建好并打开 tab 后：转发当前 Agent/模型、刷新用量与列表
  * @param afterSessionActivated 切换完成后：重置/刷新用量、刷新 Agent/模型、回读会话选择
- * @param afterCurrentSessionCleared 当前会话被删空后：清空用量
  * @param onDraftRestored 草稿恢复后由核心写入输入框状态
  */
 internal class SessionController(
@@ -25,7 +24,6 @@ internal class SessionController(
     private val tabsState: OpenCodeSessionTabsState?,
     private val afterSessionCreated: suspend (sessionId: String) -> Unit,
     private val afterSessionActivated: suspend (sessionId: String) -> Unit,
-    private val afterCurrentSessionCleared: suspend () -> Unit,
     private val onDraftRestored: (draft: String) -> Unit,
 ) : SessionApi {
 
@@ -73,10 +71,11 @@ internal class SessionController(
 
     override fun deleteSession(sessionId: String) {
         coroutineScope.launch {
+            // 会话删除会把 currentSessionId 置空，需先判断是否当前会话再删除
+            val wasCurrent = repository.currentSessionId.value == sessionId
             repository.deleteSession(sessionId)
             // 会话已删除，对应 tab 一并关闭（否则会留下点不开的死 tab，并被持久化）
-            if (_openedSessionIds.value.contains(sessionId)) closeSessionTab(sessionId)
-            if (repository.currentSessionId.value == null) afterCurrentSessionCleared()
+            removeTabAndRelocate(sessionId, wasCurrent)
         }
     }
 
@@ -92,8 +91,33 @@ internal class SessionController(
 
     /** 关闭会话 tab（核心 ChatViewModel 委托调用；删除会话时内部也会调用） */
     fun closeSessionTab(sessionId: String) {
-        _openedSessionIds.value = _openedSessionIds.value - sessionId
-        persistTabs()
+        coroutineScope.launch {
+            val wasCurrent = repository.currentSessionId.value == sessionId
+            removeTabAndRelocate(sessionId, wasCurrent)
+        }
+    }
+
+    /**
+     * 移除 tab 并在必要时重定位：被移除的是当前会话时，优先切到相邻 tab（右侧 → 左侧 → 任意剩余），
+     * 没有可切的了就新建一个，避免面板停留在已关闭/已删除的会话上。
+     */
+    private suspend fun removeTabAndRelocate(sessionId: String, wasCurrent: Boolean) {
+        val opened = _openedSessionIds.value
+        val index = opened.indexOf(sessionId)
+        if (index >= 0) {
+            _openedSessionIds.value = opened - sessionId
+            persistTabs()
+        }
+        if (!wasCurrent) return
+        // 相邻优先取同一位置右侧（IDE 惯例），其次左侧；tab 本就不在列表时兜底取剩余最后一个
+        val neighbor = opened.getOrNull(index + 1)
+            ?: opened.getOrNull(index - 1)
+            ?: _openedSessionIds.value.lastOrNull()
+        if (neighbor != null) {
+            switchSessionInternal(neighbor)
+        } else {
+            createSessionInternal(null, forceNew = true)
+        }
     }
 
     override fun saveDraft(sessionId: String?, text: String) {
@@ -134,8 +158,20 @@ internal class SessionController(
         }
     }
 
-    /** 新建会话 → 开 tab → 输入区联动 */
-    private suspend fun createSessionInternal(initialTitle: String?) {
+    /**
+     * 新建会话 → 开 tab → 输入区联动
+     *
+     * 防重复创建：当前已有会话且还没发过任何消息（空白新会话）时直接复用，
+     * 避免用户连点「新建」堆积一堆空会话。
+     *
+     * @param forceNew true 时跳过复用检查强制新建（关闭/删除会话后的重定位必须真建新会话）
+     */
+    private suspend fun createSessionInternal(initialTitle: String?, forceNew: Boolean = false) {
+        val currentId = repository.currentSessionId.value
+        if (!forceNew && currentId != null && repository.messagesFlow.value.isEmpty()) {
+            openTab(currentId)
+            return
+        }
         val sessionId = repository.createSession(initialTitle)
         openTab(sessionId)
         afterSessionCreated(sessionId)

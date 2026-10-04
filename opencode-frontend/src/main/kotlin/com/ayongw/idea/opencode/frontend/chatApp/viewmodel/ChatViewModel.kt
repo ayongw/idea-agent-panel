@@ -74,7 +74,6 @@ class ChatViewModel(
             composeController.refreshAgentsAndModels()
             composeController.applySessionSelection(sessionId)
         },
-        afterCurrentSessionCleared = { composeController.clearUsage() },
         onDraftRestored = { draft ->
             emitPromptInputState(
                 if (draft.isNotBlank()) MessageInputState.Enabled(draft) else MessageInputState.Disabled

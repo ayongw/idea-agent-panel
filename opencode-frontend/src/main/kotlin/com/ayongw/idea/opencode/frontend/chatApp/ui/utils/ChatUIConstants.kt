@@ -19,7 +19,7 @@ object ChatUIConstants {
         const val CORNER_RADIUS = 16
         const val VERTICAL_MARGIN = 6
         const val HORIZONTAL_MARGIN = 12
-        const val INNER_PADDING = 16
+        const val INNER_PADDING = 10
 
         const val CONTENT_WRAP_WIDTH = MAX_WIDTH - 2 * HORIZONTAL_MARGIN - 2 * INNER_PADDING
 
