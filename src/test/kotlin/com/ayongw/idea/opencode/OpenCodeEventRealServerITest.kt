@@ -2,6 +2,7 @@ package com.ayongw.idea.opencode
 
 import com.ayongw.idea.opencode.backend.BackendChatRepositoryModel
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
+import com.ayongw.idea.opencode.backend.repository.PermissionDecision
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ChatMessageDto
 import com.intellij.openapi.project.Project
@@ -119,7 +120,7 @@ class OpenCodeEventRealServerITest {
             val pending = model.getPendingPermissionFlow().first()
             if (pending != null) {
                 withTimeout(REST_TIMEOUT_MS) {
-                    model.replyPermission(pending.requestId, OpenCodeRestClient.PermissionDecision.ONCE)
+                    model.replyPermission(pending.requestId, PermissionDecision.ONCE)
                 }
                 answered++
                 continue

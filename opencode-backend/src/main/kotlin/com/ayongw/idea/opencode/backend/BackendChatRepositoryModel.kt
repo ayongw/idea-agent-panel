@@ -13,6 +13,8 @@ import com.ayongw.idea.opencode.backend.repository.MessageMapper
 import com.ayongw.idea.opencode.backend.repository.SessionCatalog
 import com.ayongw.idea.opencode.backend.repository.OpenCodeCredentials
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
+import com.ayongw.idea.opencode.backend.repository.OpenCodeSession
+import com.ayongw.idea.opencode.backend.repository.PermissionDecision
 import com.ayongw.idea.opencode.backend.server.OpenCodeServerConnectionConfig
 import com.ayongw.idea.opencode.backend.server.OpenCodeServerEndpoint
 import com.ayongw.idea.opencode.backend.server.OpenCodeServerManager
@@ -61,7 +63,7 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
     private val _messages = MutableStateFlow(emptyList<ChatMessage>())
 
     /** 所有会话列表缓存 */
-    private val _allSessions = MutableStateFlow(emptyList<OpenCodeRestClient.OpenCodeSession>())
+    private val _allSessions = MutableStateFlow(emptyList<OpenCodeSession>())
 
     /** 服务器连接状态 */
     private val _serverConnected = MutableStateFlow(false)
@@ -136,7 +138,7 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
         return _messages.map { messagesList -> messagesList.map(ChatMessage::toChatMessageDto) }
     }
 
-    fun getAllSessionsFlow(): Flow<List<OpenCodeRestClient.OpenCodeSession>> {
+    fun getAllSessionsFlow(): Flow<List<OpenCodeSession>> {
         return _allSessions
     }
 
@@ -300,7 +302,7 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
     /**
      * 回复权限请求
      */
-    suspend fun replyPermission(permissionId: String, decision: OpenCodeRestClient.PermissionDecision) {
+    suspend fun replyPermission(permissionId: String, decision: PermissionDecision) {
         currentSessionId?.let { sessionId ->
             connections.restClient.replyPermission(sessionId, permissionId, decision)
             // 已回复：本地立即收起卡片，不等服务端事件

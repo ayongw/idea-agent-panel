@@ -2,7 +2,10 @@
 
 package com.ayongw.idea.opencode.backend
 
+import com.ayongw.idea.opencode.backend.repository.OpenCodeFsEntry
+import com.ayongw.idea.opencode.backend.repository.OpenCodeModel
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
+import com.ayongw.idea.opencode.backend.repository.PermissionDecision
 import com.ayongw.idea.opencode.backend.server.OpenCodeServerManager
 import com.ayongw.idea.opencode.backend.server.OpenCodeServerStatus
 import com.ayongw.idea.opencode.shared.AgentDto
@@ -109,9 +112,9 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
         val backendProject = projectId.findProjectOrNull() ?: return
         val model = BackendChatRepositoryModel.getInstance(backendProject)
         val decision = when (response) {
-            PermissionResponse.ALLOW_ALWAYS -> OpenCodeRestClient.PermissionDecision.ALWAYS
-            PermissionResponse.ALLOW_ONCE -> OpenCodeRestClient.PermissionDecision.ONCE
-            else -> OpenCodeRestClient.PermissionDecision.REJECT
+            PermissionResponse.ALLOW_ALWAYS -> PermissionDecision.ALWAYS
+            PermissionResponse.ALLOW_ONCE -> PermissionDecision.ONCE
+            else -> PermissionDecision.REJECT
         }
         model.replyPermission(permissionId, decision)
     }
@@ -350,7 +353,7 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
         outputTail = outputTail,
     )
 
-    private fun OpenCodeRestClient.OpenCodeModel.toModelDto(providerName: String?) = ModelDto(
+    private fun OpenCodeModel.toModelDto(providerName: String?) = ModelDto(
         id = id,
         modelID = modelID,
         providerID = providerID,
@@ -360,7 +363,7 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
         free = free
     )
 
-    private fun OpenCodeRestClient.OpenCodeFsEntry.toWorkspaceEntry() = WorkspaceEntryDto(
+    private fun OpenCodeFsEntry.toWorkspaceEntry() = WorkspaceEntryDto(
         path = path,
         name = path.trimEnd('/').substringAfterLast('/').ifBlank { path },
         isDirectory = isDirectory

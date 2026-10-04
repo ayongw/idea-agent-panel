@@ -21,11 +21,11 @@ internal class MessageMapper(private val aiAuthor: String) {
      * `GET /api/session/{id}/message` 返回 `data[]` 最新在前（下标 0 为最新），
      * 面板要求最早在前（与事件流追加顺序一致），故反转。
      */
-    fun toBubbles(messages: List<OpenCodeRestClient.OpenCodeMessage>): List<ChatMessage> =
+    fun toBubbles(messages: List<OpenCodeMessage>): List<ChatMessage> =
         messages.asReversed().flatMap(::toChatMessages)
 
     /** opencode 消息 → 面板气泡：user 单条；assistant 按 `content[]` 顺序拆成思考 + 正文气泡 + 工具卡片 */
-    private fun toChatMessages(openCodeMsg: OpenCodeRestClient.OpenCodeMessage): List<ChatMessage> {
+    private fun toChatMessages(openCodeMsg: OpenCodeMessage): List<ChatMessage> {
         val at = Instant.ofEpochMilli(openCodeMsg.createdMillis)
             .atZone(ZoneId.systemDefault())
             .toLocalDateTime()
@@ -47,16 +47,16 @@ internal class MessageMapper(private val aiAuthor: String) {
         openCodeMsg.parts.forEach { part ->
             when (part) {
                 // 思考过程 → AI_THINKING 气泡：id 带后缀，与事件流侧一致（两路可原地互相覆盖）
-                is OpenCodeRestClient.OpenCodePart.Reasoning ->
+                is OpenCodePart.Reasoning ->
                     bubbles += reasoningMessage(openCodeMsg, part.text, at)
                 // 同一消息的多个 text 片段仍合并为一个气泡，落在首个 text 片段的位置
-                is OpenCodeRestClient.OpenCodePart.Text -> {
+                is OpenCodePart.Text -> {
                     if (!textEmitted && openCodeMsg.content.isNotBlank()) {
                         bubbles += assistantTextMessage(openCodeMsg, at)
                         textEmitted = true
                     }
                 }
-                is OpenCodeRestClient.OpenCodePart.Tool -> bubbles += toolMessage(part.call, at)
+                is OpenCodePart.Tool -> bubbles += toolMessage(part.call, at)
             }
         }
         if (!textEmitted && openCodeMsg.content.isNotBlank()) {
@@ -67,7 +67,7 @@ internal class MessageMapper(private val aiAuthor: String) {
 
     /** 思考过程气泡：id 与事件流侧 `assistantMessageId#reasoning` 一致 */
     private fun reasoningMessage(
-        openCodeMsg: OpenCodeRestClient.OpenCodeMessage,
+        openCodeMsg: OpenCodeMessage,
         reasoning: String,
         at: LocalDateTime
     ) = ChatMessage(
@@ -80,7 +80,7 @@ internal class MessageMapper(private val aiAuthor: String) {
     )
 
     private fun assistantTextMessage(
-        openCodeMsg: OpenCodeRestClient.OpenCodeMessage,
+        openCodeMsg: OpenCodeMessage,
         at: LocalDateTime
     ) = ChatMessage(
         id = openCodeMsg.id,
@@ -92,7 +92,7 @@ internal class MessageMapper(private val aiAuthor: String) {
     )
 
     /** 工具卡片气泡：id 用 `call_*`，与事件流侧一致，两路可原地互相覆盖 */
-    private fun toolMessage(call: OpenCodeRestClient.OpenCodeToolCall, at: LocalDateTime): ChatMessage {
+    private fun toolMessage(call: OpenCodeToolCall, at: LocalDateTime): ChatMessage {
         val tool = ToolCallDto(
             callId = call.callId,
             name = call.name,

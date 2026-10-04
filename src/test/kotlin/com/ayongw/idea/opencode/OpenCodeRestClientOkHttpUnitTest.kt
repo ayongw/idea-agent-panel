@@ -1,6 +1,8 @@
 package com.ayongw.idea.opencode
 
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
+import com.ayongw.idea.opencode.backend.repository.OpenCodeResult
+import com.ayongw.idea.opencode.backend.repository.getInfo
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -53,7 +55,7 @@ class OpenCodeRestClientOkHttpUnitTest {
         val result = client().getInfo()
 
         assertTrue("401 应为失败", result.isFailure())
-        val failure = result as? OpenCodeRestClient.Result.Failure
+        val failure = result as? OpenCodeResult.Failure
         assertTrue("错误信息应含 HTTP 401", failure?.exception?.message?.contains("401") == true)
     }
 

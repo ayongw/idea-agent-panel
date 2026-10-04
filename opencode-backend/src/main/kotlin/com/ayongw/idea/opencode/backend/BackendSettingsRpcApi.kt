@@ -8,7 +8,18 @@ import com.ayongw.idea.opencode.backend.mcp.McpToolsResult
 import com.ayongw.idea.opencode.backend.repository.ConfigScope
 import com.ayongw.idea.opencode.backend.repository.JsoncEditor
 import com.ayongw.idea.opencode.backend.repository.OpenCodeConfigStore
+import com.ayongw.idea.opencode.backend.repository.OpenCodeResult
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
+import com.ayongw.idea.opencode.backend.repository.connectKey
+import com.ayongw.idea.opencode.backend.repository.getDefaultModel
+import com.ayongw.idea.opencode.backend.repository.getIntegrations
+import com.ayongw.idea.opencode.backend.repository.getModels
+import com.ayongw.idea.opencode.backend.repository.getMcpServers
+import com.ayongw.idea.opencode.backend.repository.getProviders
+import com.ayongw.idea.opencode.backend.repository.getShells
+import com.ayongw.idea.opencode.backend.repository.getSkills
+import com.ayongw.idea.opencode.backend.repository.reloadConfig
+import com.ayongw.idea.opencode.backend.repository.setShell
 import com.ayongw.idea.opencode.shared.ConfigScopeDto
 import com.ayongw.idea.opencode.shared.McpServerDto
 import com.ayongw.idea.opencode.shared.McpTimeoutDto
@@ -490,7 +501,7 @@ class BackendSettingsRpcApi : SettingsRpcApi {
     private suspend fun <T> fetch(
         label: String,
         warnings: MutableList<String>,
-        call: suspend () -> OpenCodeRestClient.Result<T>
+        call: suspend () -> OpenCodeResult<T>
     ): T? {
         return try {
             val result = call()
@@ -506,8 +517,8 @@ class BackendSettingsRpcApi : SettingsRpcApi {
         }
     }
 
-    private fun failureMessage(result: OpenCodeRestClient.Result<*>): String =
-        (result as? OpenCodeRestClient.Result.Failure)?.exception?.message ?: "未知错误"
+    private fun failureMessage(result: OpenCodeResult<*>): String =
+        (result as? OpenCodeResult.Failure)?.exception?.message ?: "未知错误"
 
     private fun stringArray(values: List<String>): JsonArray = JsonArray().apply { values.forEach { add(it) } }
 

@@ -1,6 +1,15 @@
 package com.ayongw.idea.opencode
 
+import com.ayongw.idea.opencode.backend.repository.OpenCodePart
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
+import com.ayongw.idea.opencode.backend.repository.PermissionDecision
+import com.ayongw.idea.opencode.backend.repository.PromptFile
+import com.ayongw.idea.opencode.backend.repository.findEntries
+import com.ayongw.idea.opencode.backend.repository.getDefaultModel
+import com.ayongw.idea.opencode.backend.repository.listCommands
+import com.ayongw.idea.opencode.backend.repository.listDirectory
+import com.ayongw.idea.opencode.backend.repository.listProviderNames
+import com.ayongw.idea.opencode.backend.repository.listReferences
 import com.ayongw.idea.opencode.shared.ToolCallStatus
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.runBlocking
@@ -179,7 +188,7 @@ class OpenCodeRestClientUnitTest {
         val result = client().sendPrompt(
             "ses_1",
             "你好",
-            listOf(OpenCodeRestClient.PromptFile("file:///tmp/a.kt", "a.kt", "src")),
+            listOf(PromptFile("file:///tmp/a.kt", "a.kt", "src")),
             listOf("skill_1")
         )
 
@@ -328,7 +337,7 @@ class OpenCodeRestClientUnitTest {
     fun permissionReplySendsDecision() = runBlocking {
         routes["/api/session/ses_1/permission/per_1/reply"] = """{"data":{}}"""
 
-        client().replyPermission("ses_1", "per_1", OpenCodeRestClient.PermissionDecision.ONCE)
+        client().replyPermission("ses_1", "per_1", PermissionDecision.ONCE)
 
         assertEquals("/api/session/ses_1/permission/per_1/reply", lastPath)
         assertTrue(lastBody!!.contains("\"decision\":\"once\""))
@@ -474,10 +483,10 @@ class OpenCodeRestClientUnitTest {
         val parts = message.parts
 
         assertEquals("reasoning/text/tool 按原顺序保留", 4, parts.size)
-        assertEquals("思考", (parts[0] as OpenCodeRestClient.OpenCodePart.Reasoning).text)
-        assertEquals("我来执行", (parts[1] as OpenCodeRestClient.OpenCodePart.Text).text)
+        assertEquals("思考", (parts[0] as OpenCodePart.Reasoning).text)
+        assertEquals("我来执行", (parts[1] as OpenCodePart.Text).text)
 
-        val shell = (parts[2] as OpenCodeRestClient.OpenCodePart.Tool).call
+        val shell = (parts[2] as OpenCodePart.Tool).call
         assertEquals("call_1", shell.callId)
         assertEquals("shell", shell.name)
         assertTrue("completed 的入参对象应序列化为 JSON 字符串", shell.input.contains("echo hi"))
@@ -486,7 +495,7 @@ class OpenCodeRestClientUnitTest {
         assertEquals(0, shell.exit)
         assertFalse(shell.truncated)
 
-        val read = (parts[3] as OpenCodeRestClient.OpenCodePart.Tool).call
+        val read = (parts[3] as OpenCodePart.Tool).call
         assertEquals("call_2", read.callId)
         assertEquals(ToolCallStatus.RUNNING, read.status)
         assertNull("running 态无 metadata 时退出码为 null", read.exit)
@@ -511,12 +520,12 @@ class OpenCodeRestClientUnitTest {
 
         val parts = client().getMessages("ses_1").getOrThrow().single().parts
 
-        val error = (parts[0] as OpenCodeRestClient.OpenCodePart.Tool).call
+        val error = (parts[0] as OpenCodePart.Tool).call
         assertEquals(ToolCallStatus.ERROR, error.status)
         assertEquals("error 态无 content 时应退回结构化错误信息", "permission denied", error.output)
         assertTrue(error.truncated.not())
 
-        val streaming = (parts[1] as OpenCodeRestClient.OpenCodePart.Tool).call
+        val streaming = (parts[1] as OpenCodePart.Tool).call
         assertEquals(ToolCallStatus.STREAMING, streaming.status)
         assertEquals("streaming 态的入参是未解析完的字符串", """{"path":""", streaming.input)
     }

@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
  */
 internal class SessionCatalog(
     private val messagesState: MutableStateFlow<List<ChatMessage>>,
-    private val allSessionsState: MutableStateFlow<List<OpenCodeRestClient.OpenCodeSession>>,
+    private val allSessionsState: MutableStateFlow<List<OpenCodeSession>>,
     private val serverConnectedState: MutableStateFlow<Boolean>,
     private val runningState: MutableStateFlow<Boolean>,
     private val permissionState: MutableStateFlow<PendingPermissionDto?>,

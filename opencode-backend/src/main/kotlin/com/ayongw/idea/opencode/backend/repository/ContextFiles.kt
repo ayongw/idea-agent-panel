@@ -17,7 +17,7 @@ internal class ContextFiles {
 
     /** 发送时下发给 REST 的文件附件 + 技能 id */
     data class PromptAttachments(
-        val files: List<OpenCodeRestClient.PromptFile>,
+        val files: List<PromptFile>,
         val skills: List<String>,
     )
 
@@ -61,7 +61,7 @@ internal class ContextFiles {
                         it.kind == ContextKind.RULE
                 }
                 .map {
-                    OpenCodeRestClient.PromptFile(
+                    PromptFile(
                         uri = fileUri(it.path),
                         name = it.name,
                         description = it.summary.takeIf { summary -> summary.isNotBlank() }

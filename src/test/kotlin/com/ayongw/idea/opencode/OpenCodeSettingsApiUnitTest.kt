@@ -1,6 +1,15 @@
 package com.ayongw.idea.opencode
 
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
+import com.ayongw.idea.opencode.backend.repository.connectKey
+import com.ayongw.idea.opencode.backend.repository.getConfigEntries
+import com.ayongw.idea.opencode.backend.repository.getDefaultModel
+import com.ayongw.idea.opencode.backend.repository.getInfo
+import com.ayongw.idea.opencode.backend.repository.getModels
+import com.ayongw.idea.opencode.backend.repository.getMcpServers
+import com.ayongw.idea.opencode.backend.repository.getProviders
+import com.ayongw.idea.opencode.backend.repository.reloadConfig
+import com.ayongw.idea.opencode.backend.repository.setShell
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.runBlocking
 import org.junit.After

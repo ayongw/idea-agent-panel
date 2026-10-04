@@ -14,19 +14,19 @@ internal class MetadataGateway(
 ) {
 
     /** 列出可用 Agent（模式） */
-    suspend fun listAgents(): List<OpenCodeRestClient.OpenCodeAgent> =
+    suspend fun listAgents(): List<OpenCodeAgent> =
         restClientProvider().listAgents().getOrThrow()
 
     /** 命令清单（内置 + 自定义），工作区维度 */
-    suspend fun listCommands(directory: String?): List<OpenCodeRestClient.OpenCodeCommand> =
+    suspend fun listCommands(directory: String?): List<OpenCodeCommand> =
         restClientProvider().listCommands(directory).getOrThrow()
 
     /** 规则清单（AGENTS.md 等） */
-    suspend fun listReferences(): List<OpenCodeRestClient.OpenCodeReference> =
+    suspend fun listReferences(): List<OpenCodeReference> =
         restClientProvider().listReferences().getOrThrow()
 
     /** 技能清单（含 id / 展示名 / 路径 / 描述） */
-    suspend fun listSkills(): List<OpenCodeRestClient.OpenCodeSkill> =
+    suspend fun listSkills(): List<OpenCodeSkill> =
         restClientProvider().listSkillInfos().getOrThrow()
 
     /** 工作区文件检索（文件与目录，路径相对工作区根目录） */
@@ -34,14 +34,14 @@ internal class MetadataGateway(
         query: String,
         directory: String?,
         limit: Int
-    ): List<OpenCodeRestClient.OpenCodeFsEntry> =
+    ): List<OpenCodeFsEntry> =
         restClientProvider().findEntries(query, directory, limit).getOrThrow()
 
     /** 工作区目录浏览（path 为 null 时列工作区根目录） */
     suspend fun listWorkspaceDirectory(
         path: String?,
         directory: String?
-    ): List<OpenCodeRestClient.OpenCodeFsEntry> =
+    ): List<OpenCodeFsEntry> =
         restClientProvider().listDirectory(path, directory).getOrThrow()
 
     /** 供应商展示名映射（providerID → name） */
@@ -49,11 +49,11 @@ internal class MetadataGateway(
         restClientProvider().listProviderNames().getOrThrow()
 
     /** 会话详情（回读模式与模型用）；不可达时为 null */
-    suspend fun getSession(sessionId: String): OpenCodeRestClient.OpenCodeSession? =
+    suspend fun getSession(sessionId: String): OpenCodeSession? =
         restClientProvider().getSession(sessionId).getOrNull()
 
     /** 列出可用模型 */
-    suspend fun listModels(): List<OpenCodeRestClient.OpenCodeModel> =
+    suspend fun listModels(): List<OpenCodeModel> =
         restClientProvider().listModels().getOrThrow()
 
     /** 切换指定会话的 Agent（模式） */
@@ -95,7 +95,7 @@ internal class MetadataGateway(
         return models.firstOrNull { it.providerID == providerId && it.modelID == modelId }?.limitContext
     }
 
-    private fun OpenCodeRestClient.OpenCodeTokenUsage.toDto() = TokenUsageDto(
+    private fun OpenCodeTokenUsage.toDto() = TokenUsageDto(
         input = input,
         output = output,
         reasoning = reasoning,
