@@ -51,3 +51,5 @@
 - 修复消息区整片空白：根因是轻量容器 `peer == null`，`Container.validate()` 为空操作、`revalidate()` 的延迟校验也没落到 `layoutContainer`，导致气泡 `bounds` 恒为 0×0；改为直接同步跑布局（`doLayout` 递归），消息容器宽度跟随视口，并在布局完成后再滚动到底部
 - 修复首条消息不显示：首次消息时视口 validate 尚未执行，消息容器高度为 0，气泡被布局到 0 高度区域；同步布局前先将容器尺寸对齐 `preferredSize`
 - 修复自己发的消息在服务端对账后重建（本地 id 换服务端 id）导致的闪烁：本地回声气泡直接使用 `/prompt` 响应返回的 user 消息 id
+- 修复 IDE 代理（如 Clash SOCKS5，例外为空）下访问本机 opencode 报 `unexpected end of stream`：loopback 目标强制直连，REST 基座启用陈旧连接换新重试（事件流保持关闭）
+- 修复重启 IDE 后设置页密码框为空、Test Connection 回退旧密码失败：项目打开后在后台预加载密码，EDT 只读内存缓存（避免访问 PasswordSafe 命中 SlowOperations 禁令）

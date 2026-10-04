@@ -67,12 +67,15 @@ class ChatViewModel(
             composeController.clearUsage()
             composeController.refreshUsage()
             composeController.refreshAgentsAndModels()
+            // 预拉模型供应商清单，模型弹窗首次打开不空白
+            composeController.ensureModelProvidersLoaded()
         },
         afterSessionActivated = { sessionId ->
             composeController.clearUsage()
             composeController.refreshUsage()
             composeController.refreshAgentsAndModels()
             composeController.applySessionSelection(sessionId)
+            composeController.ensureModelProvidersLoaded()
         },
         onDraftRestored = { draft ->
             emitPromptInputState(

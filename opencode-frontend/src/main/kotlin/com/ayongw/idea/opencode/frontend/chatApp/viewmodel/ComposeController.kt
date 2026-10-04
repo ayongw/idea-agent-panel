@@ -64,6 +64,9 @@ internal class ComposeController(
 
     private var mentionCandidatesLoaded = false
 
+    /** 模型供应商清单是否已预拉（弹窗打开时仍会强制刷新） */
+    private var modelProvidersLoaded = false
+
     /** `#` 检索去抖任务（连续输入只保留最后一次） */
     private var workspaceSearchJob: Job? = null
 
@@ -211,6 +214,16 @@ internal class ComposeController(
             _modelProvidersFlow.value =
                 runCatching { repository.listModelProviders() }.getOrDefault(emptyList())
         }
+    }
+
+    /**
+     * 预拉模型供应商清单（仅首次生效）：会话激活链上后台加载，
+     * 避免模型弹窗首次打开时空白等待 RPC。弹窗打开时仍会经 loadModelProviders 强制刷新。
+     */
+    fun ensureModelProvidersLoaded() {
+        if (modelProvidersLoaded) return
+        modelProvidersLoaded = true
+        loadModelProviders()
     }
 
     private fun commandCandidate(name: String, description: String?) = MentionSupport.Candidate(

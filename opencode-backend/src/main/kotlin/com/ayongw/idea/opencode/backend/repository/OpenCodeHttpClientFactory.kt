@@ -22,18 +22,27 @@ object OpenCodeHttpClientFactory {
     /**
      * 共享基座客户端（REST 直接使用；事件流经 [forEventStream] 派生）
      *
-     * retryOnConnectionFailure=false：连接重试由调用方（事件流重连/REST 调用处）统一控制，
-     * 避免 OkHttp 在流式场景下静默重试。
+     * retryOnConnectionFailure=true：REST 请求复用到被 server 超时关闭的陈旧连接时
+     * （opencode keep-alive 5s），OkHttp 自动换新连接重试一次——请求尚未发出、对幂等接口安全；
+     * 流式场景在 [forEventStream] 派生时显式关闭。
+     *
+     * proxySelector=[LoopbackProxySelector]：loopback 目标（本机 opencode）强制直连，
+     * 避免本机流量绕经 IDE 代理（如 SOCKS5）隧道；外部目标仍走 JVM 默认选择器（IDE 代理配置）。
      */
     val shared: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .readTimeout(REST_READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        .retryOnConnectionFailure(false)
+        .retryOnConnectionFailure(true)
+        .proxySelector(LoopbackProxySelector())
         .build()
 
-    /** 事件流派生客户端：仅覆盖读超时（心跳保活判定），其余配置与连接池共享基座 */
+    /**
+     * 事件流派生客户端：仅覆盖读超时（心跳保活判定），其余配置与连接池共享基座；
+     * 关闭连接失败重试，长连接断开统一交由调用方重连编排，避免静默重连
+     */
     fun forEventStream(readTimeoutMillis: Long): OkHttpClient =
         shared.newBuilder()
             .readTimeout(readTimeoutMillis, TimeUnit.MILLISECONDS)
+            .retryOnConnectionFailure(false)
             .build()
 }

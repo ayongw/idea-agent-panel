@@ -13,6 +13,11 @@ import com.ayongw.idea.opencode.frontend.chatApp.viewmodel.FrontendChatRepositor
 import com.ayongw.idea.opencode.frontend.chatApp.viewmodel.OpenCodeSessionTabsState
 
 class OpenCodeToolWindowFactory : ToolWindowFactory, DumbAware {
+    companion object {
+        /** 工具窗 id（plugin.xml 注册同名 EP；自动显示活动也用它查找） */
+        const val TOOL_WINDOW_ID = "OpenCode"
+    }
+
     override fun shouldBeAvailable(project: Project) = true
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {

@@ -14,7 +14,10 @@
         <toolWindow factoryClass="com.ayongw.idea.opencode.frontend.toolWindow.OpenCodeToolWindowFactory"
                     id="OpenCode"
                     icon="/icons/opencode.svg"/>
+        <!-- 项目启动后自动显示一次工具窗：新 UI 对未激活过的工具窗不常驻按钮，需 show 一次让入口可见 -->
+        <backgroundPostStartupActivity implementation="com.ayongw.idea.opencode.frontend.toolWindow.OpenCodeToolWindowAutoShowActivity"/>
         <applicationConfigurable instance="com.ayongw.idea.opencode.frontend.settings.OpenCodeSettingsConfigurable"/>
+        <postStartupActivity implementation="com.ayongw.idea.opencode.frontend.settings.OpenCodePasswordPreloadActivity"/>
         <notificationGroup id="OpenCode.Server"
                            displayType="BALLOON"
                            bundle="messages.OpencodeFrontendBundle"
