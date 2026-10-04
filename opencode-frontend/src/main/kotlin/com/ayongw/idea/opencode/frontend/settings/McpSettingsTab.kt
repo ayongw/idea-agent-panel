@@ -7,7 +7,6 @@ import com.ayongw.idea.opencode.shared.McpServerDto
 import com.ayongw.idea.opencode.shared.McpToolDto
 import com.ayongw.idea.opencode.shared.SettingsRpcApi
 import com.intellij.platform.project.projectId
-import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -199,10 +198,10 @@ internal class McpSettingsTab : AbstractSettingsTab() {
     private fun statusText(server: McpServerDto): String = OpencodeFrontendBundle.message(statusKey(server))
 
     private fun statusColor(server: McpServerDto): Color = when (statusKey(server)) {
-        "settings.opencode.mcp.status.connected" -> CONNECTED
-        "settings.opencode.mcp.status.failed" -> FAILED
-        "settings.opencode.mcp.status.needs.auth" -> PENDING
-        "settings.opencode.mcp.status.pending" -> PENDING
+        "settings.opencode.mcp.status.connected" -> SettingsColors.Status.connected
+        "settings.opencode.mcp.status.failed" -> SettingsColors.Status.failed
+        "settings.opencode.mcp.status.needs.auth" -> SettingsColors.Status.pending
+        "settings.opencode.mcp.status.pending" -> SettingsColors.Status.pending
         else -> UIUtil.getContextHelpForeground()
     }
 
@@ -332,7 +331,7 @@ internal class McpSettingsTab : AbstractSettingsTab() {
         private fun retryLink(onRetry: () -> Unit): JComponent =
             ButtonUtils.ToolbarButton(text = OpencodeFrontendBundle.message("settings.opencode.mcp.tools.retry")).apply {
                 font = JBUI.Fonts.smallFont()
-                foreground = LINK
+                foreground = SettingsColors.link
                 cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
                 alignmentX = Component.LEFT_ALIGNMENT
                 addActionListener { onRetry() }
@@ -340,11 +339,6 @@ internal class McpSettingsTab : AbstractSettingsTab() {
     }
 
     private companion object {
-        val CONNECTED: Color = JBColor(Color(0x2E7D32), Color(0x81C784))
-        val FAILED: Color = JBColor(Color(0xC62828), Color(0xEF9A9A))
-        val PENDING: Color = JBColor(Color(0xE65100), Color(0xFFB74D))
-        val LINK: Color = JBColor(Color(0x2F6FEB), Color(0x548AF7))
-
         /** 展开区滚动高度上限（逻辑像素） */
         const val MAX_TOOLS_HEIGHT = 160
 

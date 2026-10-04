@@ -8,7 +8,6 @@ import com.ayongw.idea.opencode.shared.SettingsRpcApi
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
 import com.intellij.platform.project.projectId
-import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
@@ -509,7 +508,7 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
                     val trackH = JBUI.scale(SWITCH_HEIGHT).toDouble()
                     val x = (width - trackW) / 2
                     val y = (height - trackH) / 2
-                    g2.color = if (on) SWITCH_ON else SWITCH_OFF
+                    g2.color = if (on) SettingsColors.Switch.on else SettingsColors.Switch.off
                     g2.fill(RoundRectangle2D.Double(x, y, trackW, trackH, trackH, trackH))
                     val pad = JBUI.scale(SWITCH_PADDING).toDouble()
                     val knob = trackH - pad * 2
@@ -525,8 +524,6 @@ internal class ProviderSettingsTab : AbstractSettingsTab() {
                 const val SWITCH_WIDTH = 34
                 const val SWITCH_HEIGHT = 18
                 const val SWITCH_PADDING = 2
-                val SWITCH_ON = JBColor(Color(0x2F6FEB), Color(0x548AF7))
-                val SWITCH_OFF = JBColor(Color(0xC9CDD4), Color(0x5A5D63))
             }
         }
     }
