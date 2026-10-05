@@ -20,6 +20,7 @@ import com.ayongw.idea.opencode.shared.SessionStateDto
 import com.ayongw.idea.opencode.shared.toSessionState
 import com.intellij.icons.AllIcons
 import java.awt.BorderLayout
+import java.awt.CardLayout
 import java.awt.Component
 import java.awt.Container
 import java.awt.Dimension
@@ -62,8 +63,17 @@ class SessionList(
     private val scrollPane = JBScrollPane(sessionList)
     private val emptyState = createEmptyState()
 
+    /** 列表/空状态双视图容器（CardLayout 切换；两者都放 CENTER 会互相覆盖导致列表永远不可见） */
+    private val cards = JPanel(CardLayout())
+
     private val sessions = mutableListOf<SessionState>()
     private var currentSessionId: String? = null
+
+    private companion object {
+        /** CardLayout 视图标识：会话列表 / 空状态 */
+        const val CARD_LIST = "list"
+        const val CARD_EMPTY = "empty"
+    }
 
     init {
         setupAppearance()
@@ -121,7 +131,6 @@ class SessionList(
             cellRenderer = SessionCellRenderer()
             selectionMode = ListSelectionModel.SINGLE_SELECTION
             fixedCellHeight = JBUI.scale(ChatUIConstants.SessionList.ITEM_HEIGHT)
-            isVisible = false
 
             addMouseListener(object : MouseAdapter() {
                 override fun mouseClicked(e: MouseEvent) {
@@ -141,8 +150,12 @@ class SessionList(
                 }
             })
         }
-        add(scrollPane, BorderLayout.CENTER)
-        add(emptyState, BorderLayout.CENTER)
+        cards.apply {
+            layout = CardLayout()
+            add(scrollPane, CARD_LIST)
+            add(emptyState, CARD_EMPTY)
+        }
+        add(cards, BorderLayout.CENTER)
         showEmptyState()
     }
 
@@ -276,15 +289,13 @@ class SessionList(
     }
 
     private fun showEmptyState() {
-        sessionList.isVisible = false
-        emptyState.isVisible = true
+        (cards.layout as CardLayout).show(cards, CARD_EMPTY)
         revalidate()
         repaint()
     }
 
     private fun showListState() {
-        sessionList.isVisible = true
-        emptyState.isVisible = false
+        (cards.layout as CardLayout).show(cards, CARD_LIST)
         revalidate()
         repaint()
     }

@@ -1,8 +1,4 @@
 <idea-plugin>
-    <id>opencode-idea-panel.opencode-frontend</id>
-    <name>OpenCode Frontend Module</name>
-    <vendor url="https://github.com/ayongw">ayongw</vendor>
-
     <dependencies>
         <module name="intellij.platform.frontend"/>
         <module name="opencode-idea-panel.opencode-shared"/>
