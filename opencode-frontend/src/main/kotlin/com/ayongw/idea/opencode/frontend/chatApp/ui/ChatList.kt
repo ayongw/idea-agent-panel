@@ -142,10 +142,11 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
             listModel.sync(ids)
             addNewMessages(messages)
             relayoutMessages()
-        }
-
-        // 布局经合并器收口（窗口内一次布局），滚动/越界校准每次都执行（安全且必要）
-        if (updateCoalescer.request()) {
+            // 结构性变化必须立即布局，不参与节流：合并器无 trailing 补偿，
+            // 命中 20ms 窗口会丢布局 → removeAll 后气泡 bounds 停留旧值，视口整屏空白
+            layoutCoordinator.requestLayout(messageBubbles.values)
+        } else if (updateCoalescer.request()) {
+            // 纯内容更新（流式 delta）：按窗口合并为一次布局
             layoutCoordinator.requestLayout(messageBubbles.values)
         }
         // 非运行态下迟到的思考内容更新不再重新展开（后端 running=false 先于最后一批消息发布）

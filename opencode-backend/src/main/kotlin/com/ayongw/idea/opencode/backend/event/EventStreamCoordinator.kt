@@ -130,6 +130,7 @@ internal class EventStreamCoordinator(
             if (sessionId != currentSessionIdProvider()) return@launch
             streamState.reset()
             val restBubbles = messageMapper.toBubbles(messages)
+            logReconcileDiff(sessionId, messagesState.value, restBubbles, messages.size)
             val merged = mergeReconcile(messagesState.value, restBubbles)
             messagesState.value = merged
             log.info(
@@ -138,6 +139,37 @@ internal class EventStreamCoordinator(
             )
             onSessionsStale()
         }
+    }
+
+    /**
+     * 对账差异记录（排查消息丢失/闪没的关键证据）：差异必须落日志。
+     *
+     * - 本地独有：本地有、REST 缺（事件流累积的中间态，合并时保留）
+     * - REST 新增：REST 有、本地缺（断线漏事件，合并时补充）
+     * - 同 id 内容不同：以 REST 为准覆盖（正文/tool 终态/思考最终内容）
+     */
+    private fun logReconcileDiff(
+        sessionId: String,
+        existing: List<ChatMessage>,
+        restBubbles: List<ChatMessage>,
+        restRawCount: Int
+    ) {
+        val existingById = existing.associateBy { it.id }
+        val restById = restBubbles.associateBy { it.id }
+        val localOnly = existing.filter { it.id !in restById }
+        val restOnly = restBubbles.filter { it.id !in existingById }
+        val contentDiff = existing.mapNotNull { local ->
+            restById[local.id]?.takeIf { rest -> rest.content != local.content }
+        }
+        if (localOnly.isEmpty() && restOnly.isEmpty() && contentDiff.isEmpty()) return
+        log.info(
+            "对账差异 session=$sessionId: 本地独有 ${localOnly.size} 条" +
+                "[${localOnly.joinToString { "${it.id.take(24)}/${it.type.name}" }}], " +
+                "REST 新增 ${restOnly.size} 条[${restOnly.joinToString { "${it.id.take(24)}/${it.type.name}" }}], " +
+                "同 id 内容不同 ${contentDiff.size} 条" +
+                "[${contentDiff.joinToString { "${it.id.take(24)}(本地${it.content.length}字)" }}], " +
+                "REST 原始 ${restRawCount} 条"
+        )
     }
 
     /** 执行终态：`succeeded` / `failed` / `interrupted` */

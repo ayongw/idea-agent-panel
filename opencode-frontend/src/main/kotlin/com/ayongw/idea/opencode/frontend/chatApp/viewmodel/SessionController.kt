@@ -182,8 +182,12 @@ internal class SessionController(
 
     /** 切换会话 → 开 tab → 输入区联动 */
     private suspend fun switchSessionInternal(sessionId: String) {
-        // 同会话重复切换（连点当前 tab）直接跳过，避免整轮 REST 刷新
-        if (repository.currentSessionId.value == sessionId) return
+        // 同会话重复切换（连点当前 tab）直接跳过，避免整轮 REST 刷新；
+        // 必须留痕：日志中区分「跳过（已是当前会话）」与「无日志（点击事件未到达 UI 层）」
+        if (repository.currentSessionId.value == sessionId) {
+            log.info("切换会话跳过（已是当前会话）session=$sessionId")
+            return
+        }
         log.info("请求切换会话 session=$sessionId")
         repository.switchSession(sessionId)
         openTab(sessionId)
