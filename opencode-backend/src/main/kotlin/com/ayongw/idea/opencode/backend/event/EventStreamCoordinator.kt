@@ -1,5 +1,6 @@
 package com.ayongw.idea.opencode.backend.event
 
+import com.ayongw.idea.opencode.backend.BackendChatRepositoryModel
 import com.ayongw.idea.opencode.backend.repository.MessageMapper
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
 import com.ayongw.idea.opencode.shared.ChatMessage
@@ -186,7 +187,8 @@ internal class EventStreamCoordinator(
         val streaming = streamState.messages()
         if (streaming.isEmpty()) return
         val byId = streaming.associateBy { it.id }
-        val current = messagesState.value
+        // 首条真实流式消息到达：撤掉发送后的「思考中」占位
+        val current = messagesState.value.filterNot { it.id == BackendChatRepositoryModel.PENDING_THINKING_ID }
         val merged = current.map { byId[it.id] ?: it }
         val knownIds = merged.mapTo(HashSet()) { it.id }
         val added = streaming.filter { it.id !in knownIds }
@@ -239,12 +241,14 @@ internal class EventStreamCoordinator(
  * 纯逻辑、无副作用，便于单测。
  */
 fun mergeReconcile(existing: List<ChatMessage>, rest: List<ChatMessage>): List<ChatMessage> {
-    if (existing.isEmpty()) return rest
-    if (rest.isEmpty()) return existing
+    // 对账兜底清理「思考中」占位：REST 无该 id（执行终态时无论有无产出都撤掉）
+    val base = existing.filterNot { it.id == BackendChatRepositoryModel.PENDING_THINKING_ID }
+    if (base.isEmpty()) return rest
+    if (rest.isEmpty()) return base
 
     // 1) REST 权威内容覆盖同 id 本地消息（id 唯一：正文原 id、思考带 #reasoning、工具带 call_）
     val restById = rest.associateBy { it.id }
-    val updated = existing.map { restById[it.id] ?: it }
+    val updated = base.map { restById[it.id] ?: it }
 
     // 2) 补充 REST 有、本地没有的（断线遗漏），按时间升序整段插入（内部顺序保持 REST 的 parts 顺序）
     val existingIds = updated.mapTo(HashSet()) { it.id }

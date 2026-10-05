@@ -71,9 +71,7 @@ class SessionTabs(
         isOpaque = false
         viewport.isOpaque = false
         verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_NEVER
-        // 横向滚动条必须禁用：tab 标题已有截断（TAB_TITLE_MAX_CHARS），无需滚动；
-        // overlay 滚动条浮现会压缩 viewport 高度并拦截 tab 底部点击，导致「点了没反应」
-        horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+        horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
         preferredSize = Dimension(0, JBUI.scale(ChatUIConstants.TopBar.TAB_HEIGHT + 8))
         minimumSize = Dimension(0, JBUI.scale(ChatUIConstants.TopBar.TAB_HEIGHT + 8))
     }

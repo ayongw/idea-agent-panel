@@ -75,7 +75,7 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 
 # 打包插件
 # 版本形如 0.1.0.<构建号>，构建号默认取 git 提交数，产物：build/distributions/opencode-idea-panel-0.1.0.<构建号>.zip
-./gradlew buildPlugin --no-daemon --no-configuration-cache
+./gradlew buildPlugin --no-configuration-cache
 
 # 指定构建号（覆盖 git 提交数）
 ./gradlew buildPlugin -PbuildNumber=42 --no-daemon --no-configuration-cache

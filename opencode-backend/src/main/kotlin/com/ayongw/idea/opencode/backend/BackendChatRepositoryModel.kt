@@ -48,6 +48,12 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
         /** 助手消息展示名（与本地模拟模式一致） */
         const val AI_AUTHOR = "AI Buddy"
 
+        /**
+         * 「思考中」占位消息 id：发送成功后立即插入（空内容 AI_THINKING → 前端思考动画），
+         * 首条真实流式消息到达（[publishStreamMessages]）或对账（[mergeReconcile]）时被清理
+         */
+        const val PENDING_THINKING_ID = "pending_thinking"
+
         fun getInstance(project: Project): BackendChatRepositoryModel {
             return project.getService(BackendChatRepositoryModel::class.java)
         }
@@ -222,6 +228,10 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
                     val userMessage = chatMessageFactory.createUserMessage(messageContent)
                         .let { if (serverMessageId != null) it.copy(id = serverMessageId) else it }
                     insertUserMessage(pendingIndex, userMessage)
+                    // 立即给出「思考中」反馈（空内容思考消息 → 前端思考动画）：
+                    // 首条流式事件到达前存在 REST 往返 + agent 启动空窗，避免界面无响应感
+                    _messages.value += chatMessageFactory.createAIThinkingMessage("")
+                        .copy(id = PENDING_THINKING_ID)
                     log.info(
                         "已发送消息 session=$sessionId, 长度=${messageContent.length}, " +
                             "消息=${serverMessageId ?: "-"}, command=${commandName ?: "-"}"

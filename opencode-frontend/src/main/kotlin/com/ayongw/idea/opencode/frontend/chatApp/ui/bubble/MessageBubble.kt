@@ -61,8 +61,12 @@ class MessageBubble(
     /** 当前渲染的内容段落 */
     private var currentSegments: List<MarkdownSegment> = emptyList()
 
-    /** 当前已渲染内容的内容指纹，用于「内容是否变化」的比较；null = 尚未渲染首帧（思考消息初始只渲染动画） */
-    private var renderedContent: String? = if (message.isAIThinkingMessage()) null else contentSignature(message)
+    /** 思考内容指纹（推理区）：null = 未渲染（空思考初始只渲染动画） */
+    private var reasoningSignature: String? =
+        if (message.isAIThinkingMessage() && message.content.isNotBlank()) message.content else null
+
+    /** 正文/工具内容指纹：null = 正文区未构建（合并气泡中思考先到、正文后补） */
+    private var textSignature: String? = if (message.isAIThinkingMessage()) null else contentSignature(message)
 
     init {
         setupAppearance()
@@ -85,24 +89,13 @@ class MessageBubble(
             }
 
             when {
-                message.isTextMessage() -> {
-                    contentContainer = buildContentContainer(message.content)
-                    add(contentContainer!!)
-                    // 用户消息：时间行在气泡之外，需留出「气泡内边距 + 与时间的间距」
-                    val gapBeforeTimestamp = if (message.isMyMessage) {
-                        ChatUIConstants.MessageBubble.INNER_PADDING + ChatUIConstants.Spacing.SMALL
-                    } else {
-                        ChatUIConstants.Spacing.NORMAL
-                    }
-                    add(Box.createVerticalStrut(JBUI.scale(gapBeforeTimestamp)))
-                    add(TimeStampLabel(message).also { timestampRow = it })
-                }
+                message.isTextMessage() -> appendContentContainer(message)
                 message.isAIThinkingMessage() -> {
                     // 已完成的历史思考（非空内容）默认折叠；流式刚开始（空内容）先显示动画
                     if (message.content.isBlank()) {
                         add(ThinkingIndicator().also { thinkingIndicator = it })
                     } else {
-                        buildReasoningStructure(expanded = false)
+                        insertReasoningStructure(expanded = false)
                     }
                 }
             }
@@ -110,16 +103,25 @@ class MessageBubble(
     }
 
     /**
-     * 上游按消息 id 推送同一气泡的新内容时就地刷新（流式正文 / 推理 / 工具卡片）；内容未变则不动。
+     * 上游按消息 id 推送新内容时就地刷新；内容未变则不动。
      *
-     * 首帧（`renderedContent == null`）不做「变更判定」短路，保证思考气泡从动画到内容必然渲染。
+     * 合并气泡：同一 assistant 消息的思考（id 带 #reasoning 后缀）与正文路由到同一气泡，
+     * 按到达顺序分别驱动推理区 / 正文区（见 [updateReasoningContent] / [updateStreamingText]）。
      */
     fun syncWith(message: ChatMessage) {
-        if (renderedContent != null && contentSignature(message) == renderedContent) return
         when {
-            message.isAIThinkingMessage() -> updateReasoningContent(message.content)
-            message.isTextMessage() -> updateStreamingText(message.content)
-            message.isToolMessage() -> message.tool?.let(::updateTool)
+            message.isAIThinkingMessage() -> {
+                if (reasoningSignature != null && reasoningSignature == message.content) return
+                updateReasoningContent(message.content)
+            }
+            message.isTextMessage() -> {
+                if (textSignature != null && textSignature == contentSignature(message)) return
+                updateStreamingText(message)
+            }
+            message.isToolMessage() -> message.tool?.let { tool ->
+                if (textSignature != null && textSignature == toolSignature(tool)) return
+                updateTool(tool)
+            }
         }
     }
 
@@ -219,15 +221,21 @@ class MessageBubble(
     /**
      * 更新流式文本内容（TSD-30 §5.3 块级增量）
      *
-     * 复用现有内容容器：只重建容器内的块组件，容器本身保持挂载（不再 `remove + add(newContainer, 2)`），
-     * 避免父级布局的移除/插入抖动导致闪烁。
+     * 正文区不存在（思考先到的合并气泡）时首帧构建：折叠思考区（正文开始输出 = 思考结束）、
+     * 撤掉残留思考动画，再追加正文容器 + 时间行；已存在则只重建容器内块组件（容器保持挂载，
+     * 不脱离父布局，避免闪烁）。
      */
-    fun updateStreamingText(newContent: String) {
-        val container = contentContainer ?: return
-        populateContentContainer(container, newContent)
-        renderedContent = newContent
-        container.revalidate()
-        container.repaint()
+    fun updateStreamingText(textMessage: ChatMessage) {
+        val container = contentContainer
+        if (container == null) {
+            reasoningSection?.complete()
+            dismissThinkingIndicator()
+            appendContentContainer(textMessage)
+        } else {
+            populateContentContainer(container, textMessage.content)
+        }
+        textSignature = contentSignature(textMessage)
+        contentContainer?.revalidate()
         // 内容增高/缩矮时气泡轮廓与时间行位置需重绘（用户消息气泡只包内容）
         repaint()
     }
@@ -236,24 +244,32 @@ class MessageBubble(
      * 完成流式文本，最终渲染
      */
     fun completeStreamingText(finalContent: String) {
-        updateStreamingText(finalContent)
+        updateStreamingText(message.copy(content = finalContent))
     }
 
     /**
      * 更新推理过程内容（G3：流式期间展开）
      *
-     * 首帧（动画 → 结构）建折叠骨架并展开；后续流式只填充内容容器内部（保持挂载）。
+     * 空思考首帧只保留动画；首帧非空内容（或动画升级）建折叠骨架并展开；
+     * 正文区已存在时思考区插入到正文上方（合并气泡支持正文先到）。
      */
     fun updateReasoningContent(content: String) {
-        if (message.isAIThinkingMessage()) {
-            if (reasoningSection == null) {
-                buildReasoningStructure(expanded = true)
+        if (reasoningSection == null) {
+            if (content.isBlank()) {
+                if (thinkingIndicator == null) {
+                    add(ThinkingIndicator().also { thinkingIndicator = it })
+                    revalidate()
+                    repaint()
+                }
+                reasoningSignature = ""
+                return
             }
-            reasoningSection!!.updateContent(content)
-            renderedContent = content
-            revalidate()
-            repaint()
+            insertReasoningStructure(expanded = true)
         }
+        reasoningSection!!.updateContent(content)
+        reasoningSignature = content
+        revalidate()
+        repaint()
     }
 
     /**
@@ -268,18 +284,39 @@ class MessageBubble(
         }
     }
 
-    /** 思考区骨架（G3）：动画替换为 [ReasoningSection]（作者名 + 可折叠内容） */
-    private fun buildReasoningStructure(expanded: Boolean) {
-        // 动画组件被内容骨架替换：先释放，否则 animator 挂到 ROOT_DISPOSABLE 泄漏
-        thinkingIndicator?.dispose()
-        thinkingIndicator = null
-        removeAll()
-        setupAppearance()
-        add(AuthorName(message))
-        add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.MEDIUM)))
+    /**
+     * 思考区骨架（G3）：动画替换为 [ReasoningSection]（作者名 + 可折叠内容）。
+     * 正文区已存在（正文先到的合并气泡）时插入到正文上方（作者行之后），否则追加尾部。
+     */
+    private fun insertReasoningStructure(expanded: Boolean) {
+        dismissThinkingIndicator()
         val section = ReasoningSection(expanded)
         reasoningSection = section
-        add(section)
+        // 正文先到时组件为 [author, strut, content, strut, timestamp]，思考区插到正文之前
+        add(section, if (contentContainer == null) componentCount else 2)
+    }
+
+    /** 追加正文容器 + 时间行（正文首帧；思考区/动画不受影响） */
+    private fun appendContentContainer(textMessage: ChatMessage) {
+        contentContainer = buildContentContainer(textMessage.content)
+        add(contentContainer!!)
+        // 用户消息：时间行在气泡之外，需留出「气泡内边距 + 与时间的间距」
+        val gapBeforeTimestamp = if (textMessage.isMyMessage) {
+            ChatUIConstants.MessageBubble.INNER_PADDING + ChatUIConstants.Spacing.SMALL
+        } else {
+            ChatUIConstants.Spacing.NORMAL
+        }
+        add(Box.createVerticalStrut(JBUI.scale(gapBeforeTimestamp)))
+        add(TimeStampLabel(textMessage).also { timestampRow = it })
+    }
+
+    /** 撤掉思考动画（正文首帧 / 气泡销毁）：组件从布局移除并释放 animator，防 ROOT 泄漏 */
+    private fun dismissThinkingIndicator() {
+        thinkingIndicator?.let {
+            remove(it)
+            it.dispose()
+        }
+        thinkingIndicator = null
     }
 
     /**
@@ -287,8 +324,7 @@ class MessageBubble(
      * 避免 animator 注册树残留到 ROOT_DISPOSABLE（Disposer 泄漏检测在 IDE 关闭时报警）。
      */
     override fun dispose() {
-        thinkingIndicator?.dispose()
-        thinkingIndicator = null
+        dismissThinkingIndicator()
     }
 
     /** 更新工具卡片（运行中 → 完成 / 失败） */
@@ -296,7 +332,7 @@ class MessageBubble(
         val card = buildToolCard(tool)
         contentContainer?.let { remove(it) }
         contentContainer = card
-        renderedContent = toolSignature(tool)
+        textSignature = toolSignature(tool)
         add(card)
         revalidate()
         repaint()

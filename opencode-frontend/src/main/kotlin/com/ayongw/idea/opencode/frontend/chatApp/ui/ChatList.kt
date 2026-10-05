@@ -78,6 +78,15 @@ class ChatList(
 
         /** 滚动/布局自愈重试上限：覆盖首帧与切卡后 viewport validate 的调度窗口 */
         private const val SCROLL_RETRY_MAX = 3
+
+        /** 推理气泡 id 后缀（与后端 SessionStreamState.REASONING_ID_SUFFIX 约定一致） */
+        private const val REASONING_ID_SUFFIX = "#reasoning"
+
+        /**
+         * 渲染分组键：同一 assistant 消息的思考（id 带 #reasoning 后缀）与正文合并进同一气泡，
+         * 思考折叠区 + 正文同块展示（Trae 风格）；用户消息 / 工具气泡 id 原样分组。
+         */
+        private fun groupKey(messageId: String): String = messageId.substringBefore(REASONING_ID_SUFFIX)
     }
 
     init {
@@ -149,12 +158,12 @@ class ChatList(
         if (!streamRunning) {
             collapseThinkingBubbles()
         }
-        // 集合变化（新增/删除/重排）才统一重挂；流式内容变化走 syncExistingMessages，不重挂容器
-        val ids = messages.map { it.id }
-        if (listModel.ids != ids) {
-            removeDeletedMessages(messages)
-            listModel.sync(ids)
-            addNewMessages(messages)
+        // 渲染按 assistant 消息分组：思考与正文合并进同一气泡；集合变化才统一重挂
+        val groupIds = messages.map { groupKey(it.id) }.distinct()
+        if (listModel.ids != groupIds) {
+            removeDeletedGroups(groupIds)
+            listModel.sync(groupIds)
+            addNewGroupedMessages(messages)
             relayoutMessages()
             // 结构性变化必须立即布局，不参与节流：合并器无 trailing 补偿，
             // 命中 20ms 窗口会丢布局 → removeAll 后气泡 bounds 停留旧值，视口整屏空白
@@ -193,12 +202,11 @@ class ChatList(
     /**
      * 已存在的气泡：内容变化时就地重渲染（流式正文 / 推理 / 工具卡片运行中→完成）。
      *
-     * 事件流按消息 id 推送累计全文，这里只做「内容是否变化」的比较，
-     * 不做全量 diff（新消息由 [addNewMessages] 负责建气泡）。
+     * 按渲染分组路由：同一 assistant 消息的思考与正文消息都路由到同一个合并气泡。
      */
     private fun syncExistingMessages(messages: List<ChatMessage>) {
         messages.forEach { message ->
-            messageBubbles[message.id]?.syncWith(message)
+            messageBubbles[groupKey(message.id)]?.syncWith(message)
         }
     }
 
@@ -206,30 +214,32 @@ class ChatList(
         val resultIds = searchState.searchResultIds
         val currentId = searchState.currentSelectedSearchResultId
 
-        messageBubbles.forEach { (messageId, bubble) ->
-            val isMatching = resultIds.contains(messageId)
-            val isHighlighted = messageId == currentId
+        messageBubbles.forEach { (groupId, bubble) ->
+            // 检索结果按原始消息 id 命中（含 #reasoning），气泡 key 是分组 id，需归组比较
+            val isMatching = resultIds.any { groupKey(it) == groupId }
+            val isHighlighted = currentId != null && groupKey(currentId) == groupId
 
             bubble.updateSearchState(isMatching, isHighlighted)
         }
     }
 
 
-    /** 只把「新消息」建成气泡缓存；挂载顺序由 [relayoutMessages] 统一决定 */
-    private fun addNewMessages(messages: List<ChatMessage>) {
+    /** 按「渲染分组」建气泡：组首条消息（思考或正文先到均可）创建合并气泡；后续消息经 syncWith 并入 */
+    private fun addNewGroupedMessages(messages: List<ChatMessage>) {
         messages.forEach { message ->
-            if (message.id !in messageBubbles) {
-                messageBubbles[message.id] = MessageBubble(message)
+            val key = groupKey(message.id)
+            if (key !in messageBubbles) {
+                messageBubbles[key] = MessageBubble(message)
             }
         }
     }
 
-    private fun removeDeletedMessages(messages: List<ChatMessage>) {
-        val currentIds = messages.map { it.id }.toSet()
+    private fun removeDeletedGroups(groupIds: List<String>) {
+        val currentKeys = groupIds.toSet()
         messageBubbles.keys
-            .filter { it !in currentIds }
-            .forEach { id ->
-                messageBubbles.remove(id)?.let { bubble ->
+            .filter { it !in currentKeys }
+            .forEach { key ->
+                messageBubbles.remove(key)?.let { bubble ->
                     // 气泡不再显示：释放其内部 Disposable 子组件（如思考动画）
                     bubble.dispose()
                     messagesContainer.remove(bubble)
@@ -336,7 +346,8 @@ class ChatList(
     }
 
     fun scrollToMessage(messageId: String) {
-        val bubble = messageBubbles[messageId]
+        // 气泡按渲染分组挂载：定位检索命中的原始消息 id（含 #reasoning）需先归组
+        val bubble = messageBubbles[groupKey(messageId)]
         bubble?.scrollRectToVisible(bubble.bounds)
     }
 
