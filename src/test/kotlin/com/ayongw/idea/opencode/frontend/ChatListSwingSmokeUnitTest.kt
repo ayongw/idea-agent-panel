@@ -1,6 +1,7 @@
 package com.ayongw.idea.opencode.frontend
 
 import com.ayongw.idea.opencode.frontend.chatApp.ui.ChatList
+import com.ayongw.idea.opencode.frontend.chatApp.ui.ListUpdateCoalescer
 import com.ayongw.idea.opencode.frontend.chatApp.ui.bubble.MessageBubble
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.intellij.openapi.project.Project
@@ -160,6 +161,36 @@ class ChatListSwingSmokeUnitTest {
         ChatMessage(id = "a1", content = "第一条助手回复，内容足够长以撑出可布局高度", author = "opencode"),
         ChatMessage(id = "a2", content = "第二条助手回复，用于验证布局后的气泡尺寸", author = "opencode"),
     )
+
+    @Test
+    fun 结构性变化不被合并窗口吞掉() {
+        // 合并窗口放大到 10s：第二次 setMessages 必然落在窗口内（不依赖真实耗时，时序稳定）
+        chatList.dispose()
+        chatList = ChatList(project, ListUpdateCoalescer(windowMs = 10_000))
+
+        SwingUtilities.invokeAndWait {
+            chatList.setSize(600, 400)
+            chatList.setMessages(listOf(messages().first()))
+            layoutTree(chatList) // 建立容器宽度，使 ensureLaidOut 不因 width<=0 早退
+        }
+
+        // 结构性新增（id 集合变化）：removeAll 重挂后必须立即布局，不能被 leading-edge 节流丢弃
+        SwingUtilities.invokeAndWait {
+            chatList.setMessages(messages())
+        }
+
+        val bubbles = gridBagContainer(chatList)
+            ?.components
+            ?.filterIsInstance<MessageBubble>()
+            ?: emptyList()
+        assertEquals("消息容器应挂载 3 个气泡", 3, bubbles.size)
+        bubbles.forEach { bubble ->
+            assertTrue(
+                "结构性变化后气泡不应停留在 0x0（视口整屏空白）：${bubble.messageId} = ${bubble.width}x${bubble.height}",
+                bubble.width > 0 && bubble.height > 0
+            )
+        }
+    }
 
     /** 深度优先 doLayout（headless 下替代真实窗口校验，让每个容器拿到父级分配的尺寸） */
     private fun layoutTree(root: Container) {

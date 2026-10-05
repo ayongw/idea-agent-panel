@@ -148,7 +148,8 @@ internal class SessionCatalog(
             log.info("加载会话消息 session=$sessionId: REST 消息 ${messages.size} 条 → 气泡 ${bubbles.size} 条")
         } else {
             log.warn("加载会话消息失败 session=$sessionId: ${result.exceptionOrNull()?.message}")
-            messagesState.value = emptyList()
+            // 失败不清空：currentSessionId 未切换（成功分支才变更），保留旧列表保证 UI 数据
+            // 与当前会话状态一致；清空会造成「UI 空白但会话未变」的永久性消息消失观感
         }
     }
 }

@@ -35,7 +35,16 @@ import javax.swing.Scrollable
  * 生命周期（TSD-30 §5.4）：实现 [Disposable]，由装配方（[OpenCodeChatApp]）注册到面板
  * 生命周期之下；[dispose] 负责取消内部协程 scope 并停掉流式刷新定时器。
  */
-class ChatList(private val project: Project) : JPanel(), Disposable {
+class ChatList(
+    private val project: Project,
+    /**
+     * 刷新合并（TSD-30 §4.2 C-刷新）：窗口内多次 setMessages 合并为一次布局 + 一次滚动判定。
+     *
+     * 可注入：测试放大窗口即可确定性地覆盖「窗口内请求」分支，不依赖真实耗时。
+     * 注意合并器是 leading-edge 节流且无 trailing 补偿，调用方不得用它挡结构性变化。
+     */
+    private val updateCoalescer: ListUpdateCoalescer = ListUpdateCoalescer(),
+) : JPanel(), Disposable {
     private val messagesContainer: JPanel
     private val scrollPane: JScrollPane
     private val emptyPlaceholder: JPanel
@@ -48,9 +57,6 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
 
     /** 粘底判定（TSD-30 §5.2）：用户不在底部时不抢滚动 */
     private val scrollPolicy = ScrollPolicy(JBUI.scale(ScrollPolicy.DEFAULT_THRESHOLD))
-
-    /** 刷新合并（TSD-30 §4.2 C-刷新）：窗口内多次 setMessages 合并为一次布局 + 一次滚动判定 */
-    private val updateCoalescer = ListUpdateCoalescer()
 
     /** 底部占位 filler 的显式引用（不再靠组件数量推断） */
     private val filler = Box.createVerticalGlue()
@@ -69,6 +75,9 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
     companion object {
         private const val CARD_EMPTY = "empty"
         private const val CARD_MESSAGES = "messages"
+
+        /** 滚动/布局自愈重试上限：覆盖首帧与切卡后 viewport validate 的调度窗口 */
+        private const val SCROLL_RETRY_MAX = 3
     }
 
     init {
@@ -135,6 +144,11 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
         // 已有气泡：内容变化时就地重渲染（事件流累积的流式内容）
         syncExistingMessages(messages)
 
+        // 折叠在布局之前：一次布局直接按折叠后几何计算，避免折叠改高后几何 stale
+        // （completeReasoning 只 revalidate 气泡自身，轻量组件链路的延迟校验不可靠，见 TSD-30）
+        if (!streamRunning) {
+            collapseThinkingBubbles()
+        }
         // 集合变化（新增/删除/重排）才统一重挂；流式内容变化走 syncExistingMessages，不重挂容器
         val ids = messages.map { it.id }
         if (listModel.ids != ids) {
@@ -149,22 +163,25 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
             // 纯内容更新（流式 delta）：按窗口合并为一次布局
             layoutCoordinator.requestLayout(messageBubbles.values)
         }
-        // 非运行态下迟到的思考内容更新不再重新展开（后端 running=false 先于最后一批消息发布）
-        if (!streamRunning) {
-            collapseThinkingBubbles()
-        }
         scrollToBottom()
     }
 
     /**
      * 注入会话执行态（G3 思考折叠）：false 边沿折叠全部思考气泡；
      * setMessages 尾部的折叠兜住「终态信号先到、最后一条推理内容后到」的乱序。
+     *
+     * 折叠改变气泡高度，必须主动触发布局 + 滚动校准——此后可能不再有 setMessages，
+     * 不补布局则几何永久 stale。
      */
     fun setStreamRunning(running: Boolean) {
         val wasRunning = streamRunning
         streamRunning = running
         if (wasRunning && !running) {
             collapseThinkingBubbles()
+            if (messageBubbles.isNotEmpty()) {
+                layoutCoordinator.requestLayout(messageBubbles.values)
+                scrollToBottom()
+            }
         }
     }
 
@@ -279,9 +296,23 @@ class ChatList(private val project: Project) : JPanel(), Disposable {
      * 用 `viewport.viewPosition` 直接设置（而非 `scrollRectToVisible`），语义确定、无「滚到可见」歧义。
      */
     private fun scrollToBottom() {
+        scheduleScrollToBottom(attempt = 0)
+    }
+
+    /**
+     * 尺寸为 0（首帧/切卡后 viewport validate 尚未执行）时不能直接放弃——
+     * 若之后不再有 setMessages，布局与滚动都不会再被触发，视口永久空白。
+     * 延迟重排到 EDT 队列重试（有上限），这是几何自愈的兜底入口。
+     */
+    private fun scheduleScrollToBottom(attempt: Int) {
         ApplicationManager.getApplication().invokeLater {
             val viewport = scrollPane.viewport
-            if (messagesContainer.height <= 0) return@invokeLater
+            if (messagesContainer.height <= 0 || viewport.extentSize.height <= 0) {
+                if (attempt < SCROLL_RETRY_MAX && messageBubbles.isNotEmpty() && scrollPane.isVisible) {
+                    scheduleScrollToBottom(attempt + 1)
+                }
+                return@invokeLater
+            }
             val viewSizeHeight = viewport.viewSize.height
             val extentHeight = viewport.extentSize.height
             val maxY = max(0, viewSizeHeight - extentHeight)
