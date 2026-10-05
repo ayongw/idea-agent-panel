@@ -1,5 +1,6 @@
 package com.ayongw.idea.opencode.frontend.chatApp.ui
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBFont
@@ -31,20 +32,19 @@ import javax.swing.JScrollPane
  * 顶部会话 tab 栏
  *
  * 默认展示「已打开的会话」，关闭 tab 后可从右侧「全部会话」按钮查看当前工作区内的所有会话。
- * 右侧同时提供 新建会话 / 搜索 / 设置 入口。
+ * 右侧同时提供 新建会话 / 设置 入口。
  */
 class SessionTabs(
     private val onSelect: (String) -> Unit,
     private val onClose: (String) -> Unit,
     private val onNewSession: () -> Unit,
     private val onShowAllSessions: (Component) -> Unit,
-    private val onToggleSearch: (Boolean) -> Unit,
     private val onOpenSettings: () -> Unit
 ) : JPanel(BorderLayout()) {
 
     private val tabStrip = JPanel()
     private var openedSessionIds: List<String> = emptyList()
-    private var searchVisible = false
+    private val log = Logger.getInstance(SessionTabs::class.java)
 
     init {
         setupAppearance()
@@ -71,7 +71,9 @@ class SessionTabs(
         isOpaque = false
         viewport.isOpaque = false
         verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_NEVER
-        horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+        // 横向滚动条必须禁用：tab 标题已有截断（TAB_TITLE_MAX_CHARS），无需滚动；
+        // overlay 滚动条浮现会压缩 viewport 高度并拦截 tab 底部点击，导致「点了没反应」
+        horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
         preferredSize = Dimension(0, JBUI.scale(ChatUIConstants.TopBar.TAB_HEIGHT + 8))
         minimumSize = Dimension(0, JBUI.scale(ChatUIConstants.TopBar.TAB_HEIGHT + 8))
     }
@@ -97,18 +99,6 @@ class SessionTabs(
             action = {}
         ).apply { addActionListener { onShowAllSessions(this) } }
 
-        val searchButton = ButtonUtils.createActionButton(
-            icon = ChatAppIcons.Header.search,
-            tooltip = message("chat.search.messages.button"),
-            size = ChatUIConstants.Button.ACTION_BUTTON_SIZE,
-            action = {}
-        ).apply {
-            addActionListener {
-                searchVisible = !searchVisible
-                onToggleSearch(searchVisible)
-            }
-        }
-
         val settingsButton = ButtonUtils.createActionButton(
             icon = ChatAppIcons.TopBar.settings,
             tooltip = message("chat.topbar.settings"),
@@ -116,7 +106,7 @@ class SessionTabs(
             action = onOpenSettings
         )
 
-        listOf(newSessionButton, allSessionsButton, searchButton, settingsButton).forEachIndexed { index, button ->
+        listOf(newSessionButton, allSessionsButton, settingsButton).forEachIndexed { index, button ->
             if (index > 0) {
                 panel.add(Box.createHorizontalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
             }
@@ -191,6 +181,8 @@ private class SessionTabComponent(
     private val onShowMenu: (Component, String) -> Unit
 ) : JPanel(BorderLayout(JBUI.scale(ChatUIConstants.Spacing.SMALL), 0)) {
 
+    private val log = Logger.getInstance(SessionTabs::class.java)
+
     init {
         isOpaque = true
         background = if (selected) ChatAppColors.Tab.selectedBackground else ChatAppColors.Panel.background
@@ -231,6 +223,8 @@ private class SessionTabComponent(
 
         addMouseListener(object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) {
+                // 事件层埋点：tab 点击无反应时用于区分「事件未到达」与「切换逻辑短路」
+                log.info("tab mousePressed session=$sessionId button=${e.button}")
                 if (e.isPopupTrigger || e.button == MouseEvent.BUTTON3) {
                     onShowMenu(this@SessionTabComponent, sessionId)
                 } else {

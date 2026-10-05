@@ -45,7 +45,6 @@ class TopBar(
             onClose = { sessionId -> viewModel.closeSessionTab(sessionId) },
             onNewSession = { viewModel.sessions.createSession(null) },
             onShowAllSessions = onShowAllSessions,
-            onToggleSearch = { visible -> toggleSearch(visible) },
             onOpenSettings = onOpenSettings
         )
 
