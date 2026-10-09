@@ -10,6 +10,7 @@ import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppColors
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatUIConstants
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.ToolCallDto
+import java.time.LocalDateTime
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.util.ui.JBUI
@@ -37,11 +38,19 @@ private val log = Logger.getInstance("com.ayongw.idea.opencode.frontend.chatApp.
 
 class MessageBubble(
     private val firstMessage: ChatMessage,
+    /**
+     * 本轮起点时间（= 触发该轮的用户消息时间，见 `ChatList.buildTurnGroups`）。
+     * 页脚用它算「执行总耗时」：从用户发出到最后一个结果。默认取首条消息时间以兼容旧调用。
+     */
+    private val turnStartedAt: LocalDateTime = firstMessage.timestamp,
     private var isMatchingSearch: Boolean = false,
     private var isHighlightedInSearch: Boolean = false
 ) : JPanel(), Disposable {
 
     private val isMyMessage = firstMessage.isMyMessage
+
+    /** 轮次内已见过的最后一条消息时间（耗时终点，随消息到达推进） */
+    private var lastActivityAt: LocalDateTime = firstMessage.timestamp
 
     /** 是否用户消息（决定对齐与气泡样式；供列表重排时取用） */
     val isMy: Boolean get() = isMyMessage
@@ -98,6 +107,7 @@ class MessageBubble(
      * reasoning → 思考块新增/更新一轮；tool → 对应卡片内联/原位更新；text → 正文区。
      */
     fun syncWith(message: ChatMessage) {
+        if (message.timestamp.isAfter(lastActivityAt)) lastActivityAt = message.timestamp
         val signature = signatureOf(message)
         if (appliedSignatures[message.id] == signature) return
         route(message, streaming = true)
@@ -147,7 +157,11 @@ class MessageBubble(
 
         // 不显式设置 minimumSize：高度为 0 时 GridBag 在空间不足回退 MINSIZE
         // 布局会把整个气泡 unmap 成 0x0；宽度/高度兜底统一走 getMinimumSize
-        maximumSize = Dimension(JBUI.scale(ChatUIConstants.MessageBubble.MAX_WIDTH), Int.MAX_VALUE)
+        //
+        // 宽度不设上限（此前钉死 420px 导致「查看我打开的文件」这类短消息 5 个字就换行）：
+        // 配合 ChatList 里用户气泡 fill=HORIZONTAL，短消息也占满整行右对齐。
+        // 宽度上限只留给助手消息无意义（它本就 fill=HORIZONTAL 整行），故统一不设。
+        maximumSize = Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
     }
 
     override fun getMinimumSize(): Dimension {
@@ -339,7 +353,7 @@ class MessageBubble(
             populateContentContainer(container, textMessage.content)
         }
         // token 用量随终态对账后到达（正文内容可能未变），需单独刷新页脚
-        footerRow?.update(textMessage)
+        footerRow?.update(textMessage, elapsedSeconds(textMessage))
         revalidate()
         repaint()
     }
@@ -361,10 +375,21 @@ class MessageBubble(
         }
         add(Box.createVerticalStrut(JBUI.scale(gapBeforeTimestamp)))
         // 时间与 token 合并为**一行**（MessageFooter）：用户消息右对齐、助手消息左对齐
-        add(MessageFooter(textMessage).also {
+        add(MessageFooter(textMessage, elapsedSeconds(textMessage)).also {
             timestampRow = it
             footerRow = it
         })
+    }
+
+    /**
+     * 执行总耗时（秒）：从本轮用户消息时间到最后一条消息时间。
+     *
+     * 用户自身气泡不做耗时（起点即自身，恒为 0）；异常负值（时钟回拨）一并归零。
+     */
+    private fun elapsedSeconds(current: ChatMessage): Long {
+        if (isMyMessage) return 0
+        val end = maxOf(lastActivityAt, current.timestamp)
+        return java.time.Duration.between(turnStartedAt, end).seconds.coerceAtLeast(0)
     }
 
     /** 撤掉思考动画（思考块/正文首帧 / 气泡销毁）：组件移除并释放 animator，防 ROOT 泄漏 */

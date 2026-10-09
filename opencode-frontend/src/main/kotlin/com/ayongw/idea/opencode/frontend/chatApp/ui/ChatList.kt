@@ -7,9 +7,11 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.ayongw.idea.opencode.shared.ChatMessage
+import java.time.LocalDateTime
 import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
 import com.ayongw.idea.opencode.frontend.chatApp.ui.bubble.MessageBubble
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppColors
+import com.ayongw.idea.opencode.frontend.chatApp.ui.block.ToolCallCard
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatUIConstants
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -109,7 +111,17 @@ class ChatList(
      * 一个对话轮次（turn）的渲染分组：user 消息各自成组；其后相邻的所有助手侧消息
      * （多轮 reasoning / 工具卡片 / 正文）归入同一组——一次提问只有一个「回复主题」。
      */
-    private data class TurnGroup(val key: String, val messages: List<ChatMessage>)
+    /**
+     * 一个对话轮次。
+     *
+     * [startedAt] = 触发该轮的**用户消息时间**（助手轮次则为它前面那条用户消息的时间），
+     * 用于页脚算「执行总耗时」；用户自己的气泡 [startedAt] 就是自身时间，耗时恒为 0 不展示。
+     */
+    private data class TurnGroup(
+        val key: String,
+        val messages: List<ChatMessage>,
+        val startedAt: LocalDateTime
+    )
 
     /**
      * 按对话轮次拆分消息。
@@ -120,16 +132,21 @@ class ChatList(
      */
     private fun buildTurnGroups(messages: List<ChatMessage>): List<TurnGroup> {
         val groups = mutableListOf<MutableList<ChatMessage>>()
+        // 每个分组创建时的轮次起点：用户消息用自己的时间，助手轮次继承它前面那条用户消息的时间
+        val starts = mutableListOf<LocalDateTime>()
         messages.forEach { message ->
             // 新开组：首条消息、用户消息、或「紧跟在用户消息之后的第一条助手消息」
             val lastIsUser = groups.lastOrNull()?.first()?.isMyMessage == true
             if (groups.isEmpty() || message.isMyMessage || lastIsUser) {
                 groups += mutableListOf(message)
+                starts += message.timestamp
             } else {
                 groups.last() += message
             }
         }
-        return groups.map { group -> TurnGroup(groupKey(group.first().id), group) }
+        return groups.mapIndexed { index, group ->
+            TurnGroup(groupKey(group.first().id), group, starts[index])
+        }
     }
 
     init {
@@ -282,7 +299,7 @@ class ChatList(
     private fun addNewGroupedMessages(groups: List<TurnGroup>) {
         groups.forEach { group ->
             if (group.key !in messageBubbles) {
-                val bubble = MessageBubble(group.messages.first())
+                val bubble = MessageBubble(group.messages.first(), group.startedAt)
                 messageBubbles[group.key] = bubble
                 group.messages.drop(1).forEach(bubble::syncWith)
             }
@@ -315,9 +332,11 @@ class ChatList(
             val bubble = messageBubbles[id] ?: return@forEachIndexed
             gbc.gridy = index
             if (bubble.isMy) {
-                // 用户消息：气泡自适应宽度、右对齐，左侧额外缩进与助手消息拉开层次
+                // 用户消息：占满整行右对齐，左侧额外缩进与助手消息拉开层次。
+                // fill 必须 HORIZONTAL —— NONE 会让宽度退回 preferred（短消息只有几个字宽），
+                // 窄气泡导致每行只能放三四个字就换行。
                 gbc.anchor = GridBagConstraints.EAST
-                gbc.fill = GridBagConstraints.NONE
+                gbc.fill = GridBagConstraints.HORIZONTAL
                 gbc.insets = JBUI.insets(
                     ChatUIConstants.Spacing.TINY,
                     ChatUIConstants.MessageBubble.USER_EXTRA_LEFT_INSET,
@@ -417,6 +436,8 @@ class ChatList(
         messageBubbles.values.forEach { it.dispose() }
         messagesContainer.removeAll()
         messageBubbles.clear()
+        // 折叠态按 callId 记忆，会话切换后旧 callId 可能被复用，必须一并清空
+        ToolCallCard.resetOverrides()
         listModel.sync(emptyList())
         showEmptyPanel()
         layoutCoordinator.requestLayout(messageBubbles.values)

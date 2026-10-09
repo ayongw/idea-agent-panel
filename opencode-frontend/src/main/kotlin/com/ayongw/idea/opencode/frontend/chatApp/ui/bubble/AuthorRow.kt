@@ -93,10 +93,18 @@ internal class AgentAvatar(private val name: String) : JComponent() {
  *
  * token 缺失（用户消息 / 流式尚未产出）时自动隐藏该段，不会留下多余分隔符。
  */
-class MessageFooter(message: ChatMessage) : JPanel() {
+class MessageFooter(
+    message: ChatMessage,
+    /**
+     * 执行总耗时（秒，从本轮用户消息时间算起；0 = 不展示）。
+     * 与 token 一样要随终态对账刷新，故由 [update] 一并接收。
+     */
+    elapsedSeconds: Long = 0
+) : JPanel() {
 
     private val timeLabel = JBLabel(message.formattedTime())
     private val tokenLabel = JBLabel()
+    private val elapsedLabel = JBLabel()
 
     init {
         layout = BoxLayout(this, BoxLayout.X_AXIS)
@@ -109,19 +117,26 @@ class MessageFooter(message: ChatMessage) : JPanel() {
             add(timeLabel)
         } else {
             add(tokenLabel)
-            add(Box.createHorizontalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+            add(separator())
+            add(elapsedLabel)
+            add(separator())
             add(timeLabel)
         }
 
-        listOf(timeLabel, tokenLabel).forEach {
+        listOf(timeLabel, tokenLabel, elapsedLabel).forEach {
             it.font = JBFont.small()
             it.foreground = ChatAppColors.Text.timestamp
         }
-        update(message)
+        update(message, elapsedSeconds)
     }
 
-    /** 刷新 token 段（用量随终态对账补齐，正文未变时也要更新） */
-    fun update(message: ChatMessage) {
+    /**
+     * 刷新 token / 耗时段。
+     *
+     * token 随终态对账补齐、耗时随消息推进增长，两者都在正文未变时到达，
+     * 所以必须由 [MessageBubble.applyText] 单独调用，不能只靠首帧构造。
+     */
+    fun update(message: ChatMessage, elapsedSeconds: Long = 0) {
         if (message.isMyMessage) return
         val usage = SessionUsageDto(
             tokens = message.usage ?: TokenUsageDto(),
@@ -132,5 +147,29 @@ class MessageFooter(message: ChatMessage) : JPanel() {
         tokenLabel.toolTipText = summary.takeIf { it.isNotBlank() }
             ?.let { ContextUsageFormatter.detail(usage) }
         tokenLabel.isVisible = summary.isNotBlank()
+
+        val elapsed = formatElapsed(elapsedSeconds)
+        elapsedLabel.text = elapsed
+        elapsedLabel.isVisible = elapsed.isNotBlank()
     }
+
+    /** 分隔点：两段都存在时才显示，避免留下孤立的「·」 */
+    private fun separator() = JBLabel("·").apply {
+        font = JBFont.small()
+        foreground = ChatAppColors.Text.timestamp
+    }
+
+}
+
+/**
+ * 执行耗时文案（参照 Kiro：`40s` / `3m 50s`）。
+ *
+ * - <1 秒返回空串：流式首帧往往只差几十毫秒，显示「0s」反而像卡住了
+ * - 整分钟不带多余的 `0s`（`3m` 而非 `3m 0s`）
+ */
+fun formatElapsed(seconds: Long): String = when {
+    seconds < 1 -> ""
+    seconds < 60 -> "${seconds}s"
+    seconds % 60 == 0L -> "${seconds / 60}m"
+    else -> "${seconds / 60}m ${seconds % 60}s"
 }

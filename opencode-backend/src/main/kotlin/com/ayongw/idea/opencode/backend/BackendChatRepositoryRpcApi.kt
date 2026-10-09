@@ -11,6 +11,8 @@ import com.ayongw.idea.opencode.backend.server.OpenCodeServerStatus
 import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ChatMessageDto
 import com.ayongw.idea.opencode.shared.CommandDto
+import com.ayongw.idea.opencode.shared.CommitMessageRequestDto
+import com.ayongw.idea.opencode.shared.CommitMessageResultDto
 import com.ayongw.idea.opencode.shared.DefaultModelDto
 import com.ayongw.idea.opencode.shared.ModelDto
 import com.ayongw.idea.opencode.shared.ModelProviderDto
@@ -202,6 +204,19 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
                     models = models.map { it.toModelDto(providerNames[providerId]) }
                 )
             }
+    }
+
+    override suspend fun generateCommitMessage(
+        projectId: ProjectId,
+        request: CommitMessageRequestDto
+    ): CommitMessageResultDto {
+        val backendProject = projectId.findProjectOrNull()
+            ?: return CommitMessageResultDto(
+                success = false,
+                reason = CommitMessageResultDto.REASON_UNAVAILABLE,
+                detail = "项目不可用"
+            )
+        return BackendChatRepositoryModel.getInstance(backendProject).generateCommitMessage(request)
     }
 
     override suspend fun getDefaultModel(projectId: ProjectId): DefaultModelDto? {

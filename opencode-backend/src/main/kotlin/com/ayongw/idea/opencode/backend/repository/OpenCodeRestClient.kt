@@ -108,9 +108,10 @@ class OpenCodeRestClient(
         sessionId: String,
         text: String,
         files: List<PromptFile> = emptyList(),
-        skills: List<String> = emptyList()
+        skills: List<String> = emptyList(),
+        model: Pair<String, String>? = null
     ): OpenCodeResult<String> {
-        val body = promptBody(text, files, skills)
+        val body = promptBody(text, files, skills, model)
         return execute("POST", "/session/${encodePath(sessionId)}/prompt", gson.toJson(body)) { json ->
             createdUserMessageId(json)
         }
@@ -151,9 +152,16 @@ class OpenCodeRestClient(
     private fun promptBody(
         text: String,
         files: List<PromptFile>,
-        skills: List<String>
+        skills: List<String>,
+        model: Pair<String, String>? = null
     ): MutableMap<String, Any> {
         val body = mutableMapOf<String, Any>("text" to text)
+        // 指定模型（providerID / modelID）：不传则由服务端用会话默认模型
+        model?.let { (providerId, modelId) ->
+            if (providerId.isNotBlank() && modelId.isNotBlank()) {
+                body["model"] = mapOf("providerID" to providerId, "modelID" to modelId)
+            }
+        }
         if (files.isNotEmpty()) {
             body["files"] = files.map { file ->
                 buildMap<String, Any> {

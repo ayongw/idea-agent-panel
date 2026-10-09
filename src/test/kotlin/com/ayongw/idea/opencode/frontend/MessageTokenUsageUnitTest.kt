@@ -62,11 +62,15 @@ class MessageTokenUsageUnitTest {
         )
         val footer = tokenRow(bubble)!!
 
-        // 页脚是一个组件，内含 token 与时间两个标签 —— 不再是上下两行
-        val labels = footer.components.filterIsInstance<javax.swing.JLabel>()
-        assertEquals("页脚应含 token 与时间两个标签", 2, labels.size)
-        assertTrue("token 段应在时间之前（左对齐）", labels[0].text.startsWith("↑"))
-        assertTrue("时间段为 HH:mm", labels[1].text.matches(Regex("""\d{2}:\d{2}""")))
+        // 页脚是一个组件，内含 token / 耗时 / 时间（各带分隔点）—— 不再是上下两行
+        val texts = footer.components.filterIsInstance<javax.swing.JLabel>().map { it.text }
+        assertEquals("页脚应为 token、·、耗时、·、时间 五段", 5, texts.size)
+        assertTrue("token 段应在最前（左对齐）", texts[0].startsWith("↑"))
+        assertEquals("分隔点", "·", texts[1])
+        // 本例未传轮次起点 → 耗时 0 → 空串（<1s 不展示）
+        assertEquals("无耗时时段应为空串", "", texts[2])
+        assertEquals("分隔点", "·", texts[3])
+        assertTrue("时间段为 HH:mm", texts[4].matches(Regex("""\d{2}:\d{2}""")))
     }
 
     @Test

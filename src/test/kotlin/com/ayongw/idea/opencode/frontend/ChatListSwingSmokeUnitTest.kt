@@ -423,45 +423,23 @@ class ChatListSwingSmokeUnitTest {
         assertTrue("卡2 应在正文之前", cards[1].bounds.y < turn.components[contentIndex].bounds.y)
         assertTrue("卡1 与卡2 不应重叠", cards[0].bounds.y + cards[0].bounds.height <= cards[1].bounds.y)
 
-        // 3) 卡1 长输出（539 行）默认按 12 行预览：滚动区高度 ≥ 12 行，而不是一行
-        val card1Scroll = scrollPaneOf(cards[0] as Container)
-        assertTrue(
-            "539 行输出应展示 12 行预览（≥200px），实际高度=${card1Scroll.bounds.height}",
-            card1Scroll.bounds.height >= 200
-        )
-        assertEquals(
-            "滚动区实际高度应等于其 preferredSize 高度",
-            card1Scroll.preferredSize.height, card1Scroll.bounds.height
-        )
-
-        // 4) 单行输出（卡2 的 "{"、正文内 JAVA 块的 "}"）走内联紧凑渲染：
-        //    不挂滚动容器（此前单行也要付出 16px 留白 + 8px 容器边框 + 28px 头部行）
-        listOf(
-            cards[1] as Container to "工具卡片单行输出",
-            turn.components[contentIndex] as Container to "正文 JAVA 单行块"
-        ).forEach { (container, label) ->
-            val pane = codeBlockPaneOf(container)
-            assertEquals(
-                "$label 应只含内联标签（无滚动容器、无头部行）",
-                1, pane.componentCount
-            )
+        // 3) 终态工具卡默认折叠输出（Kiro 风格：执行中展开、完成折叠，只留头部行）。
+        //    本场景两张卡都是 COMPLETED，故都不应挂输出滚动容器。
+        cards.forEachIndexed { i, card ->
             assertTrue(
-                "$label 内联块应为标签而非滚动容器",
-                pane.components[0] is javax.swing.JLabel
+                "终态卡$i 应折叠输出（不挂 CodeBlockPane）",
+                codeBlockPanes(card as Container).isEmpty()
             )
         }
-        val content = turn.components[contentIndex] as Container
 
-        // 5) 展开后不再截断行数：539 行全部渲染，块内滚动；收起恢复预览
-        val pane = codeBlockPaneOf(cards[0] as Container)
-        val toggleMethod = pane::class.java.getDeclaredMethod("toggle").apply { isAccessible = true }
-        toggleMethod.invoke(pane)
-        val area = pane::class.java.getDeclaredField("textArea").apply { isAccessible = true }
-            .get(pane) as JTextArea
-        assertEquals("展开后应渲染全部 539 行（不再截断为 500 行）", 539, area.text.lines().size)
-        toggleMethod.invoke(pane)
-        assertEquals("收起后恢复 12 行预览", 12, area.text.lines().size)
+        // 4) 正文内单行代码块走紧凑标签（无滚动容器、无头部行）
+        //    工具卡的输出形态由「运行中展开 / 终态折叠」测试单独覆盖（见 ToolCallOutputExpandUnitTest）
+        val content = turn.components[contentIndex] as Container
+        val javaPane = codeBlockPaneOf(content)
+        assertEquals("正文 JAVA 单行块应只含紧凑标签", 1, javaPane.componentCount)
+        assertTrue("紧凑标签而非滚动容器", javaPane.components[0] is javax.swing.JLabel)
     }
+
 
     /** 取卡片/正文容器内的 CodeBlockPane（internal，测试模块不可见） */
     private fun codeBlockPaneOf(container: Container): Container =
@@ -472,6 +450,91 @@ class ChatListSwingSmokeUnitTest {
         val pane = codeBlockPaneOf(container)
         val field = pane::class.java.getDeclaredField("scrollPane").apply { isAccessible = true }
         return field.get(pane) as Component
+    }
+
+    @Test
+    fun 运行中工具卡展开输出且长输出按行预览() {
+        val user = ChatMessage(
+            id = "u_expand_001", content = "看下状态", author = "me", isMyMessage = true
+        )
+        val bigOutput = buildString {
+            append("**Exploration: 入口类**")
+            repeat(538) { append("\n行").append(it + 2) }
+        }
+        fun tool(callId: String, output: String, status: ToolCallStatus) = ChatMessage(
+            id = callId, content = "", author = "AI Buddy",
+            type = ChatMessage.ChatMessageType.TOOL,
+            tool = ToolCallDto(
+                callId = callId, name = "read", input = """{"path":"a.kt"}""",
+                output = output, status = status, truncated = false
+            )
+        )
+        chatList.setMessages(
+            listOf(user, tool("call_running_big", bigOutput, ToolCallStatus.RUNNING))
+        )
+        val messagesContainer = gridBagContainer(chatList)!!
+        repeat(3) {
+            messagesContainer.setSize(548, messagesContainer.preferredSize.height)
+            layoutTree(messagesContainer)
+        }
+        val card = messagesContainer.components.filterIsInstance<MessageBubble>()
+            .first { !it.isMy }
+            .components.filter { it::class.java.simpleName == "ToolCallCard" }
+            .first() as Container
+
+        // 运行中 → 输出展开，长输出按 12 行预览（≥200px），而不是一行
+        val pane = codeBlockPaneOf(card)
+        val area = pane::class.java.getDeclaredField("textArea").apply { isAccessible = true }
+            .get(pane) as JTextArea
+        assertEquals("运行中应展开输出", 12, area.text.lines().size)
+        assertTrue(
+            "长输出应按 12 行预览（≥200px）",
+            (pane::class.java.getDeclaredField("scrollPane").apply { isAccessible = true }
+                .get(pane) as Component).bounds.height >= 200
+        )
+
+        // 展开后渲染全部 539 行，收起恢复 12 行
+        val toggle = pane::class.java.getDeclaredMethod("toggle").apply { isAccessible = true }
+        toggle.invoke(pane)
+        assertEquals("展开后应渲染全部 539 行", 539, area.text.lines().size)
+        toggle.invoke(pane)
+        assertEquals("收起后恢复 12 行预览", 12, area.text.lines().size)
+    }
+
+    @Test
+    fun 运行中单行输出走紧凑标签() {
+        val user = ChatMessage(
+            id = "u_chip_0001", content = "看下", author = "me", isMyMessage = true
+        )
+        val toolMsg = ChatMessage(
+            id = "call_chip_01", content = "", author = "AI Buddy",
+            type = ChatMessage.ChatMessageType.TOOL,
+            tool = ToolCallDto(
+                callId = "call_chip_01", name = "shell", input = """{"cmd":"ls"}""",
+                output = "{", status = ToolCallStatus.RUNNING, truncated = false
+            )
+        )
+        chatList.setMessages(listOf(user, toolMsg))
+        val messagesContainer = gridBagContainer(chatList)!!
+        repeat(3) {
+            messagesContainer.setSize(548, messagesContainer.preferredSize.height)
+            layoutTree(messagesContainer)
+        }
+        val card = messagesContainer.components.filterIsInstance<MessageBubble>()
+            .first { !it.isMy }
+            .components.filter { it::class.java.simpleName == "ToolCallCard" }
+            .first() as Container
+
+        val pane = codeBlockPaneOf(card)
+        assertEquals("运行中单行输出应只含紧凑标签", 1, pane.componentCount)
+        assertTrue("紧凑标签而非滚动容器", pane.components[0] is javax.swing.JLabel)
+    }
+
+    /** 递归收集所有 CodeBlockPane（= 工具输出块；入参块是 ToolInputBlock，不算） */
+    private fun codeBlockPanes(root: Container): List<Component> {
+        val self =
+            if (root::class.java.simpleName == "CodeBlockPane") listOf<Component>(root) else emptyList()
+        return self + root.components.filterIsInstance<Container>().flatMap { codeBlockPanes(it) }
     }
 
     /** 深度优先 doLayout（headless 下替代真实窗口校验，让每个容器拿到父级分配的尺寸） */

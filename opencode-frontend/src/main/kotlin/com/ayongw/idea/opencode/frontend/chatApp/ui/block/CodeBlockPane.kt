@@ -24,37 +24,73 @@ import javax.swing.border.EmptyBorder
 
 private val log = Logger.getInstance("com.ayongw.idea.opencode.frontend.chatApp.ui.block.CodeBlockPane")
 
-internal class CodeBlockPane(
+class CodeBlockPane(
     private val language: String,
     private val code: String
 ) : JPanel() {
 
     private val codeLines = code.lines()
-    private val collapsible =
-        codeLines.size > ChatUIConstants.LargeContent.CODE_PREVIEW_LINES &&
-            codeLines.size > ChatUIConstants.LargeContent.INLINE_MAX_LINES
+    private val collapsible = codeLines.size > ChatUIConstants.LargeContent.DIRECT_MAX_LINES
+
+    /** 单行紧凑标签（无头部行、无滚动容器） */
+    private val chipMode = codeLines.size <= ChatUIConstants.LargeContent.INLINE_CHIP_MAX_LINES &&
+        code.length <= ChatUIConstants.LargeContent.INLINE_CHIP_MAX_CHARS
+
+    /** 直接渲染（≤ [ChatUIConstants.LargeContent.DIRECT_MAX_LINES] 行，不套滚动容器） */
+    private val directMode = !chipMode && codeLines.size <= ChatUIConstants.LargeContent.DIRECT_MAX_LINES
     private val textArea = JBTextArea()
     private val scrollPane = JBScrollPane(textArea)
     private var expanded = false
     private val toggleLabel = JBLabel()
-
-    /** 短输出走内联紧凑渲染（无滚动容器、无头部行、宽度自适应） */
-    private val inline = codeLines.size <= ChatUIConstants.LargeContent.INLINE_MAX_LINES &&
-        code.length <= ChatUIConstants.LargeContent.INLINE_MAX_CHARS
 
     init {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         isOpaque = false
         alignmentX = LEFT_ALIGNMENT
 
-        if (inline) {
+        if (chipMode) {
             // 短输出：单行紧凑块。工具输出里大量是 `null` / 单行日志，
             // 给它们滚动容器 + 头部行纯属浪费（见 INLINE_MAX_LINES 注释）
             add(inlineLabel())
             log.debug("codeblock inline lang=$language chars=${code.length} lines=${codeLines.size}")
+        } else if (directMode) {
+            buildDirect()
         } else {
             buildBlock()
         }
+    }
+
+    /**
+     * 直接渲染：≤ [ChatUIConstants.LargeContent.DIRECT_MAX_LINES] 行时按实际行数撑开，
+     * 不套滚动容器（用户诉求：20 行以内直接展示，超过才出现滚动条）。
+     * 头部行保留（语言标识 + 复制按钮对多行内容仍有用）。
+     */
+    private fun buildDirect() {
+        textArea.apply {
+            text = code
+            font = Font(Font.MONOSPACED, Font.PLAIN, 12)
+            isEditable = false
+            lineWrap = false
+            wrapStyleWord = false
+            border = EmptyBorder(8, 12, 8, 12)
+        }
+        scrollPane.apply {
+            verticalScrollBarPolicy = JBScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+            // 长行必须能横向滚动：裸 JTextArea（lineWrap=false）会把超宽行直接裁掉且不出现滚动条
+            horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+            border = EmptyBorder(0, 0, 0, 0)
+            isOpaque = false
+            viewport.isOpaque = false
+        }
+        add(buildHeader())
+        add(scrollPane)
+        // 高度按实际行数，不封顶（≤20 行最多约 400px，可接受）
+        val lineHeight = JBUI.scale(ChatUIConstants.LargeContent.CODE_LINE_HEIGHT)
+        val height = lineHeight * codeLines.size + JBUI.scale(16)
+        // 宽度不写死：靠 maximumSize 横向拉伸到气泡宽度，超宽内容交给滚动条
+        scrollPane.preferredSize = Dimension(0, height)
+        scrollPane.maximumSize = Dimension(Int.MAX_VALUE, height)
+        log.debug("codeblock direct lang=$language lines=${codeLines.size} height=$height")
     }
 
     /** 内联紧凑块：单行、自适应宽度、无滚动容器与头部行 */
@@ -115,7 +151,9 @@ internal class CodeBlockPane(
         val lineHeight = JBUI.scale(ChatUIConstants.LargeContent.CODE_LINE_HEIGHT)
         val contentHeight = lineHeight * lines + JBUI.scale(16)
         val height = contentHeight.coerceAtMost(JBUI.scale(ChatUIConstants.LargeContent.CODE_MAX_HEIGHT))
-        scrollPane.preferredSize = Dimension(JBUI.scale(ChatUIConstants.MessageBubble.CONTENT_WRAP_WIDTH), height)
+        // preferred 宽度留 0，由 maximumSize 拉伸到气泡实际宽度：
+        // 写死宽度会让窄面板下的超宽行既被裁掉又不触发横向滚动条
+        scrollPane.preferredSize = Dimension(0, height)
         scrollPane.maximumSize = Dimension(Int.MAX_VALUE, height)
     }
 

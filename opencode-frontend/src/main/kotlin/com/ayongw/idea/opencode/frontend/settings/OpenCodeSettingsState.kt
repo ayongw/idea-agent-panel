@@ -31,6 +31,7 @@ class OpenCodeSettingsState : PersistentStateComponent<OpenCodeSettingsState> {
     /** opencode CLI 路径覆盖；空 = 从 PATH 解析（CLI 缺失时的兜底入口） */
     var cliPath: String = ""
 
+
     override fun getState(): OpenCodeSettingsState = this
 
     override fun loadState(state: OpenCodeSettingsState) {

@@ -75,6 +75,7 @@ subprojects {
                     // （位于 intellij.platform.vcs.jar，platform-api 公开 API）
                     // 注意：只声明具体 bundled module，不加 com.intellij.modules.platform（split mode 限制）
                     bundledModule("intellij.platform.vcs")
+
                 }
                 implementation(project(":opencode-shared"))
                 implementation("org.jetbrains:markdown:0.7.3")

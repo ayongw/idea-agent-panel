@@ -15,7 +15,6 @@ object ChatUIConstants {
 
     object MessageBubble {
         const val MIN_WIDTH = 120
-        const val MAX_WIDTH = 420
         const val CORNER_RADIUS = 16
         const val VERTICAL_MARGIN = 6
         const val HORIZONTAL_MARGIN = 12
@@ -30,8 +29,6 @@ object ChatUIConstants {
          * （助手 0 / 用户 25），且不影响右对齐。
          */
         const val USER_EXTRA_LEFT_INSET = 25
-
-        const val CONTENT_WRAP_WIDTH = MAX_WIDTH - 2 * HORIZONTAL_MARGIN - 2 * INNER_PADDING
 
         /** 助手消息头部头像边长 */
         const val AVATAR_SIZE = 18
@@ -115,6 +112,18 @@ object ChatUIConstants {
         const val FILTER_HEIGHT = 28
     }
 
+    /** 工具调用入参块（[ToolInputBlock]） */
+    object ToolInput {
+        /** 超过该行数折叠预览，短参数原样多行铺开 */
+        const val PREVIEW_LINES = 8
+
+        /** 单行行高（换算块高，避免布局自我测量死循环） */
+        const val LINE_HEIGHT = 16
+
+        /** 上下内边距合计 */
+        const val VERTICAL_PADDING = 8
+    }
+
     object LargeContent {
         const val MAX_TEXT_LENGTH = 10 * 1024 // 10KB
         const val LINES_PER_PAGE = 200
@@ -129,13 +138,22 @@ object ChatUIConstants {
         const val CODE_LINE_HEIGHT = 18
 
         /**
-         * 短输出「内联块」阈值：行数 ≤ 且字符数 ≤ 时，用紧凑内联渲染代替滚动代码块。
+         * 单行输出的「紧凑标签」阈值：1 行且字符数 ≤ 时，连头部行与滚动容器都不要。
          *
-         * 滚动代码块的固定开销对短内容极不划算：文本区上下留白 16px + 滚动容器边框 8px
+         * 滚动代码块的固定开销对短内容极不划算：文本区上下留白 16px + 容器边框 8px
          * + 头部行 28px ≈ 52px，而 1 行正文只有 ~18px；宽度还被硬编码为
-         * [MessageBubble.CONTENT_WRAP_WIDTH]，于是 `null` 这类输出也占满一整条。
+         * 气泡宽度，于是 `null` 这类输出也占满一整条。
          */
-        const val INLINE_MAX_LINES = 3
-        const val INLINE_MAX_CHARS = 120
+        const val INLINE_CHIP_MAX_LINES = 1
+        const val INLINE_CHIP_MAX_CHARS = 120
+
+        /**
+         * 直接渲染阈值：≤ 15 行时按**实际行数**撑开，不套滚动容器。
+         *
+         * 15 行 × 18px ≈ 270px，正好落在 [CODE_MAX_HEIGHT](320px) 以内，
+         * 因此这个阈值内可以不封顶；超过才有必要用滚动容器兜住高度
+         * （否则几百行工具输出会把气泡撑到几千像素）。
+         */
+        const val DIRECT_MAX_LINES = 15
     }
 }

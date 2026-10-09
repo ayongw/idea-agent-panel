@@ -10,6 +10,7 @@ import com.ayongw.idea.opencode.backend.repository.ContextFiles
 import com.ayongw.idea.opencode.backend.repository.LocalSimulator
 import com.ayongw.idea.opencode.backend.repository.MetadataGateway
 import com.ayongw.idea.opencode.backend.repository.MessageMapper
+import com.ayongw.idea.opencode.backend.repository.CommitMessageGenerator
 import com.ayongw.idea.opencode.backend.repository.SessionCatalog
 import com.ayongw.idea.opencode.backend.repository.OpenCodeCredentials
 import com.ayongw.idea.opencode.backend.repository.OpenCodeRestClient
@@ -90,6 +91,11 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
     private val chatMessageFactory = ChatMessageFactory(AI_AUTHOR, "Super Engineer")
 
     /** 会话目录（TSD-30 §5.8）：会话 CRUD/列表 + 消息加载 */
+    /** TSD-33：提交信息生成器（一次性会话） */
+    private val commitMessageGenerator = CommitMessageGenerator(
+        restClientProvider = { connections.restClient }
+    )
+
     private val sessionCatalog: SessionCatalog = SessionCatalog(
         messagesState = _messages,
         allSessionsState = _allSessions,
@@ -278,6 +284,10 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
         sessionCatalog.renameSession(sessionId, newTitle)
 
     suspend fun getDefaultModel(): Pair<String, String>? = sessionCatalog.getDefaultModel()
+
+    /** TSD-33：提交信息生成（一次性会话，见 CommitMessageGenerator） */
+    suspend fun generateCommitMessage(request: com.ayongw.idea.opencode.shared.CommitMessageRequestDto) =
+        commitMessageGenerator.generate(request)
 
     // ==================== 元数据网关门面（委托 MetadataGateway，RPC 层仍经模型调用） ====================
 

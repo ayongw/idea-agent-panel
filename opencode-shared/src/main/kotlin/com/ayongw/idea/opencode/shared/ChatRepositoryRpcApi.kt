@@ -220,6 +220,17 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
     suspend fun getServerStateFlow(projectId: ProjectId): Flow<ServerStateDto>
 
     /**
+     * 生成 Git 提交信息（TSD-33）。
+     *
+     * 用**一次性会话**调用 opencode：建会话 → 发提示 → 取回复 → 删会话，
+     * 不污染用户工作区的历史会话列表。
+     */
+    suspend fun generateCommitMessage(
+        projectId: ProjectId,
+        request: CommitMessageRequestDto
+    ): CommitMessageResultDto
+
+    /**
      * 重试启动 Server（等价于重新探测 → 复用 / 拉起）
      */
     suspend fun retryServerStart(projectId: ProjectId)
@@ -318,3 +329,41 @@ data class ServerInfoDto(
     val version: String?,
     val error: String?
 )
+
+// ==================== TSD-33：Git 提交信息生成 ====================
+
+/**
+ * 生成提交信息的请求。
+ *
+ * @param prompt 已组装并限长的提示词（前端负责采集与限长，见 CommitMessagePromptBuilder）
+ * @param providerId 用户指定的生成模型供应商；**空表示未配置**，后端据此直接失败并引导设置
+ * @param modelId 用户指定的生成模型 id
+ */
+@Serializable
+data class CommitMessageRequestDto(
+    val prompt: String,
+    val providerId: String = "",
+    val modelId: String = ""
+)
+
+/** 生成结果 */
+@Serializable
+data class CommitMessageResultDto(
+    /** 是否成功 */
+    val success: Boolean,
+    /** 生成的提交信息文本（失败时为空） */
+    val text: String = "",
+    /** 失败分类，供前端选择提示与引导方式 */
+    val reason: String = "",
+    /** 面向用户的补充说明（已脱敏） */
+    val detail: String = ""
+) {
+    companion object {
+        /** 未配置生成模型：前端弹引导提示 + 「去设置」 */
+        const val REASON_NO_MODEL = "NO_MODEL"
+        /** 服务端不可达 / 调用失败 */
+        const val REASON_UNAVAILABLE = "UNAVAILABLE"
+        /** 超时 */
+        const val REASON_TIMEOUT = "TIMEOUT"
+    }
+}

@@ -548,39 +548,29 @@ private class SessionRowRenderer(
         return panel
     }
 
-    /** 标题 + 预览（后端当前不填预览，故只有标题时也不留空行） */
-    private fun mainContent(value: SessionItem, isSelected: Boolean, isCurrent: Boolean): Component {
-        val panel = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            isOpaque = false
-            border = JBUI.Borders.empty(
-                JBUI.scale(ChatUIConstants.Spacing.SMALL),
-                JBUI.scale(ChatUIConstants.Spacing.NORMAL)
-            )
-            add(
-                JBLabel(value.title).apply {
-                    font = JBFont.medium()
-                    foreground = if (isSelected || isCurrent) JBColor.BLACK else ChatAppColors.Text.normal
-                }
-            )
-            if (value.preview.isNotBlank()) {
-                add(Box.createVerticalStrut(JBUI.scale(2)))
-                add(
-                    JBLabel(value.preview.take(PREVIEW_MAX_CHARS)).apply {
-                        font = JBFont.small()
-                        foreground = ChatAppColors.Text.disabled
-                    }
-                )
-            }
+    /**
+     * 标题（**单行**）。
+     *
+     * 曾用「标题 + 预览」两行竖排，导致标题贴行顶、时间（EAST 侧垂直居中）落到下方，
+     * 看起来像两行。现改为标题与时间同行：标题在 CENTER、时间在 EAST，
+     * `JBLabel` 默认不换行，标题过长时**在边界处被裁切**（不换行、不撑高）。
+     */
+    private fun mainContent(value: SessionItem, isSelected: Boolean, isCurrent: Boolean): Component =
+        JBLabel(value.title).apply {
+            font = JBFont.medium()
+            foreground = if (isSelected || isCurrent) JBColor.BLACK else ChatAppColors.Text.normal
+            border = JBUI.Borders.empty(0, JBUI.scale(ChatUIConstants.Spacing.NORMAL))
+            // 与右侧时间/删除槽垂直居中对齐，保证同一基线
+            alignmentY = Component.CENTER_ALIGNMENT
+            toolTipText = value.title
         }
-        return panel
-    }
 
-    /** 时间 + 行尾删除槽（hover 才显示图标） */
+    /** 时间 + 行尾删除槽（hover 才显示图标）；与标题同一基线 */
     private fun rightContent(value: SessionItem, index: Int, isSelected: Boolean): Component =
         JPanel().apply {
             layout = BoxLayout(this, BoxLayout.X_AXIS)
             isOpaque = false
+            alignmentY = Component.CENTER_ALIGNMENT
 
             add(
                 JBLabel(value.timestamp).apply {
