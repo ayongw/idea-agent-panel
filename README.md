@@ -90,7 +90,23 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 
 > 插件版本号与产出的 zip 名都会带上构建号，便于区分每次打包；插件的变更说明取自根目录 `CHANGELOG.md`，打包时自动转成 `plugin.xml` 的 `<change-notes>`（显示在 IDEA 的 Plugins → What's New）。
 
-### 安装插件
+### 安装到本地 IDE（一键，开发推荐）
+
+`installPlugin` 一条命令完成「打包 + 解压 + 装进**真实 IDE** 的 plugins 目录」，不用再手动挑 zip：
+
+```bash
+./gradlew installPlugin --no-configuration-cache
+
+# 换机 / 换 IDE 版本：显式指定 plugins 目录（即 `<IDE 配置目录>/plugins`）
+./gradlew installPlugin -PpluginInstallDir="$HOME/Library/Application Support/JetBrains/IntelliJIdea2026.2/plugins" --no-configuration-cache
+```
+
+- **必须重启 IDE 才生效**。想免重启热重载：`Help | Edit Custom Properties` 里加 `idea.auto.reload.plugins=true`（IPGP 的 `runIde` 默认会传，真实 IDE 要手加）。
+- 目标目录默认从 `ideaHome` 的 `product-info.json` 取 `dataDirectoryName` 推导（如 `IntelliJIdea2026.2`）；探测不到会直接报错并提示改用 `-PpluginInstallDir`。
+- **不要把目标目录做成软链**：该任务用 Gradle `Sync` 实现，会跟随软链删掉真实目录里的文件。
+- 与 `buildPlugin` 刻意分开——只想产出 zip（CI 验证构建产物等场景）用 `buildPlugin`，它不会碰本机 IDE。
+
+### 安装插件（手工从磁盘）
 
 1. 打开 IntelliJ IDEA
 2. `Settings` → `Plugins` → ⚙️ → `Install Plugin from Disk`

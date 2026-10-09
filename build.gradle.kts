@@ -174,7 +174,12 @@ tasks.test {
  * 用配置文件而不是从 build 号推导（262 → 2026.2）：推导规则会随平台变，配置文件不会。
  * `providers.fileContents` 让该文件成为配置缓存输入——IDEA 升级后无需手动清缓存。
  */
-val realIdePluginsDir: File? = providers
+private val explicitPluginsDir: File? = project.findProperty("pluginInstallDir")
+    ?.toString()
+    ?.takeIf { it.isNotBlank() }
+    ?.let { File(it) }
+
+val realIdePluginsDir: File? = explicitPluginsDir ?: providers
     .fileContents(layout.file(provider { File(ideaHome, "Contents/Resources/product-info.json") }))
     .asText
     .map { Regex("\"dataDirectoryName\"\\s*:\\s*\"([^\"]+)\"").find(it)?.groupValues?.get(1) }
@@ -182,10 +187,12 @@ val realIdePluginsDir: File? = providers
     ?.let { dataDirName ->
         val homeDir = System.getProperty("user.home")
         val osName = System.getProperty("os.name").orEmpty()
+        // 注意是 **配置目录**（config），不是系统目录（system / caches / logs）：
+        // IDEA 只扫描 `<config>/plugins`，装到 system 下会「构建成功但插件不生效」。
         val base = when {
-            osName.startsWith("Mac") -> File(homeDir, "Library/Application/JetBrains")
+            osName.startsWith("Mac") -> File(homeDir, "Library/Application Support/JetBrains")
             osName.startsWith("Windows") -> File(System.getenv("APPDATA") ?: "$homeDir/AppData/Roaming", "JetBrains")
-            else -> File(homeDir, ".local/share/JetBrains")
+            else -> File(homeDir, ".config/JetBrains")
         }
         File(File(base, dataDirName), "plugins")
     }
@@ -238,6 +245,9 @@ val installPlugin by tasks.registering(Sync::class) {
 
     // ↓ 配置期从脚本取值后存进 task 自身的 Property，供执行期回调使用
     val targetResolved = objects.property<Boolean>().convention(realIdePluginsDir != null)
+    // 是否由本脚本**推导**而来（显式 -PpluginInstallDir 时跳过 options/ 自检：用户已明确指定）
+    val targetDerived = objects.property<Boolean>()
+        .convention(explicitPluginsDir == null && realIdePluginsDir != null)
     val ideaProductInfo = objects.property<String>()
         .convention(File(ideaHome, "Contents/Resources/product-info.json").path)
     val pluginVersion = objects.property<String>().convention(version.toString())
@@ -247,9 +257,21 @@ val installPlugin by tasks.registering(Sync::class) {
             "未找到 ${ideaProductInfo.get()}，无法推导 IDE 的插件目录；" +
                 "请用 -PpluginInstallDir=<IDEA 的 plugins 目录> 显式指定"
         }
-        check(destinationDir.parentFile.isDirectory) {
-            "IDE 插件目录不存在：${destinationDir.parentFile}；" +
+        val pluginsDir = destinationDir.parentFile
+        check(pluginsDir.isDirectory) {
+            "IDE 插件目录不存在：$pluginsDir；" +
                 "请用 -PpluginInstallDir=<IDEA 的 plugins 目录> 显式指定"
+        }
+        // 自检：IDEA 只扫描**配置目录**下的 plugins。装到系统目录（caches/logs 同级）会
+        // 「构建成功但插件不生效」且无任何报错——本项目踩过一次，故在此硬拦。
+        // 判据：配置目录必有 options/，系统目录（system / caches / logs）必无。
+        if (targetDerived.get()) {
+            val configDir = pluginsDir.parentFile
+            check(File(configDir, "options").isDirectory) {
+                "推导出的插件目录 $pluginsDir 不像 IDEA 的配置目录（其上应有 options/）。" +
+                    "装到非配置目录会导致插件不生效；" +
+                    "请用 -PpluginInstallDir=<IDEA 的 plugins 目录> 显式指定"
+            }
         }
     }
 
