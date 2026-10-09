@@ -83,10 +83,37 @@ class ChatList(
         private const val REASONING_ID_SUFFIX = "#reasoning"
 
         /**
-         * 渲染分组键：同一 assistant 消息的思考（id 带 #reasoning 后缀）与正文合并进同一气泡，
-         * 思考折叠区 + 正文同块展示（Trae 风格）；用户消息 / 工具气泡 id 原样分组。
+         * 组 key 规整：同一 assistant 消息的思考（id 带 #reasoning 后缀）归入正文 id；
+         * 用户消息 / 工具气泡 id 原样。
          */
         private fun groupKey(messageId: String): String = messageId.substringBefore(REASONING_ID_SUFFIX)
+    }
+
+    /**
+     * 一个对话轮次（turn）的渲染分组：user 消息各自成组；其后相邻的所有助手侧消息
+     * （多轮 reasoning / 工具卡片 / 正文）归入同一组——一次提问只有一个「回复主题」。
+     */
+    private data class TurnGroup(val key: String, val messages: List<ChatMessage>)
+
+    /**
+     * 按对话轮次拆分消息。
+     *
+     * 背景：agent 一次执行含多个 step，每 step 有独立 assistantMessageID，多轮思考
+     * 若按消息 id 分组会拆成多个「AI Buddy」主题块。这里以 user 消息为界切分：
+     * 组 key 取组内首条消息（思考块/卡片）规整后的 id，后续消息到达 key 保持稳定。
+     */
+    private fun buildTurnGroups(messages: List<ChatMessage>): List<TurnGroup> {
+        val groups = mutableListOf<MutableList<ChatMessage>>()
+        messages.forEach { message ->
+            // 新开组：首条消息、用户消息、或「紧跟在用户消息之后的第一条助手消息」
+            val lastIsUser = groups.lastOrNull()?.first()?.isMyMessage == true
+            if (groups.isEmpty() || message.isMyMessage || lastIsUser) {
+                groups += mutableListOf(message)
+            } else {
+                groups.last() += message
+            }
+        }
+        return groups.map { group -> TurnGroup(groupKey(group.first().id), group) }
     }
 
     init {
@@ -150,20 +177,22 @@ class ChatList(
             showMessagesPanel()
         }
 
+        // 渲染按对话轮次分组：一次提问的多轮思考/工具/正文合并为一个回复主题
+        val turnGroups = buildTurnGroups(messages)
+        val groupIds = turnGroups.map { it.key }
+
         // 已有气泡：内容变化时就地重渲染（事件流累积的流式内容）
-        syncExistingMessages(messages)
+        syncExistingMessages(turnGroups)
 
         // 折叠在布局之前：一次布局直接按折叠后几何计算，避免折叠改高后几何 stale
         // （completeReasoning 只 revalidate 气泡自身，轻量组件链路的延迟校验不可靠，见 TSD-30）
         if (!streamRunning) {
             collapseThinkingBubbles()
         }
-        // 渲染按 assistant 消息分组：思考与正文合并进同一气泡；集合变化才统一重挂
-        val groupIds = messages.map { groupKey(it.id) }.distinct()
         if (listModel.ids != groupIds) {
             removeDeletedGroups(groupIds)
             listModel.sync(groupIds)
-            addNewGroupedMessages(messages)
+            addNewGroupedMessages(turnGroups)
             relayoutMessages()
             // 结构性变化必须立即布局，不参与节流：合并器无 trailing 补偿，
             // 命中 20ms 窗口会丢布局 → removeAll 后气泡 bounds 停留旧值，视口整屏空白
@@ -200,13 +229,12 @@ class ChatList(
     }
 
     /**
-     * 已存在的气泡：内容变化时就地重渲染（流式正文 / 推理 / 工具卡片运行中→完成）。
-     *
-     * 按渲染分组路由：同一 assistant 消息的思考与正文消息都路由到同一个合并气泡。
+     * 已存在的气泡：组内消息逐条就地刷新（流式正文 / 多轮推理 / 工具卡片运行中→完成）。
      */
-    private fun syncExistingMessages(messages: List<ChatMessage>) {
-        messages.forEach { message ->
-            messageBubbles[groupKey(message.id)]?.syncWith(message)
+    private fun syncExistingMessages(groups: List<TurnGroup>) {
+        groups.forEach { group ->
+            val bubble = messageBubbles[group.key] ?: return@forEach
+            group.messages.forEach(bubble::syncWith)
         }
     }
 
@@ -214,22 +242,24 @@ class ChatList(
         val resultIds = searchState.searchResultIds
         val currentId = searchState.currentSelectedSearchResultId
 
-        messageBubbles.forEach { (groupId, bubble) ->
-            // 检索结果按原始消息 id 命中（含 #reasoning），气泡 key 是分组 id，需归组比较
-            val isMatching = resultIds.any { groupKey(it) == groupId }
-            val isHighlighted = currentId != null && groupKey(currentId) == groupId
+        messageBubbles.forEach { (_, bubble) ->
+            // 检索结果按原始消息 id 命中（reasoning / call id 等），气泡按轮次合并，
+            // 故按「气泡是否包含该 id」判定
+            val isMatching = resultIds.any(bubble::containsId)
+            val isHighlighted = currentId != null && bubble.containsId(currentId)
 
             bubble.updateSearchState(isMatching, isHighlighted)
         }
     }
 
 
-    /** 按「渲染分组」建气泡：组首条消息（思考或正文先到均可）创建合并气泡；后续消息经 syncWith 并入 */
-    private fun addNewGroupedMessages(messages: List<ChatMessage>) {
-        messages.forEach { message ->
-            val key = groupKey(message.id)
-            if (key !in messageBubbles) {
-                messageBubbles[key] = MessageBubble(message)
+    /** 按「对话轮次」建气泡：组首条消息（思考/卡片/正文先到均可）创建气泡，其余消息并入 */
+    private fun addNewGroupedMessages(groups: List<TurnGroup>) {
+        groups.forEach { group ->
+            if (group.key !in messageBubbles) {
+                val bubble = MessageBubble(group.messages.first())
+                messageBubbles[group.key] = bubble
+                group.messages.drop(1).forEach(bubble::syncWith)
             }
         }
     }
@@ -346,8 +376,8 @@ class ChatList(
     }
 
     fun scrollToMessage(messageId: String) {
-        // 气泡按渲染分组挂载：定位检索命中的原始消息 id（含 #reasoning）需先归组
-        val bubble = messageBubbles[groupKey(messageId)]
+        // 气泡按对话轮次合并：定位原始消息 id（含 #reasoning / call id）按包含关系路由
+        val bubble = messageBubbles.values.firstOrNull { it.containsId(messageId) }
         bubble?.scrollRectToVisible(bubble.bounds)
     }
 

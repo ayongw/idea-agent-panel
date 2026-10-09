@@ -30,6 +30,19 @@ object ChatUIConstants {
         const val AVATAR_GAP = 6
     }
 
+    object Panel {
+        /**
+         * 工具窗内容最小宽度（逻辑像素）。
+         *
+         * 底部工具条是 `BorderLayout(WEST=按钮组, EAST=用量)`：JDK BorderLayout 对
+         * WEST/EAST **各自按 preferred 摆放、从不压缩**，两端 preferred 之和超过可用宽度时
+         * 不是裁剪而是**重叠绘制**（实测见 temp/layout-probe/Probe2.java）。
+         * 用量外层已精简为「↑输入 ↓输出」（≈73px），按钮组可响应式省略，
+         * 450px 有富余；窄于此值则拖动工具窗会被 IDE 拒绝，避免信息被压没。
+         */
+        const val MIN_WIDTH = 450
+    }
+
     object ThinkingIndicator {
         const val PADDING = 8
         const val DOT_COUNT = 3

@@ -1,6 +1,5 @@
 package com.ayongw.idea.opencode.frontend.chatApp.ui.bubble
 
-import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
 import com.ayongw.idea.opencode.frontend.chatApp.ui.ThinkingIndicator
 import com.ayongw.idea.opencode.frontend.chatApp.ui.block.CodeBlockPane
 import com.ayongw.idea.opencode.frontend.chatApp.ui.block.TextBlock
@@ -28,100 +27,93 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 
 /**
- * 消息气泡 - 支持流式更新
+ * 消息气泡 — 按「对话轮次（turn）」合并渲染。
+ *
+ * 一次用户提问触发的多步执行（多轮 reasoning / 多个工具调用 / 最终正文）统一在一个
+ * 回复主题气泡内：单个作者行、单个思考块（多轮以细分隔线区分）、工具卡片按到达
+ * 顺序内联、正文 + 时间行在底部。
  */
 private val log = Logger.getInstance("com.ayongw.idea.opencode.frontend.chatApp.ui.bubble.MessageBubble")
 
 class MessageBubble(
-    private val message: ChatMessage,
+    private val firstMessage: ChatMessage,
     private var isMatchingSearch: Boolean = false,
     private var isHighlightedInSearch: Boolean = false
 ) : JPanel(), Disposable {
 
-    private val isMyMessage = message.isMyMessage
+    private val isMyMessage = firstMessage.isMyMessage
 
     /** 是否用户消息（决定对齐与气泡样式；供列表重排时取用） */
     val isMy: Boolean get() = isMyMessage
 
-    /** 关联的消息 id（供列表顺序断言 / 检索定位） */
-    val messageId: String get() = message.id
+    /** 轮次组 key（首条消息规整后的 id；供列表顺序断言 / 检索定位） */
+    val messageId: String = firstMessage.id.substringBefore(REASONING_ID_SUFFIX)
 
-    /** 内容容器 - 用于动态更新 */
+    /** 正文容器（markdown 块） */
     private var contentContainer: JPanel? = null
 
-    /** 思考区组件（G3）：流式期展开，结束折叠；空内容时先显示动画，首帧再替换为本组件 */
+    /** 思考区组件：流式期展开，结束折叠；多轮思考统一收纳 */
     private var reasoningSection: ReasoningSection? = null
 
-    /** 思考动画组件（思考气泡初始态）：被内容骨架替换或气泡被删除时必须 dispose，否则 animator 挂到 ROOT 泄漏 */
+    /** 思考动画（初始态）：被思考块/正文替换或气泡删除时必须 dispose，否则 animator 泄漏 */
     private var thinkingIndicator: ThinkingIndicator? = null
 
     /** 时间行（独立于气泡）：用户消息的气泡只包住内容，绘制时需避开该行 */
     private var timestampRow: JComponent? = null
 
-    /** 当前渲染的内容段落 */
+    /** 当前渲染的正文段落 */
     private var currentSegments: List<MarkdownSegment> = emptyList()
 
-    /** 思考内容指纹（推理区）：null = 未渲染（空思考初始只渲染动画） */
-    private var reasoningSignature: String? =
-        if (message.isAIThinkingMessage() && message.content.isNotBlank()) message.content else null
+    /** 已并入气泡的原始消息 id（搜索 / 定位 containsId 判定） */
+    private val memberIds = linkedSetOf<String>()
 
-    /** 正文/工具内容指纹：null = 正文区未构建（合并气泡中思考先到、正文后补） */
-    private var textSignature: String? = if (message.isAIThinkingMessage()) null else contentSignature(message)
+    /** 各原始消息已渲染签名（syncWith 幂等去重） */
+    private val appliedSignatures = HashMap<String, String>()
+
+    /** 多轮思考：原始消息 id -> 轮次文本（保持到达顺序） */
+    private val reasoningRounds = LinkedHashMap<String, String>()
+
+    /** 工具卡片：callId -> 卡片（保持到达顺序内联） */
+    private val toolCards = LinkedHashMap<String, ToolCallCard>()
 
     init {
         setupAppearance()
-
-        val tool = message.tool
         log.debug(
-            "new bubble id=${message.id.take(16)} type=${message.type} isMy=${message.isMyMessage} " +
-                "author=${message.author} contentLen=${message.content.length} tool=${tool?.name ?: "-"}"
+            "new turn bubble key=$messageId isMy=$isMyMessage " +
+                "firstType=${firstMessage.type} contentLen=${firstMessage.content.length}"
         )
-        if (message.isToolMessage() && tool != null) {
-            // 工具卡片自带标题行，不再显示作者名
-            val card = buildToolCard(tool)
-            contentContainer = card
-            add(card)
-        } else {
-            // 助手消息：头像 + 名称；用户消息不显示标题（气泡只包内容，时间另起一行在气泡外）
-            if (!message.isMyMessage) {
-                add(AuthorRow(message))
-                add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.MEDIUM)))
-            }
-
-            when {
-                message.isTextMessage() -> appendContentContainer(message)
-                message.isAIThinkingMessage() -> {
-                    // 已完成的历史思考（非空内容）默认折叠；流式刚开始（空内容）先显示动画
-                    if (message.content.isBlank()) {
-                        add(ThinkingIndicator().also { thinkingIndicator = it })
-                    } else {
-                        insertReasoningStructure(expanded = false)
-                    }
-                }
-            }
+        if (!isMyMessage) {
+            add(AuthorRow(firstMessage))
+            add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.MEDIUM)))
         }
+        route(firstMessage, streaming = false)
     }
 
     /**
-     * 上游按消息 id 推送新内容时就地刷新；内容未变则不动。
+     * 上游推送新消息时按原始 id 就地并入；签名未变则不动。
      *
-     * 合并气泡：同一 assistant 消息的思考（id 带 #reasoning 后缀）与正文路由到同一气泡，
-     * 按到达顺序分别驱动推理区 / 正文区（见 [updateReasoningContent] / [updateStreamingText]）。
+     * reasoning → 思考块新增/更新一轮；tool → 对应卡片内联/原位更新；text → 正文区。
      */
     fun syncWith(message: ChatMessage) {
+        val signature = signatureOf(message)
+        if (appliedSignatures[message.id] == signature) return
+        route(message, streaming = true)
+        appliedSignatures[message.id] = signature
+    }
+
+    /** 气泡是否包含某原始消息 id（轮次合并后搜索 / 定位的路由依据） */
+    fun containsId(id: String): Boolean = id == messageId || id in memberIds
+
+    private fun signatureOf(message: ChatMessage): String =
+        if (message.isToolMessage()) message.tool?.let(::toolSignature) ?: "" else message.content
+
+    /** 路由一条消息到对应内容块（构造首条 / 流式并入共用） */
+    private fun route(message: ChatMessage, streaming: Boolean) {
+        memberIds += message.id
         when {
-            message.isAIThinkingMessage() -> {
-                if (reasoningSignature != null && reasoningSignature == message.content) return
-                updateReasoningContent(message.content)
-            }
-            message.isTextMessage() -> {
-                if (textSignature != null && textSignature == contentSignature(message)) return
-                updateStreamingText(message)
-            }
-            message.isToolMessage() -> message.tool?.let { tool ->
-                if (textSignature != null && textSignature == toolSignature(tool)) return
-                updateTool(tool)
-            }
+            message.isAIThinkingMessage() -> applyReasoning(message.id, message.content, streaming)
+            message.isToolMessage() -> message.tool?.let(::applyTool)
+            message.isTextMessage() -> applyText(message)
         }
     }
 
@@ -137,8 +129,18 @@ class MessageBubble(
             JBUI.Borders.empty(ChatUIConstants.MessageBubble.INNER_PADDING)
         )
 
-        minimumSize = Dimension(JBUI.scale(ChatUIConstants.MessageBubble.MIN_WIDTH), 0)
+        // 不显式设置 minimumSize：高度为 0 时 GridBag 在空间不足回退 MINSIZE
+        // 布局会把整个气泡 unmap 成 0x0；宽度/高度兜底统一走 getMinimumSize
         maximumSize = Dimension(JBUI.scale(ChatUIConstants.MessageBubble.MAX_WIDTH), Int.MAX_VALUE)
+    }
+
+    override fun getMinimumSize(): Dimension {
+        val natural = super.getMinimumSize()
+        return Dimension(
+            maxOf(natural.width, JBUI.scale(ChatUIConstants.MessageBubble.MIN_WIDTH)),
+            // 高度兜底 ≥1，避免子组件最小高度为 0 时气泡被 GridBag 整体置零
+            natural.height.coerceAtLeast(1)
+        )
     }
 
     override fun paintComponent(g: Graphics) {
@@ -218,64 +220,29 @@ class MessageBubble(
         repaint()
     }
 
-    /**
-     * 更新流式文本内容（TSD-30 §5.3 块级增量）
-     *
-     * 正文区不存在（思考先到的合并气泡）时首帧构建：折叠思考区（正文开始输出 = 思考结束）、
-     * 撤掉残留思考动画，再追加正文容器 + 时间行；已存在则只重建容器内块组件（容器保持挂载，
-     * 不脱离父布局，避免闪烁）。
-     */
-    fun updateStreamingText(textMessage: ChatMessage) {
-        val container = contentContainer
-        if (container == null) {
-            reasoningSection?.complete()
-            dismissThinkingIndicator()
-            appendContentContainer(textMessage)
-        } else {
-            populateContentContainer(container, textMessage.content)
-        }
-        textSignature = contentSignature(textMessage)
-        contentContainer?.revalidate()
-        // 内容增高/缩矮时气泡轮廓与时间行位置需重绘（用户消息气泡只包内容）
-        repaint()
-    }
+    // ==================== 思考块（多轮统一） ====================
 
     /**
-     * 完成流式文本，最终渲染
-     */
-    fun completeStreamingText(finalContent: String) {
-        updateStreamingText(message.copy(content = finalContent))
-    }
-
-    /**
-     * 更新推理过程内容（G3：流式期间展开）
+     * 并入一轮思考。
      *
-     * 空思考首帧只保留动画；首帧非空内容（或动画升级）建折叠骨架并展开；
-     * 正文区已存在时思考区插入到正文上方（合并气泡支持正文先到）。
+     * 所有轮次均无文本时显示思考动画；首个非空轮次到达时把动画替换为思考块，多轮
+     * 文本在同一块内以细分隔线区分（[ReasoningSection.setRounds]）。流式并入展开，
+     * 构造首条历史内容默认折叠。
      */
-    fun updateReasoningContent(content: String) {
-        if (reasoningSection == null) {
-            if (content.isBlank()) {
-                if (thinkingIndicator == null) {
-                    add(ThinkingIndicator().also { thinkingIndicator = it })
-                    revalidate()
-                    repaint()
-                }
-                reasoningSignature = ""
-                return
-            }
-            insertReasoningStructure(expanded = true)
+    private fun applyReasoning(rawId: String, content: String, streaming: Boolean) {
+        reasoningRounds[rawId] = content
+        val rounds = reasoningRounds.values.filter { it.isNotBlank() }
+        if (rounds.isEmpty()) {
+            if (reasoningSection == null && thinkingIndicator == null) addIndicator()
+            return
         }
-        reasoningSection!!.updateContent(content)
-        reasoningSignature = content
+        if (reasoningSection == null) buildReasoningSection(expanded = streaming)
+        reasoningSection!!.setRounds(rounds, expand = streaming)
         revalidate()
         repaint()
     }
 
-    /**
-     * 程序化折叠思考区（G3 流式结束自动折叠）：由 [ChatList] 在执行终态信号/非运行态对账时调用，
-     * 仍可手动展开查看。流式期间的展开由 [updateReasoningContent] 保证。
-     */
+    /** 程序化折叠思考区（执行终态 / 非运行态对账时调用），仍可手动展开查看 */
     fun completeReasoning() {
         reasoningSection?.let {
             it.complete()
@@ -284,19 +251,84 @@ class MessageBubble(
         }
     }
 
-    /**
-     * 思考区骨架（G3）：动画替换为 [ReasoningSection]（作者名 + 可折叠内容）。
-     * 正文区已存在（正文先到的合并气泡）时插入到正文上方（作者行之后），否则追加尾部。
-     */
-    private fun insertReasoningStructure(expanded: Boolean) {
-        dismissThinkingIndicator()
-        val section = ReasoningSection(expanded)
-        reasoningSection = section
-        // 正文先到时组件为 [author, strut, content, strut, timestamp]，思考区插到正文之前
-        add(section, if (contentContainer == null) componentCount else 2)
+    private fun addIndicator() {
+        ThinkingIndicator().also {
+            thinkingIndicator = it
+            insertComponent(it)
+        }
     }
 
-    /** 追加正文容器 + 时间行（正文首帧；思考区/动画不受影响） */
+    private fun buildReasoningSection(expanded: Boolean) {
+        dismissIndicator()
+        ReasoningSection(expanded).also {
+            reasoningSection = it
+            // 思考块恒定位于作者行之后（助手气泡 index=2；用户气泡无思考场景，尾部）
+            add(it, if (isMyMessage) componentCount else 2)
+        }
+    }
+
+    // ==================== 工具卡片（内联，原位更新） ====================
+
+    /**
+     * 并入工具卡片：新卡片按到达顺序插到思考块之后、已有卡片队列末尾（正文之前）；
+     * 已存在的卡片（状态 / 输出更新）在相同位置原位替换，不引起整体重排。
+     */
+    private fun applyTool(tool: ToolCallDto) {
+        if (tool.callId.isBlank()) return
+        val existing = toolCards[tool.callId]
+        if (existing != null) {
+            val index = indexOfComponent(existing)
+            remove(existing)
+            ToolCallCard(tool).also {
+                toolCards[tool.callId] = it
+                add(it, index)
+            }
+        } else {
+            ToolCallCard(tool).also {
+                toolCards[tool.callId] = it
+                add(it, toolInsertIndex())
+            }
+        }
+        revalidate()
+        repaint()
+    }
+
+    private fun toolInsertIndex(): Int {
+        toolCards.values.lastOrNull()?.let { return indexOfComponent(it) + 1 }
+        val anchor = reasoningSection ?: thinkingIndicator
+        if (anchor != null) return indexOfComponent(anchor) + 1
+        // 无作者行的用户气泡不存在工具；助手气泡作者行 + strut 之后
+        return if (isMyMessage) componentCount else 2
+    }
+
+    /** 子组件在本气泡中的下标（未挂载返回 -1） */
+    private fun indexOfComponent(component: java.awt.Component): Int = components.indexOf(component)
+
+    // ==================== 正文 + 时间行 ====================
+
+    /**
+     * 并入正文（markdown）。正文开始输出即思考结束：折叠思考块、撤掉残留动画；
+     * 正文容器不存在时首帧构建（含时间行），已存在则只重建容器内块（不脱离父布局）。
+     */
+    private fun applyText(textMessage: ChatMessage) {
+        reasoningSection?.complete()
+        dismissIndicator()
+        val container = contentContainer
+        if (container == null) {
+            appendContentContainer(textMessage)
+        } else {
+            populateContentContainer(container, textMessage.content)
+        }
+        revalidate()
+        repaint()
+    }
+
+    /** 插入组件：助手气泡恒定位于作者行 + strut 之后（index=2），用户气泡尾部追加 */
+    private fun insertComponent(component: JComponent) {
+        add(component, if (isMyMessage) componentCount else 2)
+    }
+
+    /** 追加正文容器 + 时间行（正文首帧；思考块 / 工具卡片不受影响） */
     private fun appendContentContainer(textMessage: ChatMessage) {
         contentContainer = buildContentContainer(textMessage.content)
         add(contentContainer!!)
@@ -310,8 +342,8 @@ class MessageBubble(
         add(TimeStampLabel(textMessage).also { timestampRow = it })
     }
 
-    /** 撤掉思考动画（正文首帧 / 气泡销毁）：组件从布局移除并释放 animator，防 ROOT 泄漏 */
-    private fun dismissThinkingIndicator() {
+    /** 撤掉思考动画（思考块/正文首帧 / 气泡销毁）：组件移除并释放 animator，防 ROOT 泄漏 */
+    private fun dismissIndicator() {
         thinkingIndicator?.let {
             remove(it)
             it.dispose()
@@ -320,28 +352,15 @@ class MessageBubble(
     }
 
     /**
-     * 气泡被列表删除/清空时释放内部 Disposable 子组件（当前只有思考动画），
-     * 避免 animator 注册树残留到 ROOT_DISPOSABLE（Disposer 泄漏检测在 IDE 关闭时报警）。
+     * 气泡被列表删除/清空时释放内部 Disposable 子组件（思考动画），
+     * 避免 animator 注册树残留到 ROOT_DISPOSABLE（IDE 关闭时泄漏报警）。
      */
     override fun dispose() {
-        dismissThinkingIndicator()
+        dismissIndicator()
     }
-
-    /** 更新工具卡片（运行中 → 完成 / 失败） */
-    private fun updateTool(tool: ToolCallDto) {
-        val card = buildToolCard(tool)
-        contentContainer?.let { remove(it) }
-        contentContainer = card
-        textSignature = toolSignature(tool)
-        add(card)
-        revalidate()
-        repaint()
-    }
-
-    private fun buildToolCard(tool: ToolCallDto): JPanel = ToolCallCard(tool)
 
     /**
-     * 构建内容容器（消息创建时的首次渲染）
+     * 构建正文容器（首次渲染）
      */
     private fun buildContentContainer(content: String): JPanel {
         val container = JPanel().apply {
@@ -354,7 +373,7 @@ class MessageBubble(
     }
 
     /**
-     * 往**已挂载**的内容容器填充当前 markdown 分段（流式增量复用：容器不脱离父布局）
+     * 往**已挂载**的正文容器填充当前 markdown 分段（流式增量复用：容器不脱离父布局）
      */
     private fun populateContentContainer(container: JPanel, content: String) {
         container.removeAll()
@@ -380,8 +399,8 @@ class MessageBubble(
     }
 }
 
-/** 内容指纹：TOOL 卡片由「状态 + 入参 + 输出」决定是否需要重渲染 */
-private fun contentSignature(message: ChatMessage): String =
-    message.tool?.let(::toolSignature) ?: message.content
-
+/** 工具卡片签名：由「状态 + 入参 + 输出」决定是否需要重渲染 */
 private fun toolSignature(tool: ToolCallDto): String = "${tool.status}|${tool.input}|${tool.output}"
+
+/** 思考消息 id 后缀（与后端 SessionStreamState.REASONING_ID_SUFFIX 约定一致） */
+private const val REASONING_ID_SUFFIX = "#reasoning"

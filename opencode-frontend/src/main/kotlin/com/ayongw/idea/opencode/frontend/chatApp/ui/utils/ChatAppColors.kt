@@ -31,6 +31,11 @@ object ChatAppColors {
         val foreground: Color = JBColor(Color.WHITE, Color.WHITE)
     }
 
+    /** 分隔线（多轮思考轮次间） */
+    object Divider {
+        val line: Color = JBColor(Gray._210, Gray._80)
+    }
+
     object MessageBubble {
         val myBackground: Color
             get() = JBColor(

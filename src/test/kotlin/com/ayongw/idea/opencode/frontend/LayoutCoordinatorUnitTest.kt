@@ -1,10 +1,12 @@
 package com.ayongw.idea.opencode.frontend
 
 import com.ayongw.idea.opencode.frontend.chatApp.ui.LayoutCoordinator
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import javax.swing.JPanel
+import javax.swing.SwingUtilities
 
 /**
  * 几何缺失/滞后判定（TSD-30 §5.1 纯逻辑）：
@@ -61,5 +63,25 @@ class LayoutCoordinatorUnitTest {
         }
         // 只把气泡交给判定（filler 由调用方排除，否则永远误报 stale）
         assertFalse(coordinator.hasStaleGeometry(listOf(bubble)))
+    }
+
+    @Test
+    fun `ensureLaidOut只对齐高度不改变容器宽度`() {
+        // 回归：超宽子组件（长单行思考文本 preferred 宽 600）曾把容器宽度一起对齐到
+        // preferredSize，覆盖视口宽度追踪（实际仅 ~365px），几何永不收敛 → 整屏空白
+        val container = JPanel()
+        val wideChild = object : JPanel() {
+            override fun getPreferredSize() = java.awt.Dimension(600, 40)
+        }
+        container.add(wideChild)
+        container.setSize(200, 0) // 首帧：视口 validate 未执行，高度为 0
+
+        SwingUtilities.invokeAndWait {
+            LayoutCoordinator(container).ensureLaidOut(listOf(wideChild))
+        }
+
+        assertEquals("宽度保持视口给定值，不得对齐 preferred 宽度", 200, container.width)
+        assertEquals("高度对齐 preferred（首帧 0 高自愈）", container.preferredSize.height, container.height)
+        assertTrue("子组件应完成布局", wideChild.width > 0)
     }
 }
