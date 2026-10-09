@@ -41,11 +41,6 @@ class ContextUsageFormatterUnitTest {
         assertEquals("0", ContextUsageFormatter.formatTokens(-5))
     }
 
-    @Test
-    fun formatExactUsesThousandSeparator() {
-        assertEquals("1,234", ContextUsageFormatter.formatExact(1_234))
-        assertEquals("847", ContextUsageFormatter.formatExact(847))
-    }
 
     // ==================== 上下文占比 ====================
 
@@ -90,50 +85,67 @@ class ContextUsageFormatterUnitTest {
     // ==================== 外层精简档（窄窗口） ====================
 
     @Test
-    fun compactKeepsInputOutputAndContextPercent() {
-        // 外层保留三项：输入 / 输出 + 上下文占比（占比是"还能聊多久"的关键信号，须常驻可见）
-        assertEquals("↑12.3k ↓400 · 48%", ContextUsageFormatter.compact(fullUsage))
+    fun compactOnlyKeepsContextPercent() {
+        // 底部工具条只留上下文占比：输入/输出在每条助手消息页脚已逐条展示，重复且挤占空间
+        assertEquals("48%", ContextUsageFormatter.compact(fullUsage))
     }
 
     @Test
-    fun compactOmitsCacheReasoningAndCost() {
-        // 宽度敏感/次要项不进外层（底部工具条两端不压缩），全部由 detail 承载
+    fun compactOmitsInputOutputCacheReasoningAndCost() {
         val compact = ContextUsageFormatter.compact(fullUsage)
-        assertFalse("外层不应出现缓存", compact.contains("缓存"))
-        assertFalse("外层不应出现花费", compact.contains("花费"))
-        assertTrue("占比仍应在外层", compact.contains("48%"))
+        assertFalse("不应出现输入箭头", compact.contains("↑"))
+        assertFalse("不应出现输出箭头", compact.contains("↓"))
+        assertFalse("不应出现缓存", compact.contains("缓存"))
+        assertFalse("不应出现花费", compact.contains("花费"))
+        assertEquals("只剩占比", "48%", compact)
     }
 
     @Test
     fun compactDropsPercentWhenContextUnknown() {
-        assertEquals("↑12.3k ↓400", ContextUsageFormatter.compact(fullUsage.copy(contextWindow = null)))
+        assertEquals("", ContextUsageFormatter.compact(fullUsage.copy(contextWindow = null)))
     }
 
     @Test
     fun compactIsEmptyWithoutTokenData() {
-        // 只有上下文占比、没有 token 时外层不展示（避免出现只有占比、没有用量的半截信息）
-        val noTokens = SessionUsageDto(lastStepInputTokens = 480, contextWindow = 1_000)
-        assertEquals("", ContextUsageFormatter.compact(noTokens))
         assertEquals("", ContextUsageFormatter.compact(null))
         assertEquals("", ContextUsageFormatter.compact(SessionUsageDto()))
     }
 
     @Test
-    fun compactStillReportsOutputWhenInputIsZero() {
-        val usage = SessionUsageDto(tokens = TokenUsageDto(output = 69))
-        assertEquals("↑0 ↓69", ContextUsageFormatter.compact(usage))
+    fun compactKeepsPercentEvenWithoutAggregateTokens() {
+        // 只有占比、没有累计 token 时仍要展示占比 —— 外层现在**就是**占比的载体，
+        // 若再要求有 token 才显示，用户会看不到上下文余量。
+        val noTokens = SessionUsageDto(lastStepInputTokens = 480, contextWindow = 1_000)
+        assertEquals("48%", ContextUsageFormatter.compact(noTokens))
     }
 
     @Test
-    fun detailListsExactCountsAndCost() {
+    fun detailUsesAbbreviatedCountsAndCost() {
+        // 明细与外层统一用缩写：一长串精确数字读起来费劲，这层只需量级感知
         val detail = ContextUsageFormatter.detail(fullUsage)
 
-        assertTrue("明细应含千分位输入", detail.contains("输入 12,300"))
-        assertTrue("明细应含千分位缓存读", detail.contains("缓存读 8,100"))
-        assertTrue("明细应含本次请求输入", detail.contains("本次请求输入 480"))
-        assertTrue("明细应含上下文窗口", detail.contains("上下文窗口 1,000"))
+        assertTrue("输入应缩写：$detail", detail.contains("输入 12.3k"))
+        assertTrue("缓存读应缩写：$detail", detail.contains("缓存读 8.1k"))
+        assertTrue("本次请求输入应缩写：$detail", detail.contains("本次请求输入 480"))
+        assertTrue("上下文窗口应缩写：$detail", detail.contains("上下文窗口 1k"))
         assertTrue("明细应含花费", detail.contains("0.0123"))
         assertEquals("无数据时明细应为空", "", ContextUsageFormatter.detail(null))
+    }
+
+    @Test
+    fun detailHasNoThousandSeparator() {
+        // 回归：曾用千分位精确值（输入 14,224 / 上下文窗口 262,144），tooltip 一行太长
+        val big = SessionUsageDto(
+            tokens = TokenUsageDto(input = 14_224, output = 51, cacheRead = 512),
+            lastStepInputTokens = 14_224,
+            contextWindow = 262_144
+        )
+        val detail = ContextUsageFormatter.detail(big)
+        listOf("14,224", "262,144", "14,267").forEach {
+            assertFalse("明细不应出现千分位 $it：$detail", detail.contains(it))
+        }
+        assertTrue("应显示缩写：$detail", detail.contains("输入 14.2k"))
+        assertTrue("应显示缩写：$detail", detail.contains("上下文窗口 262.1k"))
     }
 
     @Test

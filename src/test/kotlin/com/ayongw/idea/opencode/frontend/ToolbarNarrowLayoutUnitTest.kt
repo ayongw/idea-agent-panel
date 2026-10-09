@@ -10,6 +10,7 @@ import com.ayongw.idea.opencode.shared.ContextUsageFormatter
 import com.ayongw.idea.opencode.shared.SessionUsageDto
 import com.ayongw.idea.opencode.shared.TokenUsageDto
 import com.intellij.testFramework.TestApplicationManager
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -84,7 +85,7 @@ class ToolbarNarrowLayoutUnitTest {
         return Bounds(toolbarAbs, usageBounds)
     }
 
-    /** 用量指示器：外层只放输入/输出（缓存与占比在悬浮明细里） */
+    /** 用量指示器：底部工具条只放上下文占比（输入/输出在消息页脚已展示） */
     private fun indicator(): ContextUsageIndicator = ContextUsageIndicator().apply {
         updateUsage(usage)
     }
@@ -121,7 +122,7 @@ class ToolbarNarrowLayoutUnitTest {
     }
 
     @Test
-    fun 用量外层只展示输入输出() {
+    fun 用量外层只展示上下文占比() {
         var text = ""
         var tooltip: String? = null
         SwingUtilities.invokeAndWait {
@@ -129,12 +130,14 @@ class ToolbarNarrowLayoutUnitTest {
             text = indicator.text
             tooltip = indicator.toolTipText
         }
-        assertTrue("外层应含输入", text.contains("↑11.3k"))
-        assertTrue("外层应含输出", text.contains("↓69"))
-        assertFalse("外层不应含缓存", text.contains("缓存"))
-        assertFalse("外层不应含上下文占比", text.contains("上下文"))
-        // 信息不丢：悬浮明细仍覆盖缓存 / 占比
-        assertTrue("悬浮明细应含缓存", tooltip!!.contains("缓存"))
+        // 底部工具条只留占比：输入/输出在每条助手消息页脚已逐条展示，重复且挤占两端空间
+        // 占比按该 fixture 的实际用量算（480/8000 = 6%），不是硬编码值
+        assertEquals("外层应只剩占比", "6%", text)
+        assertFalse("外层不应含输入箭头", text.contains("↑"))
+        assertFalse("外层不应含输出箭头", text.contains("↓"))
+        // 信息不丢：悬浮明细仍覆盖全部字段，且用缩写数值
+        assertTrue("悬浮明细应含输入", tooltip!!.contains("输入 11.3k"))
+        assertTrue("悬浮明细应含缓存", tooltip.contains("缓存"))
         assertTrue("悬浮明细应含上下文占比", tooltip.contains("上下文"))
         assertTrue("外层应显著短于完整摘要", text.length < ContextUsageFormatter.summary(usage).length)
     }

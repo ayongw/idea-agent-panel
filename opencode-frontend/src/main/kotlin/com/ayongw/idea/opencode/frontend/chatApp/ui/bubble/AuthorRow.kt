@@ -11,6 +11,8 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import java.awt.Dimension
+import java.awt.Component.LEFT_ALIGNMENT
+import java.awt.Component.RIGHT_ALIGNMENT
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.RenderingHints
@@ -109,7 +111,9 @@ class MessageFooter(
     init {
         layout = BoxLayout(this, BoxLayout.X_AXIS)
         isOpaque = false
-        alignmentX = LEFT_ALIGNMENT
+        // 与所属气泡的 alignmentX 保持一致：用户气泡整体右对齐，页脚必须跟着右对齐，
+        // 否则固定 LEFT 会把时间行拽到气泡左边（改气泡对齐后的连带问题）
+        alignmentX = if (message.isMyMessage) RIGHT_ALIGNMENT else LEFT_ALIGNMENT
 
         if (message.isMyMessage) {
             // 用户消息：仅时间，右对齐（与原 TimeStampLabel 行为一致）

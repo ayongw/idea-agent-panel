@@ -332,9 +332,14 @@ class ChatList(
             val bubble = messageBubbles[id] ?: return@forEachIndexed
             gbc.gridy = index
             if (bubble.isMy) {
-                // 用户消息：占满整行右对齐，左侧额外缩进与助手消息拉开层次。
-                // fill 必须 HORIZONTAL —— NONE 会让宽度退回 preferred（短消息只有几个字宽），
-                // 窄气泡导致每行只能放三四个字就换行。
+                // 用户消息：整行右对齐，左侧额外缩进与助手消息拉开层次。
+                //
+                // 布局保持 fill=HORIZONTAL（满宽），气泡底由 paintComponent 按文字实际宽度
+                // 收窄并贴右绘制（见 MessageBubble.paintComponent）。
+                //
+                // 曾尝试 fill=NONE 做真自适应，失败原因：开启换行的 JTextArea 无法知道目标
+                // 宽度，其 preferred 宽度恒为约 121px（实测 1 字符与 440 字符同为 121），
+                // 于是 fill=NONE 下无论长短消息气泡都固定 145px，长消息反而被挤成窄条。
                 gbc.anchor = GridBagConstraints.EAST
                 gbc.fill = GridBagConstraints.HORIZONTAL
                 gbc.insets = JBUI.insets(

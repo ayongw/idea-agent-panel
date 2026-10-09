@@ -17,6 +17,7 @@ import com.intellij.util.ui.JBUI
 import java.awt.BasicStroke
 import java.awt.Color
 import java.awt.Component.LEFT_ALIGNMENT
+import java.awt.Component.RIGHT_ALIGNMENT
 import java.awt.Dimension
 import java.awt.Graphics
 import java.awt.Graphics2D
@@ -162,6 +163,9 @@ class MessageBubble(
         // 配合 ChatList 里用户气泡 fill=HORIZONTAL，短消息也占满整行右对齐。
         // 宽度上限只留给助手消息无意义（它本就 fill=HORIZONTAL 整行），故统一不设。
         maximumSize = Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
+        // BoxLayout(Y_AXIS) 下子组件的 alignmentX 决定「被拉伸到最大宽度后」贴哪边：
+        // 用户消息整体右对齐，助手消息保持左对齐（占满整行）
+        alignmentX = if (isMyMessage) RIGHT_ALIGNMENT else LEFT_ALIGNMENT
     }
 
     override fun getMinimumSize(): Dimension {
@@ -194,10 +198,17 @@ class MessageBubble(
             return
         }
 
+        // 用户气泡底按正文实际占宽收窄并贴右；助手消息铺满。
+        //
+        // 前提是「正文宽度上限 = 文本自然宽度」（见 TextBlock.init）：短文本不会被
+        // BoxLayout 拉伸、真正贴右，背景收窄后才与文字重合。早先只改背景不改正文宽度，
+        // 文字仍在左侧渲染，导致「文字与背景框分离」。
+        val bubbleWidth = if (isMyMessage) paintedBubbleWidth() else width - 2 * marginH
+
         val shape = RoundRectangle2D.Float(
-            marginH.toFloat(),
+            (width - marginH - bubbleWidth).toFloat(),
             margin.toFloat(),
-            (width - 2 * marginH).toFloat(),
+            bubbleWidth.toFloat(),
             (bubbleBottom - margin).toFloat(),
             cornerRadius.toFloat(),
             cornerRadius.toFloat()
@@ -211,6 +222,33 @@ class MessageBubble(
         g2d.draw(shape)
 
         g2d.dispose()
+    }
+
+    /**
+     * 用户气泡背景的绘制宽度：文字自然宽度 + 内边距，不超过气泡可用宽度。
+     *
+     * 取正文里所有 [TextBlock] 的自然宽度最大值；正文为空或只有代码块时返回满宽
+     * （代码块本身就占满整行，背景也该满宽）。
+     */
+    private fun paintedBubbleWidth(): Int {
+        val marginH = JBUI.scale(ChatUIConstants.MessageBubble.HORIZONTAL_MARGIN)
+        val available = width - 2 * marginH
+        val content = contentContainer ?: return available
+        // 用「正文块布局后的实际宽度」而非自然宽度：正文短时两者相等；正文含代码块等
+        // 占满整行的块时，实际宽度更准，背景不会比内容还窄。
+        val textWidth = collectContentWidth(content)
+        if (textWidth <= 0) return available
+        val padding = 2 * JBUI.scale(ChatUIConstants.MessageBubble.INNER_PADDING)
+        return (textWidth + padding).coerceAtMost(available)
+    }
+
+    private fun collectContentWidth(container: java.awt.Container): Int {
+        var max = 0
+        for (child in container.components) {
+            if (child.width > 0) max = maxOf(max, child.x + child.width)
+            if (child is java.awt.Container) max = maxOf(max, collectContentWidth(child))
+        }
+        return max
     }
 
     /**
@@ -416,7 +454,10 @@ class MessageBubble(
         val container = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
-            alignmentX = LEFT_ALIGNMENT
+            // 气泡占满整行（见 ChatList.relayoutMessages）后，若框内组件仍左对齐，
+            // 文字会贴着气泡左边，看起来就是「左对齐」而不是右对齐。
+            // 用户消息整行右对齐：框内内容同样右对齐，文字贴右边缘。
+            alignmentX = if (isMyMessage) RIGHT_ALIGNMENT else LEFT_ALIGNMENT
         }
         populateContentContainer(container, content)
         return container
@@ -432,7 +473,12 @@ class MessageBubble(
             when (segment) {
                 is MarkdownSegment.Text -> {
                     if (segment.content.isNotBlank()) {
-                        container.add(TextBlock(segment.content))
+                        // BoxLayout 按子组件各自的 alignmentX 对齐，TextBlock 默认 LEFT；
+                        // 用户气泡整体右对齐，框内正文必须同步右对齐，否则文字贴左、
+                        // 观感上仍是「左对齐」。
+                        container.add(TextBlock(segment.content).apply {
+                            if (isMyMessage) alignmentX = RIGHT_ALIGNMENT
+                        })
                         if (index < currentSegments.lastIndex) {
                             container.add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
                         }

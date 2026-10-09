@@ -154,7 +154,7 @@ class MessageTokenUsageUnitTest {
 
         assertNotNull("有 token 行时应带悬浮明细", tooltip)
         assertTrue("明细应含推理", tooltip!!.contains("推理 25"))
-        assertTrue("明细应含缓存读", tooltip.contains("缓存读 8,100"))
+        assertTrue("明细应含缓存读（缩写）", tooltip.contains("缓存读 8.1k"))
         assertTrue("明细应含缓存写", tooltip.contains("缓存写 120"))
         assertTrue("明细应含花费", tooltip.contains("0.0123"))
     }

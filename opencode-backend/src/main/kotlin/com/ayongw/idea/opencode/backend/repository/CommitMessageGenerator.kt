@@ -4,6 +4,7 @@ import com.ayongw.idea.opencode.shared.CommitMessageRequestDto
 import com.ayongw.idea.opencode.shared.CommitMessageResultDto
 import com.intellij.openapi.diagnostic.Logger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.file.Files
@@ -75,7 +76,14 @@ internal class CommitMessageGenerator(
                     detail = "调用失败：${result.exceptionOrNull()?.message}"
                 )
 
-            val reply = latestAssistantText(restClient, created)
+            // sendPrompt 是「提交即返回」：返回时模型通常还没吐字，此时查消息必然为空。
+            // 必须轮询等待首条非空 assistant 正文（见 awaitAssistantText）。
+            val reply = withTimeoutOrNull(TIMEOUT_MS) { awaitAssistantText(restClient, created) }
+                ?: return@runCatching CommitMessageResultDto(
+                    success = false,
+                    reason = CommitMessageResultDto.REASON_TIMEOUT,
+                    detail = "等待模型输出超时（${TIMEOUT_MS / 1000}s）"
+                )
             if (reply.isBlank()) {
                 CommitMessageResultDto(
                     success = false,
@@ -108,14 +116,42 @@ internal class CommitMessageGenerator(
         )
     }
 
-    /** 取最后一条助手消息的正文（REST 消息列表最新在前） */
-    private suspend fun latestAssistantText(restClient: OpenCodeRestClient, sessionId: String): String {
-        val messages = restClient.getMessages(sessionId).getOrNull().orEmpty()
-        return messages.firstOrNull { it.role == "assistant" }?.content.orEmpty()
+    /**
+     * 轮询等待首条非空助手正文。
+     *
+     * 为什么必须轮询：`POST /session/{id}/message` 在模型**开始生成前**就返回，
+     * 此刻 `GET .../message` 要么一条都没有，要么最后一条 assistant 的 content 还是空
+     * （正文分片落在 `content[]` 的 text 项里，边生成边追加）。
+     *
+     * 取「最后一条」而非第一条：一次 prompt 可能产生多条 assistant 消息（工具调用轮次），
+     * 真正的结论是最后那条。
+     */
+    private suspend fun awaitAssistantText(restClient: OpenCodeRestClient, sessionId: String): String {
+        var attempts = 0
+        while (attempts < MAX_POLL_ATTEMPTS) {
+            val text = restClient.getMessages(sessionId).getOrNull()
+                ?.lastOrNull { it.role == "assistant" }
+                ?.content
+                .orEmpty()
+            if (text.isNotBlank()) {
+                log.info("提交信息生成：已取到模型输出（${++attempts} 次轮询，${text.length} 字符）")
+                return text
+            }
+            attempts++
+            delay(POLL_INTERVAL_MS)
+        }
+        log.warn("提交信息生成：轮询 $MAX_POLL_ATTEMPTS 次仍无模型输出")
+        return ""
     }
 
     private companion object {
         /** 生成超时（opencode 本机调用通常数秒，60s 足够宽松） */
         const val TIMEOUT_MS = 60_000L
+
+        /** 轮询间隔 */
+        const val POLL_INTERVAL_MS = 700L
+
+        /** 轮询次数上限（与 TIMEOUT_MS 共同兜底） */
+        const val MAX_POLL_ATTEMPTS = 85
     }
 }

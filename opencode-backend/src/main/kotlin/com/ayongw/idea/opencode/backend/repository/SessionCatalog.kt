@@ -70,7 +70,7 @@ internal class SessionCatalog(
      */
     suspend fun switchSession(sessionId: String): Boolean {
         onCurrentSessionChanged(sessionId)
-        log.info("切换会话 session=$sessionId")
+        log.info("切换会话 session=$sessionId workspaceDirectory=$workspaceDirectory 当前会话=${currentSessionIdProvider()}")
         return loadMessages(sessionId)
     }
 
@@ -147,7 +147,10 @@ internal class SessionCatalog(
             val bubbles = messageMapper.toBubbles(messages)
             messagesState.value = bubbles
             onCurrentSessionChanged(sessionId)
-            log.info("加载会话消息 session=$sessionId: REST 消息 ${messages.size} 条 → 气泡 ${bubbles.size} 条")
+            log.info(
+                "加载会话消息 session=$sessionId: REST 消息 ${messages.size} 条 → 气泡 ${bubbles.size} 条 " +
+                    "(角色分布=${messages.groupingBy { it.role }.eachCount()})"
+            )
             return true
         } else {
             log.warn("加载会话消息失败 session=$sessionId: ${result.exceptionOrNull()?.message}")

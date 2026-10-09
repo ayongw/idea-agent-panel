@@ -53,10 +53,6 @@ object ContextUsageFormatter {
         }
     }
 
-    /** 精确用量（千分位）：`1234` → `1,234` */
-    fun formatExact(value: Long): String =
-        String.format(Locale.US, "%,d", value.coerceAtLeast(0L))
-
     /**
      * 上下文占比：窗口未知或非法返回 null；超出窗口显示 `100%+`；其余四舍五入取整，如 `48%`
      */
@@ -68,21 +64,17 @@ object ContextUsageFormatter {
     }
 
     /**
-     * 外层行内摘要：`↑12.3k ↓0.4k · 48%`
+     * 底部工具条摘要：**只放上下文占比**，如 `48%`。
      *
-     * 只放**输入 / 输出 + 上下文占比**：占比是用户判断"还能聊多久"的关键信号，必须常驻可见。
-     * 缓存 / 推理 / 花费等宽度敏感或次要的信息不进外层（底部工具条两端不压缩，
-     * 过长会与模型名重叠），全部由 [detail] 以悬浮明细承载，不丢字段。
+     * 只留占比的原因：占比是用户判断"还能聊多久"的关键信号，必须常驻可见；而输入/输出
+     * 在每条助手消息页脚已经逐条展示（见 `MessageFooter`），底部再放一遍是重复信息，
+     * 还会挤占两端空间、与模型名/发送按钮抢位置。
      *
-     * 无 token 数据时返回空串（即使有占比也不单独展示，避免"只有占比"的半截信息）。
+     * 占比算不出来（窗口未知、或尚无请求）时返回空串，由调用方隐藏该段。
      */
     fun compact(usage: SessionUsageDto?): String {
         if (usage == null) return ""
-        val tokens = usage.tokens
-        if (tokens == TokenUsageDto()) return ""
-        val parts = mutableListOf("↑${formatTokens(tokens.input)} ↓${formatTokens(tokens.output)}")
-        percentLabel(usage.lastStepInputTokens, usage.contextWindow)?.let { parts += it }
-        return parts.joinToString(" · ")
+        return percentLabel(usage.lastStepInputTokens, usage.contextWindow).orEmpty()
     }
 
     /** 行内摘要：`↑12.3k ↓0.4k · 缓存 8.1k · 上下文 48%`；无数据返回空串（由调用方隐藏） */
@@ -99,19 +91,25 @@ object ContextUsageFormatter {
         return parts.joinToString(" · ")
     }
 
-    /** 悬浮明细（多行）；无数据返回空串 */
+    /**
+     * 悬浮明细（多行）；无数据返回空串。
+     *
+     * 数值一律用**缩写**形式（[formatTokens]，如 `14.2k` / `262.1k`），与外层行内摘要一致。
+     * 原先用千分位精确值（`输入 14,224`、`上下文窗口 262,144`），一长串数字读起来费劲，
+     * 而用户在这层需要的只是量级感知。
+     */
     fun detail(usage: SessionUsageDto?): String {
         if (usage == null) return ""
         val tokens = usage.tokens
         val lines = mutableListOf(
-            "输入 ${formatExact(tokens.input)}",
-            "输出 ${formatExact(tokens.output)}"
+            "输入 ${formatTokens(tokens.input)}",
+            "输出 ${formatTokens(tokens.output)}"
         )
-        if (tokens.reasoning > 0L) lines += "推理 ${formatExact(tokens.reasoning)}"
-        lines += "缓存读 ${formatExact(tokens.cacheRead)}"
-        lines += "缓存写 ${formatExact(tokens.cacheWrite)}"
-        usage.lastStepInputTokens?.let { lines += "本次请求输入 ${formatExact(it)}" }
-        usage.contextWindow?.takeIf { it > 0L }?.let { lines += "上下文窗口 ${formatExact(it)}" }
+        if (tokens.reasoning > 0L) lines += "推理 ${formatTokens(tokens.reasoning)}"
+        lines += "缓存读 ${formatTokens(tokens.cacheRead)}"
+        lines += "缓存写 ${formatTokens(tokens.cacheWrite)}"
+        usage.lastStepInputTokens?.let { lines += "本次请求输入 ${formatTokens(it)}" }
+        usage.contextWindow?.takeIf { it > 0L }?.let { lines += "上下文窗口 ${formatTokens(it)}" }
         usage.cost?.let { lines += String.format(Locale.US, "花费 \$%.4f", it) }
         return lines.joinToString("\n")
     }

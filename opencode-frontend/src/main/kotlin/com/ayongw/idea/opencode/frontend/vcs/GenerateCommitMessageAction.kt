@@ -7,6 +7,7 @@ import com.ayongw.idea.opencode.shared.CommitMessageRequestDto
 import com.ayongw.idea.opencode.shared.CommitMessageResultDto
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -46,6 +47,10 @@ class GenerateCommitMessageAction : AnAction(), DumbAware {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     override fun update(e: AnActionEvent) {
+        // 提交窗口工具栏（Vcs.MessageActionGroup）按图标按钮渲染 action，
+        // 未设 icon 时按钮区域为空 = 看不见。图标在代码里设而不是 plugin.xml：
+        // xml 的 icon 属性只接受资源路径，内置图标需走 AllIcons 常量。
+        e.presentation.icon = AllIcons.Actions.AiIntentionBulb
         val busy = generating.get()
         e.presentation.text = OpencodeFrontendBundle.message(
             if (busy) "vcs.commit.generate.running" else "vcs.commit.generate"
