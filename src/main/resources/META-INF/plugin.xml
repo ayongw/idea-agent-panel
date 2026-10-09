@@ -1,17 +1,17 @@
 <idea-plugin>
-    <id>com.ayongw.idea.opencode-idea-panel</id>
-    <name>OpenCode AI Assistant Panel</name>
+    <id>com.ayongw.idea.idea-agent-panel</id>
+    <name>Idea Agent Panel</name>
     <vendor url="https://github.com/ayongw">ayongw</vendor>
 
     <description><![CDATA[
-        OpenCode AI Assistant Panel for IntelliJ IDEA.<br>
-        A modular plugin providing AI-powered coding assistance through OpenCode Server.<br><br>
+        AI agent panel for IntelliJ IDEA.<br>
+        Currently powered by OpenCode Server; designed to host other agents (including in-house ones) in the same panel.<br><br>
         License: Apache License 2.0 - <a href="https://www.apache.org/licenses/LICENSE-2.0">https://www.apache.org/licenses/LICENSE-2.0</a>
     ]]></description>
 
     <content>
-        <module name="opencode-idea-panel.opencode-shared" loading="required"/>
-        <module name="opencode-idea-panel.opencode-frontend"/>
-        <module name="opencode-idea-panel.opencode-backend"/>
+        <module name="idea-agent-panel.opencode-shared" loading="required"/>
+        <module name="idea-agent-panel.opencode-frontend"/>
+        <module name="idea-agent-panel.opencode-backend"/>
     </content>
 </idea-plugin>

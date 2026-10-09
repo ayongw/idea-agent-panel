@@ -1,6 +1,6 @@
 # Changelog
 
-本文件记录 OpenCode AI Assistant Panel 的重要变更，构建时会被转换为插件的变更说明（IDEA 的 Plugins → What's New）。
+本文件记录 Idea Agent Panel 的重要变更，构建时会被转换为插件的变更说明（IDEA 的 Plugins → What's New）。
 版本标题需与 `build.gradle.kts` 的 `baseVersion` 一致，构建号（`0.1.0.<构建号>`）不写进标题。
 
 ## [0.1.0]

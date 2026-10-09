@@ -1,0 +1,35 @@
+<idea-plugin>
+    <dependencies>
+        <module name="intellij.platform.frontend"/>
+        <!-- TSD-33：VcsDataKeys.COMMIT_MESSAGE_CONTROL / CommitMessageI（公开 API） -->
+        <module name="intellij.platform.vcs"/>
+        <module name="idea-agent-panel.opencode-shared"/>
+    </dependencies>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationService serviceImplementation="com.ayongw.idea.agentpanel.frontend.settings.AgentSettingsState"/>
+        <projectService serviceImplementation="com.ayongw.idea.agentpanel.frontend.chatApp.viewmodel.AgentSessionTabsState"/>
+        <toolWindow factoryClass="com.ayongw.idea.agentpanel.frontend.toolWindow.AgentToolWindowFactory"
+                    id="Idea Agent Panel"
+                    icon="/icons/opencode.svg"/>
+        <!-- 项目启动后自动显示一次工具窗：新 UI 对未激活过的工具窗不常驻按钮，需 show 一次让入口可见 -->
+        <backgroundPostStartupActivity implementation="com.ayongw.idea.agentpanel.frontend.toolWindow.AgentToolWindowAutoShowActivity"/>
+        <applicationConfigurable instance="com.ayongw.idea.agentpanel.frontend.settings.AgentSettingsConfigurable"/>
+        <postStartupActivity implementation="com.ayongw.idea.agentpanel.frontend.settings.OpenCodePasswordPreloadActivity"/>
+        <!-- Server 状态全局可见：工具窗关闭时也能在状态栏看到服务是否可用（面板内状态条只管重交互） -->
+        <statusBarWidgetFactory id="IdeaAgent.ServerStatus"
+                                implementation="com.ayongw.idea.agentpanel.frontend.statusBar.OpenCodeServerStatusWidgetFactory"/>
+        <notificationGroup id="IdeaAgent.Server"
+                           displayType="BALLOON"
+                           bundle="messages.AgentPanelBundle"
+                           key="notification.group.server"/>
+    </extensions>
+
+    <!-- TSD-33：提交信息区域的「生成提交信息」按钮（与平台「消息历史」按钮同一分组） -->
+    <actions>
+        <action id="IdeaAgent.GenerateCommitMessage"
+                class="com.ayongw.idea.agentpanel.frontend.vcs.GenerateCommitMessageAction">
+            <add-to-group group-id="Vcs.MessageActionGroup" anchor="first"/>
+        </action>
+    </actions>
+</idea-plugin>

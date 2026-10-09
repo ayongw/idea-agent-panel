@@ -1,6 +1,6 @@
 # TSD-07-主界面布局设计
 
-> 适用范围：opencode-idea-panel 工具窗主界面（顶部会话 tab 栏 / 中部消息区 / 底部输入与工具条 / 设置入口）的最终布局方案、组件职责与接线规格。
+> 适用范围：idea-agent-panel 工具窗主界面（顶部会话 tab 栏 / 中部消息区 / 底部输入与工具条 / 设置入口）的最终布局方案、组件职责与接线规格。
 > 关联文档：设置页见《TSD-05-设置管理设计》第 3 章；实时事件流见《TSD-06-事件流接入设计》。
 
 ## 修订历史
@@ -48,7 +48,7 @@
 flowchart TB
     classDef app fill:#e3f2fd,color:#000000,stroke:#000000
 
-    App["OpenCodeChatApp (BorderLayout)"]:::app
+    App["AgentChatApp (BorderLayout)"]:::app
     TopBar["TopBar (顶部)"]:::app
     Tabs["SessionTabs：已打开会话 tab + 入口按钮"]:::app
     Search["ChatSearchBar：可展开搜索（默认隐藏）"]:::app
@@ -76,7 +76,7 @@ flowchart TB
 
 | 组件 | 文件 | 职责 |
 |------|------|------|
-| `OpenCodeChatApp` | `chatApp/OpenCodeChatApp.kt` | 三段式装配、订阅 ViewModel 状态、弹窗与设置入口编排 |
+| `AgentChatApp` | `chatApp/AgentChatApp.kt` | 三段式装配、订阅 ViewModel 状态、弹窗与设置入口编排 |
 | `TopBar` | `chatApp/ui/TopBar.kt` | 顶部容器：会话 tab 栏 + 可展开搜索栏 |
 | `SessionTabs` | `chatApp/ui/SessionTabs.kt` | 已打开会话 tab（选中/关闭/右键菜单）+ 新建/全部会话/搜索/设置入口 |
 | `SessionList` | `chatApp/ui/SessionList.kt` | 工作区内会话列表（新建/重命名/删除），现作为「全部会话」弹窗内容 |

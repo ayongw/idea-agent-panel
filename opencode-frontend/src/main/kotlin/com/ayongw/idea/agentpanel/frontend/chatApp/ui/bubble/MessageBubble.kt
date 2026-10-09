@@ -1,0 +1,502 @@
+package com.ayongw.idea.agentpanel.frontend.chatApp.ui.bubble
+
+import com.ayongw.idea.agentpanel.frontend.chatApp.ui.ThinkingIndicator
+import com.ayongw.idea.agentpanel.frontend.chatApp.ui.block.CodeBlockPane
+import com.ayongw.idea.agentpanel.frontend.chatApp.ui.block.TextBlock
+import com.ayongw.idea.agentpanel.frontend.chatApp.ui.block.ToolCallCard
+import com.ayongw.idea.agentpanel.frontend.chatApp.ui.md.MarkdownSegment
+import com.ayongw.idea.agentpanel.frontend.chatApp.ui.md.parseMarkdownWithCodeBlocks
+import com.ayongw.idea.agentpanel.frontend.chatApp.ui.utils.ChatAppColors
+import com.ayongw.idea.agentpanel.frontend.chatApp.ui.utils.ChatUIConstants
+import com.ayongw.idea.agentpanel.shared.ChatMessage
+import com.ayongw.idea.agentpanel.shared.ToolCallDto
+import java.time.LocalDateTime
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.util.ui.JBUI
+import java.awt.BasicStroke
+import java.awt.Color
+import java.awt.Component.LEFT_ALIGNMENT
+import java.awt.Component.RIGHT_ALIGNMENT
+import java.awt.Dimension
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.RenderingHints
+import java.awt.geom.RoundRectangle2D
+import javax.swing.Box
+import javax.swing.BoxLayout
+import javax.swing.JComponent
+import javax.swing.JPanel
+
+/**
+ * 消息气泡 — 按「对话轮次（turn）」合并渲染。
+ *
+ * 一次用户提问触发的多步执行（多轮 reasoning / 多个工具调用 / 最终正文）统一在一个
+ * 回复主题气泡内：单个作者行、单个思考块（多轮以细分隔线区分）、工具卡片按到达
+ * 顺序内联、正文 + 时间行在底部。
+ */
+private val log = Logger.getInstance("com.ayongw.idea.agentpanel.frontend.chatApp.ui.bubble.MessageBubble")
+
+class MessageBubble(
+    private val firstMessage: ChatMessage,
+    /**
+     * 本轮起点时间（= 触发该轮的用户消息时间，见 `ChatList.buildTurnGroups`）。
+     * 页脚用它算「执行总耗时」：从用户发出到最后一个结果。默认取首条消息时间以兼容旧调用。
+     */
+    private val turnStartedAt: LocalDateTime = firstMessage.timestamp,
+    private var isMatchingSearch: Boolean = false,
+    private var isHighlightedInSearch: Boolean = false
+) : JPanel(), Disposable {
+
+    private val isMyMessage = firstMessage.isMyMessage
+
+    /** 轮次内已见过的最后一条消息时间（耗时终点，随消息到达推进） */
+    private var lastActivityAt: LocalDateTime = firstMessage.timestamp
+
+    /** 是否用户消息（决定对齐与气泡样式；供列表重排时取用） */
+    val isMy: Boolean get() = isMyMessage
+
+    /** 轮次组 key（首条消息规整后的 id；供列表顺序断言 / 检索定位） */
+    val messageId: String = firstMessage.id.substringBefore(REASONING_ID_SUFFIX)
+
+    /** 正文容器（markdown 块） */
+    private var contentContainer: JPanel? = null
+
+    /** 思考区组件：流式期展开，结束折叠；多轮思考统一收纳 */
+    private var reasoningSection: ReasoningSection? = null
+
+    /** 思考动画（初始态）：被思考块/正文替换或气泡删除时必须 dispose，否则 animator 泄漏 */
+    private var thinkingIndicator: ThinkingIndicator? = null
+
+    /** 时间行（独立于气泡）：用户消息的气泡只包住内容，绘制时需避开该行 */
+    private var timestampRow: JComponent? = null
+
+    /** 末尾单行页脚（时间 + 本次 token）：用户消息在气泡外，助手消息在气泡内 */
+    private var footerRow: MessageFooter? = null
+
+    /** 当前渲染的正文段落 */
+    private var currentSegments: List<MarkdownSegment> = emptyList()
+
+    /** 已并入气泡的原始消息 id（搜索 / 定位 containsId 判定） */
+    private val memberIds = linkedSetOf<String>()
+
+    /** 各原始消息已渲染签名（syncWith 幂等去重） */
+    private val appliedSignatures = HashMap<String, String>()
+
+    /** 多轮思考：原始消息 id -> 轮次文本（保持到达顺序） */
+    private val reasoningRounds = LinkedHashMap<String, String>()
+
+    /** 工具卡片：callId -> 卡片（保持到达顺序内联） */
+    private val toolCards = LinkedHashMap<String, ToolCallCard>()
+
+    init {
+        setupAppearance()
+        log.debug(
+            "new turn bubble key=$messageId isMy=$isMyMessage " +
+                "firstType=${firstMessage.type} contentLen=${firstMessage.content.length}"
+        )
+        if (!isMyMessage) {
+            add(AuthorRow(firstMessage))
+            add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.MEDIUM)))
+        }
+        route(firstMessage, streaming = false)
+    }
+
+    /**
+     * 上游推送新消息时按原始 id 就地并入；签名未变则不动。
+     *
+     * reasoning → 思考块新增/更新一轮；tool → 对应卡片内联/原位更新；text → 正文区。
+     */
+    fun syncWith(message: ChatMessage) {
+        if (message.timestamp.isAfter(lastActivityAt)) lastActivityAt = message.timestamp
+        val signature = signatureOf(message)
+        if (appliedSignatures[message.id] == signature) return
+        route(message, streaming = true)
+        appliedSignatures[message.id] = signature
+    }
+
+    /** 气泡是否包含某原始消息 id（轮次合并后搜索 / 定位的路由依据） */
+    fun containsId(id: String): Boolean = id == messageId || id in memberIds
+
+    private fun signatureOf(message: ChatMessage): String =
+        if (message.isToolMessage()) {
+            message.tool?.let(::toolSignature) ?: ""
+        } else {
+            // 必须纳入 usage/cost：正文内容不变但 token 到达（终态对账补齐）时，
+            // 若签名只看 content，syncWith 会 early-return，token 行永远不出现。
+            message.content + usageSignature(message)
+        }
+
+    /** token 行签名：用量 + 花费；两者皆空返回空串 */
+    private fun usageSignature(message: ChatMessage): String {
+        val usage = message.usage ?: return ""
+        return "#u:${usage.input}/${usage.output}/${usage.reasoning}/${usage.cacheRead}/${usage.cacheWrite}" +
+            "#c:${message.costUsd ?: -1.0}"
+    }
+
+    /** 路由一条消息到对应内容块（构造首条 / 流式并入共用） */
+    private fun route(message: ChatMessage, streaming: Boolean) {
+        memberIds += message.id
+        when {
+            message.isAIThinkingMessage() -> applyReasoning(message.id, message.content, streaming)
+            message.isToolMessage() -> message.tool?.let(::applyTool)
+            message.isTextMessage() -> applyText(message)
+        }
+    }
+
+    private fun setupAppearance() {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        isOpaque = false
+
+        border = JBUI.Borders.compound(
+            JBUI.Borders.empty(
+                ChatUIConstants.MessageBubble.VERTICAL_MARGIN,
+                ChatUIConstants.MessageBubble.HORIZONTAL_MARGIN
+            ),
+            JBUI.Borders.empty(ChatUIConstants.MessageBubble.INNER_PADDING)
+        )
+
+        // 不显式设置 minimumSize：高度为 0 时 GridBag 在空间不足回退 MINSIZE
+        // 布局会把整个气泡 unmap 成 0x0；宽度/高度兜底统一走 getMinimumSize
+        //
+        // 宽度不设上限（此前钉死 420px 导致「查看我打开的文件」这类短消息 5 个字就换行）：
+        // 配合 ChatList 里用户气泡 fill=HORIZONTAL，短消息也占满整行右对齐。
+        // 宽度上限只留给助手消息无意义（它本就 fill=HORIZONTAL 整行），故统一不设。
+        maximumSize = Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
+        // BoxLayout(Y_AXIS) 下子组件的 alignmentX 决定「被拉伸到最大宽度后」贴哪边：
+        // 用户消息整体右对齐，助手消息保持左对齐（占满整行）
+        alignmentX = if (isMyMessage) RIGHT_ALIGNMENT else LEFT_ALIGNMENT
+    }
+
+    override fun getMinimumSize(): Dimension {
+        val natural = super.getMinimumSize()
+        return Dimension(
+            maxOf(natural.width, JBUI.scale(ChatUIConstants.MessageBubble.MIN_WIDTH)),
+            // 高度兜底 ≥1，避免子组件最小高度为 0 时气泡被 GridBag 整体置零
+            natural.height.coerceAtLeast(1)
+        )
+    }
+
+    override fun paintComponent(g: Graphics) {
+        super.paintComponent(g)
+
+        // 助手消息按参考样式渲染为「整行块」（无气泡底）：仅用户消息与搜索命中时绘制气泡
+        val paintBubble = isMyMessage || isMatchingSearch || isHighlightedInSearch
+        if (!paintBubble) return
+
+        val g2d = g.create() as Graphics2D
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+
+        val margin = JBUI.scale(ChatUIConstants.MessageBubble.VERTICAL_MARGIN)
+        val marginH = JBUI.scale(ChatUIConstants.MessageBubble.HORIZONTAL_MARGIN)
+        val cornerRadius = JBUI.scale(ChatUIConstants.MessageBubble.CORNER_RADIUS)
+
+        // 用户消息：时间行独立于气泡之外，气泡底边停在时间行之前
+        val bubbleBottom = if (isMyMessage) userBubbleBottom() else height
+        if (bubbleBottom - margin <= marginH) {
+            g2d.dispose()
+            return
+        }
+
+        // 用户气泡底按正文实际占宽收窄并贴右；助手消息铺满。
+        //
+        // 前提是「正文宽度上限 = 文本自然宽度」（见 TextBlock.init）：短文本不会被
+        // BoxLayout 拉伸、真正贴右，背景收窄后才与文字重合。早先只改背景不改正文宽度，
+        // 文字仍在左侧渲染，导致「文字与背景框分离」。
+        val bubbleWidth = if (isMyMessage) paintedBubbleWidth() else width - 2 * marginH
+
+        val shape = RoundRectangle2D.Float(
+            (width - marginH - bubbleWidth).toFloat(),
+            margin.toFloat(),
+            bubbleWidth.toFloat(),
+            (bubbleBottom - margin).toFloat(),
+            cornerRadius.toFloat(),
+            cornerRadius.toFloat()
+        )
+
+        g2d.color = getMessageBackground()
+        g2d.fill(shape)
+
+        g2d.color = getBorderColor()
+        g2d.stroke = BasicStroke(JBUI.scale(1).toFloat())
+        g2d.draw(shape)
+
+        g2d.dispose()
+    }
+
+    /**
+     * 用户气泡背景的绘制宽度：文字自然宽度 + 内边距，不超过气泡可用宽度。
+     *
+     * 取正文里所有 [TextBlock] 的自然宽度最大值；正文为空或只有代码块时返回满宽
+     * （代码块本身就占满整行，背景也该满宽）。
+     */
+    private fun paintedBubbleWidth(): Int {
+        val marginH = JBUI.scale(ChatUIConstants.MessageBubble.HORIZONTAL_MARGIN)
+        val available = width - 2 * marginH
+        val content = contentContainer ?: return available
+        // 用「正文块布局后的实际宽度」而非自然宽度：正文短时两者相等；正文含代码块等
+        // 占满整行的块时，实际宽度更准，背景不会比内容还窄。
+        val textWidth = collectContentWidth(content)
+        if (textWidth <= 0) return available
+        val padding = 2 * JBUI.scale(ChatUIConstants.MessageBubble.INNER_PADDING)
+        return (textWidth + padding).coerceAtMost(available)
+    }
+
+    private fun collectContentWidth(container: java.awt.Container): Int {
+        var max = 0
+        for (child in container.components) {
+            if (child.width > 0) max = maxOf(max, child.x + child.width)
+            if (child is java.awt.Container) max = maxOf(max, collectContentWidth(child))
+        }
+        return max
+    }
+
+    /**
+     * 用户消息气泡底边：到时间行之前留一个间距；时间行尚未完成布局时退回整高（避免画空）。
+     */
+    private fun userBubbleBottom(): Int {
+        val timestamp = timestampRow ?: return height
+        return if (timestamp.bounds.y > 0) {
+            timestamp.bounds.y - JBUI.scale(ChatUIConstants.Spacing.SMALL)
+        } else {
+            height
+        }
+    }
+
+    private fun getMessageBackground(): Color {
+        return when {
+            isHighlightedInSearch && isMyMessage -> ChatAppColors.MessageBubble.mySearchHighlightedBackground
+            isHighlightedInSearch && !isMyMessage -> ChatAppColors.MessageBubble.othersSearchHighlightedBackground
+            isMyMessage -> ChatAppColors.MessageBubble.myBackground
+            else -> ChatAppColors.MessageBubble.othersBackground
+        }
+    }
+
+    private fun getBorderColor(): Color {
+        return when {
+            isHighlightedInSearch -> ChatAppColors.MessageBubble.searchHighlightedBackgroundBorder
+            isMatchingSearch && isMyMessage -> ChatAppColors.MessageBubble.matchingMyBorder
+            isMatchingSearch && !isMyMessage -> ChatAppColors.MessageBubble.matchingOthersBorder
+            isMyMessage -> ChatAppColors.MessageBubble.myBackgroundBorder
+            else -> ChatAppColors.MessageBubble.othersBackgroundBorder
+        }
+    }
+
+    fun updateSearchState(matching: Boolean, highlighted: Boolean) {
+        isMatchingSearch = matching
+        isHighlightedInSearch = highlighted
+        repaint()
+    }
+
+    // ==================== 思考块（多轮统一） ====================
+
+    /**
+     * 并入一轮思考。
+     *
+     * 所有轮次均无文本时显示思考动画；首个非空轮次到达时把动画替换为思考块，多轮
+     * 文本在同一块内以细分隔线区分（[ReasoningSection.setRounds]）。流式并入展开，
+     * 构造首条历史内容默认折叠。
+     */
+    private fun applyReasoning(rawId: String, content: String, streaming: Boolean) {
+        reasoningRounds[rawId] = content
+        val rounds = reasoningRounds.values.filter { it.isNotBlank() }
+        if (rounds.isEmpty()) {
+            if (reasoningSection == null && thinkingIndicator == null) addIndicator()
+            return
+        }
+        if (reasoningSection == null) buildReasoningSection(expanded = streaming)
+        reasoningSection!!.setRounds(rounds, expand = streaming)
+        revalidate()
+        repaint()
+    }
+
+    /** 程序化折叠思考区（执行终态 / 非运行态对账时调用），仍可手动展开查看 */
+    fun completeReasoning() {
+        reasoningSection?.let {
+            it.complete()
+            revalidate()
+            repaint()
+        }
+    }
+
+    private fun addIndicator() {
+        ThinkingIndicator().also {
+            thinkingIndicator = it
+            insertComponent(it)
+        }
+    }
+
+    private fun buildReasoningSection(expanded: Boolean) {
+        dismissIndicator()
+        ReasoningSection(expanded).also {
+            reasoningSection = it
+            // 思考块恒定位于作者行之后（助手气泡 index=2；用户气泡无思考场景，尾部）
+            add(it, if (isMyMessage) componentCount else 2)
+        }
+    }
+
+    // ==================== 工具卡片（内联，原位更新） ====================
+
+    /**
+     * 并入工具卡片：新卡片按到达顺序插到思考块之后、已有卡片队列末尾（正文之前）；
+     * 已存在的卡片（状态 / 输出更新）在相同位置原位替换，不引起整体重排。
+     */
+    private fun applyTool(tool: ToolCallDto) {
+        if (tool.callId.isBlank()) return
+        val existing = toolCards[tool.callId]
+        if (existing != null) {
+            val index = indexOfComponent(existing)
+            remove(existing)
+            ToolCallCard(tool).also {
+                toolCards[tool.callId] = it
+                add(it, index)
+            }
+        } else {
+            // 插入位置必须在写入 toolCards 之前计算：map 先放入新卡后，
+            // toolInsertIndex 会把「尚未挂载的自己」当成队尾卡（indexOf=-1）→ 返回 0，
+            // 新卡被插到作者行之前（多卡时还会逐张前插，顺序整体倒置）。
+            val card = ToolCallCard(tool)
+            val index = toolInsertIndex()
+            toolCards[tool.callId] = card
+            add(card, index)
+        }
+        revalidate()
+        repaint()
+    }
+
+    private fun toolInsertIndex(): Int {
+        toolCards.values.lastOrNull()?.let { return indexOfComponent(it) + 1 }
+        val anchor = reasoningSection ?: thinkingIndicator
+        if (anchor != null) return indexOfComponent(anchor) + 1
+        // 无作者行的用户气泡不存在工具；助手气泡作者行 + strut 之后
+        return if (isMyMessage) componentCount else 2
+    }
+
+    /** 子组件在本气泡中的下标（未挂载返回 -1） */
+    private fun indexOfComponent(component: java.awt.Component): Int = components.indexOf(component)
+
+    // ==================== 正文 + 时间行 ====================
+
+    /**
+     * 并入正文（markdown）。正文开始输出即思考结束：折叠思考块、撤掉残留动画；
+     * 正文容器不存在时首帧构建（含时间行），已存在则只重建容器内块（不脱离父布局）。
+     */
+    private fun applyText(textMessage: ChatMessage) {
+        reasoningSection?.complete()
+        dismissIndicator()
+        val container = contentContainer
+        if (container == null) {
+            appendContentContainer(textMessage)
+        } else {
+            populateContentContainer(container, textMessage.content)
+        }
+        // token 用量随终态对账后到达（正文内容可能未变），需单独刷新页脚
+        footerRow?.update(textMessage, elapsedSeconds(textMessage))
+        revalidate()
+        repaint()
+    }
+
+    /** 插入组件：助手气泡恒定位于作者行 + strut 之后（index=2），用户气泡尾部追加 */
+    private fun insertComponent(component: JComponent) {
+        add(component, if (isMyMessage) componentCount else 2)
+    }
+
+    /** 追加正文容器 + 时间行（正文首帧；思考块 / 工具卡片不受影响） */
+    private fun appendContentContainer(textMessage: ChatMessage) {
+        contentContainer = buildContentContainer(textMessage.content)
+        add(contentContainer!!)
+        // 用户消息：时间行在气泡之外，需留出「气泡内边距 + 与时间的间距」
+        val gapBeforeTimestamp = if (textMessage.isMyMessage) {
+            ChatUIConstants.MessageBubble.INNER_PADDING + ChatUIConstants.Spacing.SMALL
+        } else {
+            ChatUIConstants.Spacing.NORMAL
+        }
+        add(Box.createVerticalStrut(JBUI.scale(gapBeforeTimestamp)))
+        // 时间与 token 合并为**一行**（MessageFooter）：用户消息右对齐、助手消息左对齐
+        add(MessageFooter(textMessage, elapsedSeconds(textMessage)).also {
+            timestampRow = it
+            footerRow = it
+        })
+    }
+
+    /**
+     * 执行总耗时（秒）：从本轮用户消息时间到最后一条消息时间。
+     *
+     * 用户自身气泡不做耗时（起点即自身，恒为 0）；异常负值（时钟回拨）一并归零。
+     */
+    private fun elapsedSeconds(current: ChatMessage): Long {
+        if (isMyMessage) return 0
+        val end = maxOf(lastActivityAt, current.timestamp)
+        return java.time.Duration.between(turnStartedAt, end).seconds.coerceAtLeast(0)
+    }
+
+    /** 撤掉思考动画（思考块/正文首帧 / 气泡销毁）：组件移除并释放 animator，防 ROOT 泄漏 */
+    private fun dismissIndicator() {
+        thinkingIndicator?.let {
+            remove(it)
+            it.dispose()
+        }
+        thinkingIndicator = null
+    }
+
+    /**
+     * 气泡被列表删除/清空时释放内部 Disposable 子组件（思考动画），
+     * 避免 animator 注册树残留到 ROOT_DISPOSABLE（IDE 关闭时泄漏报警）。
+     */
+    override fun dispose() {
+        dismissIndicator()
+    }
+
+    /**
+     * 构建正文容器（首次渲染）
+     */
+    private fun buildContentContainer(content: String): JPanel {
+        val container = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            // 气泡占满整行（见 ChatList.relayoutMessages）后，若框内组件仍左对齐，
+            // 文字会贴着气泡左边，看起来就是「左对齐」而不是右对齐。
+            // 用户消息整行右对齐：框内内容同样右对齐，文字贴右边缘。
+            alignmentX = if (isMyMessage) RIGHT_ALIGNMENT else LEFT_ALIGNMENT
+        }
+        populateContentContainer(container, content)
+        return container
+    }
+
+    /**
+     * 往**已挂载**的正文容器填充当前 markdown 分段（流式增量复用：容器不脱离父布局）
+     */
+    private fun populateContentContainer(container: JPanel, content: String) {
+        container.removeAll()
+        currentSegments = parseMarkdownWithCodeBlocks(content)
+        currentSegments.forEachIndexed { index, segment ->
+            when (segment) {
+                is MarkdownSegment.Text -> {
+                    if (segment.content.isNotBlank()) {
+                        // BoxLayout 按子组件各自的 alignmentX 对齐，TextBlock 默认 LEFT；
+                        // 用户气泡整体右对齐，框内正文必须同步右对齐，否则文字贴左、
+                        // 观感上仍是「左对齐」。
+                        container.add(TextBlock(segment.content).apply {
+                            if (isMyMessage) alignmentX = RIGHT_ALIGNMENT
+                        })
+                        if (index < currentSegments.lastIndex) {
+                            container.add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+                        }
+                    }
+                }
+                is MarkdownSegment.CodeBlock -> {
+                    container.add(CodeBlockPane(segment.language, segment.code))
+                    if (index < currentSegments.lastIndex) {
+                        container.add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 工具卡片签名：由「状态 + 入参 + 输出」决定是否需要重渲染 */
+private fun toolSignature(tool: ToolCallDto): String = "${tool.status}|${tool.input}|${tool.output}"
+
+/** 思考消息 id 后缀（与后端 SessionStreamState.REASONING_ID_SUFFIX 约定一致） */
+private const val REASONING_ID_SUFFIX = "#reasoning"

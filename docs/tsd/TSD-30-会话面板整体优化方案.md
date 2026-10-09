@@ -49,7 +49,7 @@
 | # | 问题 | 位置 | 后果 |
 |---|------|------|------|
 | P0-1 | `StreamingRenderController` 在 `init` 中 `flushTimer.start()`，但 `dispose()` 无任何调用点；`ChatList.uiScope` 也无归属，`ChatList` 未实现 `Disposable` | `ChatList.kt:41,44,68-83,291`、`StreamingRenderController.kt:53-54,161-167` | 每次打开工具窗泄漏一个 `javax.swing.Timer`（EDT 定时器，75ms 空转）+ 一个永不取消的协程作用域 |
-| P0-2 | 面板订阅（13 段 `collect + invokeLater`）挂在 **project 级** `CoroutineScopeHolder.createScope`，不随工具窗销毁取消 | `OpenCodeChatApp.kt:153-274`、`CoroutineScopeHolder.kt:31` | 反复开合工具窗会叠加 collector，旧 ViewModel 被持续订阅 → 状态串扰 + 内存增长 |
+| P0-2 | 面板订阅（13 段 `collect + invokeLater`）挂在 **project 级** `CoroutineScopeHolder.createScope`，不随工具窗销毁取消 | `AgentChatApp.kt:153-274`、`CoroutineScopeHolder.kt:31` | 反复开合工具窗会叠加 collector，旧 ViewModel 被持续订阅 → 状态串扰 + 内存增长 |
 | P0-3 | `[diag]` 诊断日志仍以 **INFO** 打在热路径（每次 `setMessages` 打印消息清单 + 容器/视口几何 + 透传 13 条 child 几何） | `ChatList.kt:117-120,250-275,319-322`、`MessageItem.kt:54-57,657-660` | 流式期间每 75ms 一轮，`idea.log` 刷屏、EDT 上有字符串拼接与 I/O 开销 |
 
 ### 2.2 P1：体验与性能
@@ -166,7 +166,7 @@ flowchart TB
 | **C-刷新** | UI 刷新统一经 `ListUpdateCoalescer`（20ms leading-edge 节流：后端已有 75ms 节流，前端只合并同一事件循环内的重复请求，不叠加端到端延迟）；窗口内多次变更合并为一次布局 + 一次滚动判定 | 在事件回调里直接操作 Swing 组件 |
 | **C-滚动** | 仅当「用户已在底部（阈值内）」时自动贴底；用户上滑期间不抢滚动；插入历史（分页加载）时保持视口锚点 | 无条件 `scrollRectToVisible` 到底 |
 | **C-生命周期** | 每个会话面板 / 渲染控制器都有 `Disposable`，挂到 `Content.setDisposer(...)` 或 ViewModel 之下；定时器与协程 scope 在 `dispose()` 内释放 | 自建 `CoroutineScope` 不绑定 Disposable；`Timer` 常驻 |
-| **C-主题** | 颜色只经 `JBColor.namedColor(...)`（或收敛到 `ChatAppColors`），间距/尺寸经 `JBUI.scale/insets`，文案经 `OpencodeFrontendBundle` | 行内 `Color(r,g,b)`、行内中文文案、裸 `Insets` |
+| **C-主题** | 颜色只经 `JBColor.namedColor(...)`（或收敛到 `ChatAppColors`），间距/尺寸经 `JBUI.scale/insets`，文案经 `AgentPanelBundle` | 行内 `Color(r,g,b)`、行内中文文案、裸 `Insets` |
 | **C-日志** | 关键节点 INFO（会话切换、对账结果、连接状态、发送结果，数量级可查）；细节与几何用 `LOG.debug {}`；诊断开关走 Debug Log Settings 的 category；token/密码永不入日志 | 热路径 INFO 刷屏；打印凭据；`[diag]` 式临时日志长期驻留 |
 
 ---
@@ -208,7 +208,7 @@ flowchart TB
 | 事项 | 做法 |
 |------|------|
 | 面板级 scope | 每个会话面板持有 `Disposable`；`CoroutineScope(SupervisorJob() + Dispatchers.EDT)` 必须 `Disposer.register(panelDisposable, scope)`，`dispose()` 内 `scope.cancel()` |
-| 订阅 | `OpenCodeChatApp` 改为使用**传入的** ViewModel 作用域（ViewModel 已由 `Disposer.register(toolWindow.disposable, viewModel)` 注册，`OpenCodeToolWindowFactory.kt:29`），不再用 project 级 `CoroutineScopeHolder` |
+| 订阅 | `AgentChatApp` 改为使用**传入的** ViewModel 作用域（ViewModel 已由 `Disposer.register(toolWindow.disposable, viewModel)` 注册，`AgentToolWindowFactory.kt:29`），不再用 project 级 `CoroutineScopeHolder` |
 | 定时器 | 合并刷新用 `javax.swing.Timer`（EDT 上执行）或协程 `delay` 循环；两者都要在 `dispose()` 停止；删除未落地的 `StreamingRenderController` 中无用部分或补齐其 `dispose()` 调用链 |
 | 线程注解 | 对 UI 入口方法加 `@RequiresEdt`（`com.intellij.util.concurrency.annotations`），配合 Plugin DevKit 的 ThreadingConcurrency 检查 |
 | EDT 纪律 | 保持现状（所有 UI 更新经 `invokeLater`）；新增代码统一用 `withContext(Dispatchers.EDT)`（平台口径：协程里不要用 `invokeLater`） |
@@ -217,14 +217,14 @@ flowchart TB
 
 - **正式日志（INFO）**：事件流连接/断开/重连、认证失败、REST 失败（method+path+code）、会话加载与对账结果（REST 条数 → 气泡条数）、发送结果（session、长度、消息 id、command）。**不打印**密码/token/完整请求体（凭据只在 `OpenCodeCredentials`/PasswordSafe）。
 - **细节日志（DEBUG）**：几何信息、逐条 diff 结果、块级更新明细，统一走 `LOG.debug { ... }`（Kotlin 惰性块，避免白拼字符串）；放量的诊断不再用 INFO。
-- **诊断开关**：定义插件自己的 category（`com.ayongw.idea.opencode` 前缀已具备），报障时让用户经 **Help | Diagnostic Tools | Debug Log Settings** 打开该 category 复现，再走 **Help | Collect Logs and Diagnostic Data** 收集。不需要在插件内自建「导出诊断包」功能（平台已提供）。
+- **诊断开关**：定义插件自己的 category（`com.ayongw.idea.agentpanel` 前缀已具备），报障时让用户经 **Help | Diagnostic Tools | Debug Log Settings** 打开该 category 复现，再走 **Help | Collect Logs and Diagnostic Data** 收集。不需要在插件内自建「导出诊断包」功能（平台已提供）。
 - **清理**：移除 `[diag]` 系列 INFO 与 `logGeometry` 的逐子组件 dump（P0-3）。
 
 ### 5.6 主题与样式
 
 - 颜色：统一 `JBColor.namedColor(key, 默认值)` 或收敛进 `ChatAppColors`；移除行内 `JBColor(Color(...), Color(...))`（`SessionList.kt:333,344,352`、`PromptInput.kt:496`）与重复警示色（`PermissionPrompt.kt:86`、`ContextUsageIndicator.kt:39` 合并为一处）。
 - 尺寸/间距：`JBUI.scale` / `JBUI.insets` / `JBUIScale`（`JBUI.scale(float)` 已废弃）；`MessageItem.kt` 中内联 `JBUI.scale(2)` 归入 `ChatUIConstants.Spacing`。
-- 文案：`MessageItem.kt` 内中文（`上一页/下一页/展开 N 行/收起/工具名状态文案` 等）迁入 `OpencodeFrontendBundle`，与项目其余 UI 一致。
+- 文案：`MessageItem.kt` 内中文（`上一页/下一页/展开 N 行/收起/工具名状态文案` 等）迁入 `AgentPanelBundle`，与项目其余 UI 一致。
 
 ### 5.7 测试
 
@@ -270,7 +270,7 @@ flowchart TB
 | 项 | 内容 | 影响面 |
 |----|------|-------|
 | 1.1 | 面板/渲染控制器生命周期补齐：`Disposable` 归属、Timer 与 scope 释放；删除 `StreamingRenderController` 无用残余 | `ChatList.kt`、`StreamingRenderController.kt` |
-| 1.2 | 订阅改挂 ViewModel/面板生命周期，去掉 project 级 scope 复用 | `OpenCodeChatApp.kt`、`OpenCodeToolWindowFactory.kt` |
+| 1.2 | 订阅改挂 ViewModel/面板生命周期，去掉 project 级 scope 复用 | `AgentChatApp.kt`、`AgentToolWindowFactory.kt` |
 | 1.3 | 日志降噪：`[diag]` 全部移除或降 DEBUG；几何信息仅 DEBUG | `ChatList.kt`、`MessageItem.kt` |
 
 **验收**：`./gradlew test buildPlugin` 全绿；连续开合工具窗 10 次后 `idea.log` 无重复订阅痕迹、无 `Memory leak detected` 告警；流式回复期间 `idea.log` 不再出现逐条几何行。

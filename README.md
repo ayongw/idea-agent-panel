@@ -30,12 +30,19 @@ IntelliJ IDEA 插件，在 IDE 内集成 [OpenCode](https://opencode.ai/) AI 编
 
 ### 模块划分
 
+`rootProject.name`（= 插件名 = zip 名 = 安装目录名）是 `idea-agent-panel`。Kotlin 包名统一为 `com.ayongw.idea.agentpanel.*`，其中 **agent 专属实现集中在 `backend/agent/opencode/`**——UI 与共享契约不依赖它（防腐边界）：
+
 ```
-opencode-idea-panel/
-├── opencode-shared/      # 跨模块契约：DTO、RPC 接口、事件模型、序列化器
-├── opencode-frontend/    # UI 层：Tool Window、Swing 组件、ViewModel、状态管理
-└── opencode-backend/     # 业务层：Server 进程管理、REST/SSE 客户端、消息状态、上下文收集
+idea-agent-panel/
+├── opencode-shared/      # 跨模块中立契约：DTO、RPC 接口、序列化器（**不得**出现 agent 专属类型）
+├── opencode-frontend/    # UI 层：Tool Window、Swing 组件、ViewModel、状态管理（不依赖 agent 实现）
+└── opencode-backend/     # 业务层
+    ├── BackendChatRepositoryModel.kt  # 门面：agent 无关的外壳，委托给下面的实现
+    └── agent/
+        └── opencode/      # OpenCode 实现：event/（SSE）· mcp/ · repository/（REST+协议翻译）· server/（进程管理）
 ```
+
+接入第二个 agent 时：新增 `backend/agent/<agentName>/`，在该包内把自己的协议翻译成 `shared` 的中立模型（参照 `opencode/repository/MessageMapper.kt`），能力集不同则在 `shared` 下新增独立接口。详见 `opencode-backend/src/main/kotlin/com/ayongw/idea/agentpanel/backend/agent/AGENT_LAYER.md`。
 
 ### 数据流向
 
@@ -64,8 +71,8 @@ opencode-idea-panel/
 
 ```bash
 # 克隆项目
-git clone https://github.com/ayongw/opencode-idea-panel.git
-cd opencode-idea-panel
+git clone https://github.com/ayongw/idea-agent-panel.git
+cd idea-agent-panel
 
 # 设置项目专用 JDK (JBR 25)，不影响系统默认 JDK 21
 export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
@@ -74,7 +81,7 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 ./gradlew compileKotlin --no-daemon --no-configuration-cache
 
 # 打包插件
-# 版本形如 0.1.0.<构建号>，构建号默认取 git 提交数，产物：build/distributions/opencode-idea-panel-0.1.0.<构建号>.zip
+# 版本形如 0.1.0.<构建号>，构建号默认取 git 提交数，产物：build/distributions/idea-agent-panel-0.1.0.<构建号>.zip
 ./gradlew buildPlugin --no-configuration-cache
 
 # 指定构建号（覆盖 git 提交数）
@@ -87,7 +94,7 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 
 1. 打开 IntelliJ IDEA
 2. `Settings` → `Plugins` → ⚙️ → `Install Plugin from Disk`
-3. 选择 `build/distributions/opencode-idea-panel-0.1.0.<构建号>.zip`
+3. 选择 `build/distributions/idea-agent-panel-0.1.0.<构建号>.zip`
 4. 重启 IDE
 
 ### 运行沙箱调试 (开发用)
@@ -126,32 +133,36 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 ├── settings.gradle.kts           # 模块包含声明
 ├── gradle.properties             # Gradle/JDK 配置
 ├── src/main/resources/META-INF/plugin.xml  # 插件入口
-├── opencode-shared/              # 共享契约模块
+├── opencode-shared/              # 共享契约模块（agent 无关）
 │   ├── build.gradle.kts
-│   ├── src/main/resources/modular.plugin.shared.xml
-│   └── src/main/kotlin/com/ayongw/idea/opencode/shared/
-│       ├── ChatMessage.kt        # 消息实体
-│       ├── ChatRepositoryRpcApi.kt  # RPC 接口
+│   ├── src/main/resources/idea-agent-panel.opencode-shared.xml
+│   └── src/main/kotlin/com/ayongw/idea/agentpanel/shared/
+│       ├── ChatMessage.kt        # 中立消息实体
+│       ├── ChatRepositoryRpcApi.kt  # RPC 接口（防腐边界）
 │       ├── dtos.kt               # 数据传输对象
 │       └── serializers.kt        # 序列化器
-├── opencode-frontend/            # 前端 UI 模块
+├── opencode-frontend/            # 前端 UI 模块（不依赖 agent 实现）
 │   ├── build.gradle.kts
-│   ├── src/main/resources/modular.plugin.frontend.xml
+│   ├── src/main/resources/idea-agent-panel.opencode-frontend.xml
 │   ├── src/main/resources/icons/opencode.svg
-│   └── src/main/kotlin/com/ayongw/idea/opencode/frontend/
-│       ├── toolWindow/OpenCodeToolWindowFactory.kt
-│       ├── chatApp/OpenCodeChatApp.kt
+│   └── src/main/kotlin/com/ayongw/idea/agentpanel/frontend/
+│       ├── toolWindow/AgentToolWindowFactory.kt
+│       ├── chatApp/AgentChatApp.kt
 │       ├── chatApp/ui/           # UI 组件
 │       └── chatApp/viewmodel/    # 视图模型
 └── opencode-backend/             # 后端业务模块
     ├── build.gradle.kts
-    ├── src/main/resources/modular.plugin.backend.xml
-    └── src/main/kotlin/com/ayongw/idea/opencode/backend/
+    ├── src/main/resources/idea-agent-panel.opencode-backend.xml
+    └── src/main/kotlin/com/ayongw/idea/agentpanel/backend/
         ├── BackendRpcApiProvider.kt
-        ├── BackendChatRepositoryModel.kt
+        ├── BackendChatRepositoryModel.kt   # 门面（agent 无关的外壳）
         ├── BackendChatRepositoryRpcApi.kt
-        ├── server/               # Server 运行时：发现/探测/拉起/终止/共享注册表/自愈
-        └── repository/           # 业务逻辑
+        └── agent/opencode/                # OpenCode 实现（新增 agent 时并列新目录）
+            ├── AGENT_LAYER.md             # 接入新 agent 的步骤与禁忌
+            ├── event/                     # SSE 客户端 + 事件解析 + 对账
+            ├── mcp/                       # MCP 客户端
+            ├── repository/                # REST 客户端 + MessageMapper（协议→中立模型）
+            └── server/                    # opencode serve 进程管理：发现/探测/拉起/终止/共享注册表/自愈
 ```
 
 ### 关键技术点
@@ -162,7 +173,8 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 | SSE 事件流 | `okhttp-sse` EventSource 客户端（端点 `/api/event`，指数退避重连 + 读超时存活判定）已接入会话状态：流式内容与执行态经 RPC 推到面板（见 [TSD-06](docs/tsd/TSD-06-事件流接入设计.md)） |
 | 流式渲染 | 后端按事件流累积内容并 75ms 节流推送，前端按消息 id 就地重渲染气泡（气泡内容未变则跳过） |
 | 代码块渲染 | `EditorTextField` (真实编辑器) + `JBHtmlPane` (文本) |
-| 跨进程通信 | Fleet RPC (`@Rpc` 接口 + `RemoteApiProvider`) |
+| 跨进程通信 | Fleet RPC (`@Rpc` 接口 + `RemoteApiProvider`)，契约定义在 `opencode-shared`（agent 无关边界） |
+| 多 agent 扩展 | agent 专属实现收在 `backend/agent/<name>/`，协议在适配层翻译成 `shared` 的中立模型；UI 与 `shared` 不出现 agent 专属类型（见 `agent/AGENT_LAYER.md`） |
 | 上下文收集 | `Editor`/`PsiFile`/`Project` API + 右键菜单 Action |
 
 ---

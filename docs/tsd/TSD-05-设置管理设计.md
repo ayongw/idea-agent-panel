@@ -1,6 +1,6 @@
 # TSD-05 设置管理设计
 
-> 插件：OpenCode AI Assistant Panel（`com.ayongw.idea.opencode-idea-panel`）
+> 插件：Idea Agent Panel（`com.ayongw.idea.idea-agent-panel`）
 > 目标：在插件内管理 opencode 的设置参数（自定义模型、规则目录、技能、MCP），设置项能走接口的走接口，接口不满足的直接改 opencode 配置文件。
 > 关联文档：整体架构见《技术方案》（`docs/tech/技术方案.md`，对应 TSD-01 段位）。
 > 状态：**实施完成**（五个 Tab 全部落地；v1.5 修复 401 与布局，v1.6 修复凭据明文落盘报错并收口内容宽度，v1.7 重做模型页与连接页并改为自动加载，v1.8 把技能/规则/MCP 改为「只读展示 + 打开配置文件/文件」形态，v1.9 兼容 V1 写法的供应商配置，v1.10 修复禁用模型名称列为空），待再次手测与提交。
@@ -15,7 +15,7 @@
 | v1.3 | 2026-09-29 | 阶段一落地：新增 `JsoncEditor`（JSONC 定点编辑器）与 `OpenCodeConfigStore`（配置定位 / 读取 / 写入 / 备份 / 原子写 / 并发校验），配套 23 个单测通过；前端相关阶段暂缓以避让并行会话 | agent |
 | v1.4 | 2026-09-29 | 实施完成：设置类接口（12 个）、`SettingsDtos`/`SettingsRpcApi`、`BackendSettingsRpcApi` + `SettingsMapping`、前端 5 个 Tab；52 个单测全绿、`buildPlugin` 通过。过程中修复两处既有缺陷：`HttpURLConnection` 不支持 PATCH（导致 `setShell` 与既有 `renameSession` 请求发不出去）、`JsonObject.get()` 缺键 NPE | agent |
 | v1.5 | 2026-09-29 | 手测反馈修复：① 新增 `OpenCodeCredentials`，密码留空时按「显式值 → `OPENCODE_SERVER_PASSWORD` → `~/.config/opencode/service.json`」兜底，消除设置页 401；② 错误体截断为 200 字符 + 前端按 401/403/不可达转友好文案（原样贴整段 JSON 的写法移除）；③ 全部面板改 `BorderLayout` 自适应布局、去掉固定 `columns`/`preferredSize`，内容不再超宽；④ 技能页改为「加载目录 + 已加载技能列表」，MCP 页改为「配置来源 + 服务器列表 + 详情/超时」；⑤ 测试连接改走后端真实凭据探测，不再由前端自行拼 Basic 误判；⑥ 新增 `OpenCodeCredentialsUnitTest`（4 例），单测合计 56 例全绿 | agent |
-| v1.6 | 2026-09-29 | 修复安装后报错 `Element component@OpenCodeSettings.option.@name=password probably contains sensitive information`：密码从插件设置文件（明文）迁到 IDE 凭据存储 —— 新增 `OpenCodePasswordStore`（`PasswordSafe` + 内存缓存），`OpenCodeSettingsState` 不再持有密码字段，连接页与启动时的配置下发改从凭据存储取值。另：设置页内容宽度收口（表格/多行文本 preferred 宽度上限 560、文本框限定 `columns`、状态行截断 100 字），容器实现 `Scrollable`（`tracksViewportWidth`）使页面宽度跟随对话框、不再横向溢出 | agent |
+| v1.6 | 2026-09-29 | 修复安装后报错 `Element component@OpenCodeSettings.option.@name=password probably contains sensitive information`：密码从插件设置文件（明文）迁到 IDE 凭据存储 —— 新增 `OpenCodePasswordStore`（`PasswordSafe` + 内存缓存），`AgentSettingsState` 不再持有密码字段，连接页与启动时的配置下发改从凭据存储取值。另：设置页内容宽度收口（表格/多行文本 preferred 宽度上限 560、文本框限定 `columns`、状态行截断 100 字），容器实现 `Scrollable`（`tracksViewportWidth`）使页面宽度跟随对话框、不再横向溢出 | agent |
 | v1.7 | 2026-09-29 | 按手测反馈重做设置页（详见 §5.2/§5.4）：① 明确两类设置——插件自身设置（连接页，存 IDEA）与 opencode 设置（模型/规则/技能/MCP，写配置文件）；② 连接页只留 URL/用户名/密码，去掉 shell 界面（后端 `setShell` 接口保留）；③ 模型页重做为 master-detail：默认模型置顶 → 供应商表（id/名称/是否自定义 + 行内「设置」按钮）→ 选中供应商的模型表（id/名称/启用勾选，自定义供应商可增删），去掉作用域选择；模型状态改为「配置声明（含 `disabled`）∪ `/api/model` 启用清单」并集，写入一律按键 patch（不再整体覆盖 `models`）；④ 设置页改为首次显示与切换 Tab 自动加载，并对「服务端未就绪导致的静默空结果」自动重试 | agent |
 | v1.8 | 2026-09-29 | 按手测反馈把技能/规则/MCP 三页改为「只读展示 + 打开文件」形态（详见 §5.2）：① 技能页＝加载来源（配置声明 + opencode 约定目录，标注存在性）+ 技能卡片（第一行 id、第二行描述、齿轮跳转技能目录）+ 搜索过滤；② 规则页＝加载位置（AGENTS.md 目录 + `instructions` 条目）+ 规则文件卡片（文件名 + 前 150 字符、齿轮在编辑器打开），移除内嵌编辑器；③ MCP 页＝卡片列表（名称 + 状态徽标 + 启用开关 + 齿轮打开配置文件），移除详情表单、增删服务器与 `mcp.timeout` 编辑；④ 修正 `skills` 只读字符串数组导致用户 `{paths,urls}` 写法被漏展示的缺陷；⑤ 配置定位改为同目录 `opencode.jsonc` 优先、缺省新建 `opencode.jsonc`（对齐 opencode `Config.loadDirectory`/`Config.update`）；⑥ 新增 `ensureConfigFile` 与前端「在编辑器打开 / 跳转目录」能力 | agent |
 | v1.9 | 2026-09-29 | 兼容 V1 写法的供应商配置（详见 §5.2/§5.3/§5.4）：opencode 同时接受 V2 `providers`（`package`/`settings.baseURL`/模型 `disabled`）与 V1 `provider`（`npm`/`options.baseURL`，`api` 优先；模型用 `status:"deprecated"` 表达禁用），此前只读 V2 导致 V1 配置的供应商在模型页显示为空、且无法增删模型。现按 `normalize.ts` 的 `migrateProviders`/`mergeMaps` 口径读两侧（同名条目 V2 覆盖 V1、V1 历史 id 改名），写入位置与键名跟随条目现有写法（避免造出并存的 V2 条目），包名统一按 V2 的 `aisdk:` 形式展示 | agent |
@@ -27,7 +27,7 @@
 
 ### 1.1 背景
 
-插件当前只有一个应用级设置页（`opencode-frontend/.../settings/OpenCodeSettingsConfigurable.kt`），仅能配置 Server 地址与 Basic 认证凭据（用户名 + 密码）。opencode 自身有大量设置（模型、规则、技能、MCP 等），用户希望直接在插件里管理，避免手工编辑配置文件。
+插件当前只有一个应用级设置页（`opencode-frontend/.../settings/AgentSettingsConfigurable.kt`），仅能配置 Server 地址与 Basic 认证凭据（用户名 + 密码）。opencode 自身有大量设置（模型、规则、技能、MCP 等），用户希望直接在插件里管理，避免手工编辑配置文件。
 
 ### 1.2 目标
 
@@ -40,7 +40,7 @@
 
 运行态 opencode 版本 **v2.0.18**（源码 `/Users/jiangguangtao/workspace/opensource/opencode`，本地检出版本 v2.0.16）。下文接口行为均以本机实测为准，实测方式：`opencode serve --port 4598/4599` 后逐个调用。
 
-插件侧代码基准：提交 `9f1b2fc`（refactor(api)：全量对齐 opencode v2）之后的 `OpenCodeRestClient`、`OpenCodeSettingsConfigurable`、`OpenCodeSettingsState`、`ChatRepositoryRpcApi`。
+插件侧代码基准：提交 `9f1b2fc`（refactor(api)：全量对齐 opencode v2）之后的 `OpenCodeRestClient`、`AgentSettingsConfigurable`、`AgentSettingsState`、`ChatRepositoryRpcApi`。
 
 ---
 
@@ -155,7 +155,7 @@ backend   ├─ OpenCodeConfigStore    配置文件定位 / JSONC 读 / 路径 
 
 | Tab | 内容 | 读来源 | 写目标 |
 |-----|------|--------|--------|
-| 连接【已落地】 | **插件自身设置**：标题 + 刷新；Server URL、Basic 用户名（默认 `opencode`）、密码（附「留空即回退环境变量 / `service.json`」提示）、测试连接。不含 shell | 插件状态（`OpenCodeSettingsState` + `OpenCodePasswordStore`）；测试连接走后端 `updateServerConfig` + `getAllSessions` + `getServerInfo` | IDE 侧：`opencode-settings.xml` 存 URL/用户名，**密码存 IDE 凭据存储**（`OpenCodePasswordStore`，v1.6）。本页由「OK」统一提交（`isModified`/`apply`） |
+| 连接【已落地】 | **插件自身设置**：标题 + 刷新；Server URL、Basic 用户名（默认 `opencode`）、密码（附「留空即回退环境变量 / `service.json`」提示）、测试连接。不含 shell | 插件状态（`AgentSettingsState` + `OpenCodePasswordStore`）；测试连接走后端 `updateServerConfig` + `getAllSessions` + `getServerInfo` | IDE 侧：`opencode-settings.xml` 存 URL/用户名，**密码存 IDE 凭据存储**（`OpenCodePasswordStore`，v1.6）。本页由「OK」统一提交（`isModified`/`apply`） |
 | 模型【v1.7 重做 / v1.9 兼容 V1 / v1.10 名称兜底】 | **opencode 设置**（无作用域选择）：上=默认模型下拉 + 保存；中=供应商表（id / 名称 / 是否自定义 + 行内「设置」按钮 → 弹窗改名称、连接 URL、API Key；工具栏可新增/删除供应商）；下=选中供应商的模型表（模型 id / 名称 / 启用开关；自定义供应商可新增/删除模型） | `/api/provider`、`/api/model` + 配置 `providers.*`（V2）**与 `provider.*`（V1）都读**（`ProviderModelDto` = 配置声明（含禁用状态）∪ 服务端启用清单）。名称缺失时按 id 兜底（`claude-opus-4.7` → `Claude Opus 4.7`），列表不出现空名称（v1.10） | 按键 patch；路径与键名**跟随条目的现有写法**：V2 写 `providers.<id>.package` / `.settings.baseURL` / `.models.<mid>.disabled`，V1 写 `provider.<id>.npm` / `.options.baseURL` / `.models.<mid>.status="deprecated"`。apiKey 走 `connect/key`。作用域由该供应商的声明作用域决定（未声明过则全局），界面不暴露 |
 | 规则【v1.8 重做】 | **opencode 设置**：上=规则加载位置（`AGENTS.md` 所在目录 + 配置 `instructions` 条目，标注「v2 未消费」）；下=已加载规则文件卡片（文件名 + 文件前 150 字符，齿轮在编辑器中打开） | 文件系统（`ruleFiles` 带 `preview`）+ 配置 `instructions` | 不在设置页内编辑，一律打开 `AGENTS.md` 直接改 |
 | 技能【v1.8 重做】 | **opencode 设置**：上=技能加载来源（配置声明的路径/URL + opencode 约定目录 `skill`/`skills`，标注存在性）+「打开配置文件」；下=已加载技能卡片（第一行 `id`、第二行描述，齿轮跳转到技能所在目录）+ 关键词过滤 | 配置 `skills`（**字符串数组与 `{paths,urls}` 对象两种写法都读**）+ 约定目录 + `/api/skill` | 不在设置页内编辑，一律打开 opencode 配置文件改 |
@@ -241,7 +241,7 @@ backend   ├─ OpenCodeConfigStore    配置文件定位 / JSONC 读 / 路径 
 | `opencode-backend/.../repository/OpenCodeCredentials.kt` | 新增（v1.5）：Basic 密码发现（显式值 → 环境变量 → `service.json`），消除设置页 401 | ✅ 已完成 |
 | `opencode-backend/.../BackendChatRepositoryModel.kt` | 修改：暴露 `getRestClient()`；初始密码与 `updateServerConfig` 改走 `OpenCodeCredentials.resolvePassword` | ✅ 已完成 |
 | `opencode-backend/.../BackendRpcApiProvider.kt` | 修改：注册 `SettingsRpcApi` | ✅ 已完成 |
-| `opencode-frontend/.../settings/OpenCodeSettingsConfigurable.kt` | 改为 Tab 容器（5 个 Tab）；v1.7：连接页 `eager` 常驻加载、切换 Tab 自动加载该页 | ✅ 已完成 |
+| `opencode-frontend/.../settings/AgentSettingsConfigurable.kt` | 改为 Tab 容器（5 个 Tab）；v1.7：连接页 `eager` 常驻加载、切换 Tab 自动加载该页 | ✅ 已完成 |
 | `opencode-frontend/.../settings/SettingsTab.kt` | Tab 接口 + 面板基类：标题/说明行、统一表格样式、**状态行（友好文案 + tooltip 明细）**、401/403/不可达文案转换、异步读取/写入骨架；v1.7：新增 `eager` 标记、快照空结果自动重试、在途请求去重；v1.8：新增齿轮按钮与「在编辑器打开文件 / 跳转目录 / 打开配置文件」能力，移除已无用的作用域行 | ✅ 已完成 |
 | `opencode-frontend/.../settings/SettingsCards.kt` | 新增（v1.8）：卡片列表组件（第一行标题 + 第二行折行副标题 + 右侧操作区，横向跟随视口、内部纵向滚动）与关键词过滤、HTML 折行标签、路径/截断工具 | ✅ 已完成 |
 | `opencode-frontend/.../settings/ConnectionSettingsTab.kt` | 插件自身设置面板：Server URL / 用户名 / 密码 + 密码留空提示 + 测试连接（走后端真实凭据探测），密码读写走 `OpenCodePasswordStore`；v1.7：移除 shell 界面（后端 `setShell` 接口保留） | ✅ 已完成 |
@@ -249,10 +249,10 @@ backend   ├─ OpenCodeConfigStore    配置文件定位 / JSONC 读 / 路径 
 | `opencode-frontend/.../settings/RuleSettingsTab.kt` | v1.8 重写：规则加载位置（AGENTS.md 目录 + `instructions` 条目）+ 规则文件卡片（文件名 + 前 150 字符 + 齿轮编辑器打开）；移除内嵌编辑器与保存/Reload | ✅ 已完成 |
 | `opencode-frontend/.../settings/SkillSettingsTab.kt` | v1.8 重写：技能加载来源（配置声明 + 约定目录，标注存在性）+ 「打开配置文件」+ 技能卡片（id + 描述 + 齿轮跳转目录）+ 关键词过滤；移除可编辑目录文本域 | ✅ 已完成 |
 | `opencode-frontend/.../settings/McpSettingsTab.kt` | v1.8 重写：卡片列表（名称 + 状态徽标 + 启用开关 + 齿轮打开配置文件）+ 配置来源行；移除详情表单、增删服务器、`mcp.timeout` 编辑 | ✅ 已完成 |
-| `opencode-frontend/.../settings/OpenCodeSettingsState.kt` | 修改（v1.6）：移除密码字段 —— 明文凭据落 `opencode-settings.xml` 会被 IDE 判为敏感信息并报 error；`username` 由 `9f1b2fc` 落地；作用域默认全局在面板内置（不持久化上次选择） | ✅ 已完成 |
+| `opencode-frontend/.../settings/AgentSettingsState.kt` | 修改（v1.6）：移除密码字段 —— 明文凭据落 `opencode-settings.xml` 会被 IDE 判为敏感信息并报 error；`username` 由 `9f1b2fc` 落地；作用域默认全局在面板内置（不持久化上次选择） | ✅ 已完成 |
 | `opencode-frontend/.../settings/OpenCodePasswordStore.kt` | 新增（v1.6）：Basic 密码存取（`PasswordSafe` 凭据存储 + 内存缓存，读写失败不阻塞），供连接页与启动配置下发使用 | ✅ 已完成 |
-| `opencode-frontend/src/main/resources/messages/OpencodeFrontendBundle.properties` | 新增 `settings.opencode.*` 面板文案；v1.7：补模型页/供应商弹窗文案；v1.8：补技能/规则/MCP 卡片与「打开配置文件」文案，移除已下线的 shell、旧 provider 表单、MCP 详情/超时、作用域下拉文案 | ✅ 已完成 |
-| `opencode-frontend/src/main/resources/opencode-idea-panel.opencode-frontend.xml` | 无需改动（Configurable 类名与注册项不变） | — |
+| `opencode-frontend/src/main/resources/messages/AgentPanelBundle.properties` | 新增 `settings.opencode.*` 面板文案；v1.7：补模型页/供应商弹窗文案；v1.8：补技能/规则/MCP 卡片与「打开配置文件」文案，移除已下线的 shell、旧 provider 表单、MCP 详情/超时、作用域下拉文案 | ✅ 已完成 |
+| `opencode-frontend/src/main/resources/idea-agent-panel.opencode-frontend.xml` | 无需改动（Configurable 类名与注册项不变） | — |
 | `src/test/.../JsoncEditorUnitTest`、`OpenCodeConfigStoreUnitTest`、`OpenCodeSettingsApiUnitTest`、`SettingsMappingUnitTest`、`OpenCodeCredentialsUnitTest` | 全仓 109 个单测，其中设置相关 57 个（v1.7 补模型并集映射 2 例、模型按键 patch 4 例；v1.8 补 `skills` 写法兼容 2 例，并订正配置定位优先级断言；v1.9 补供应商 V1/V2 兼容 5 例） | ✅ 已完成 |
 
 ## 7. 实施顺序
@@ -284,9 +284,9 @@ backend   ├─ OpenCodeConfigStore    配置文件定位 / JSONC 读 / 路径 
 | MCP 读写往返 | `*MockTest` | 写 `mcp.servers.<name>` 后回读一致、local/remote 两类 |
 | 服务端接口 | `*MockTest` | `/api/mcp` 带 location 参数、`connect/key` 请求体、探测失败处理 |
 
-测试风格沿用现有 `src/test/kotlin/com/ayongw/idea/opencode/OpenCodeRestClientUnitTest.kt`：本地 `com.sun.net.httpserver.HttpServer` + 路由表，断言真实请求（方法 / 路径 / Basic 头 / 请求体）与响应解析，不 mock HTTP 客户端。
+测试风格沿用现有 `src/test/kotlin/com/ayongw/idea/agentpanel/OpenCodeRestClientUnitTest.kt`：本地 `com.sun.net.httpserver.HttpServer` + 路由表，断言真实请求（方法 / 路径 / Basic 头 / 请求体）与响应解析，不 mock HTTP 客户端。
 
-> 本仓库存在并行会话同时改前端，前端半成品会使 Gradle 整体构建失败。此时只跑根项目单测可排除前端编译：`./gradlew :test --tests "com.ayongw.idea.opencode.*" -x :opencode-frontend:compileKotlin -x :opencode-frontend:processResources -x :opencode-frontend:instrumentCode -x :opencode-frontend:instrumentedJar`。
+> 本仓库存在并行会话同时改前端，前端半成品会使 Gradle 整体构建失败。此时只跑根项目单测可排除前端编译：`./gradlew :test --tests "com.ayongw.idea.agentpanel.*" -x :opencode-frontend:compileKotlin -x :opencode-frontend:processResources -x :opencode-frontend:instrumentCode -x :opencode-frontend:instrumentedJar`。
 
 ## 10. 决议与遗留
 

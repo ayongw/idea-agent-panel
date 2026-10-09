@@ -1,6 +1,6 @@
 # TSD-06 事件流接入设计
 
-> 插件：OpenCode AI Assistant Panel（`com.ayongw.idea.opencode-idea-panel`）
+> 插件：Idea Agent Panel（`com.ayongw.idea.idea-agent-panel`）
 > 目标：接入 opencode v2 的事件流（`GET /api/event`），把流式文本/推理增量、权限请求、工具调用推到面板 UI，落地「流式对话」与「权限确认」。
 > 关联文档：整体架构与端点表见《技术方案》（`docs/tech/技术方案.md`）；设置读写见《TSD-05 设置管理设计》。
 > 状态：**设计待评审** —— 协议契约已用真实服务（opencode v2.0.18 本机实例）抓帧实测，见 §4；解析器可据此定稿，其余仍待评审。
@@ -413,13 +413,13 @@ sealed class OpenCodeEvent {
 | `opencode-shared/.../dtos.kt`、`ChatRepositoryRpcApi.kt` | 新增：`PendingPermissionDto`；RPC `getPendingPermissionFlow(projectId, sessionId)` | **已实施（S4b）** |
 | `opencode-backend/.../BackendChatRepositoryRpcApi.kt` | 修改：`getPendingPermissionFlow` 透传（非当前会话恒 null） | **已实施（S4b）** |
 | `opencode-frontend/.../chatApp/ui/PermissionPrompt.kt` | 新增：权限确认条（动作 + 资源 + 三按钮；无待决项隐藏；点击即收起） | **已实施（S4b）** |
-| `opencode-frontend/.../chatApp/ui/PromptInput.kt`、`OpenCodeChatApp.kt` | 修改：输入区上方挂权限确认条；订阅 `pendingPermissionFlow` → EDT 更新；三按钮回调 → `replyPermission` | **已实施（S4b）** |
+| `opencode-frontend/.../chatApp/ui/PromptInput.kt`、`AgentChatApp.kt` | 修改：输入区上方挂权限确认条；订阅 `pendingPermissionFlow` → EDT 更新；三按钮回调 → `replyPermission` | **已实施（S4b）** |
 | `opencode-frontend/.../viewmodel/*` | 修改：`pendingPermissionFlow` 订阅（与执行态同一「随会话变化」的订阅）；`replyPermission` 改为三态 `PermissionResponse` | **已实施（S4b）** |
 | `src/test/.../OpenCodeEventRealServerITest.kt` | 新增第 3 例：权限链路（`permission.asked` → 回 `once` → 执行收尾）；本机未触发时按 `Assume` 跳过 | **已实施（S4b）** |
 | `opencode-frontend/.../chatApp/ui/ContextUsageIndicator.kt` | 新增：输入框下方右侧用量指示器（≥80% 警示色、无数据整块隐藏、tooltip 明细） | **已实施（S5）** |
 | `opencode-frontend/.../chatApp/ui/PromptInput.kt` | 修改：工具条行 EAST 挂指示器，暴露 `updateUsage` | **已实施（S5）** |
 | `opencode-frontend/.../viewmodel/ChatRepositoryApi.kt`、`FrontendChatRepositoryModel.kt`、`ChatViewModel.kt` | 修改：`getSessionUsage` 透传；`usageFlow` + 切换/新建会话时清空并刷新、发送/中止/切模型后刷新 | **已实施（S5）** |
-| `opencode-frontend/.../chatApp/OpenCodeChatApp.kt` | 修改：订阅 `usageFlow` → EDT 更新指示器 | **已实施（S5）** |
+| `opencode-frontend/.../chatApp/AgentChatApp.kt` | 修改：订阅 `usageFlow` → EDT 更新指示器 | **已实施（S5）** |
 | `src/test/.../ContextUsageFormatterUnitTest.kt` | 新增：紧凑格式、千分位、占比取整、超窗 `100%+`、无窗口不显占比、空数据隐藏、警示阈值 | **已实施（S5）** |
 | `src/test/.../OpenCodeRestClientUnitTest.kt` | 修改：补 `cost/tokens/model`、助手 `tokens.input`、`limit.context` 的解析断言 | **已实施（S5）** |
 | `opencode-shared/.../ToolCall.kt` | 新增：`ToolCallDto` + `ToolCallStatus`（工具卡片数据模型，REST 与 SSE 共用，四态对齐 `ToolState`） | **已实施（S6）** |
@@ -474,7 +474,7 @@ sealed class OpenCodeEvent {
 
 ```bash
 OPENCODE_SERVER_PASSWORD=itest-oc-panel opencode serve --port 4097 &
-./gradlew test -Pit=true --tests "com.ayongw.idea.opencode.OpenCodeEventRealServerITest"
+./gradlew test -Pit=true --tests "com.ayongw.idea.agentpanel.OpenCodeEventRealServerITest"
 ```
 
 ### 9.2 单元测试

@@ -35,15 +35,15 @@
 |---|---|---|
 | 进程管理 | **全仓零实现**：无 `OSProcessHandler` / `GeneralCommandLine` / 进程终止任何引用 | 全仓 grep 无命中；`docs/tasks/001 环境初始化.md:186` 仅出现在文档示例里 |
 | Server 从哪来 | 由用户**手动**启动 `opencode serve`，再在设置页手填地址 | `docs/tsd/TSD-30-会话面板整体优化方案.md:358`（G4 行）；`README.md:60` 要求「已安装并可在 PATH 中找到 `opencode` CLI」 |
-| 地址配置 | 应用级 `PersistentStateComponent`：`serverUrl` 默认 `http://127.0.0.1:4096`、`username` 默认 `opencode` | `opencode-frontend/src/main/kotlin/com/ayongw/idea/opencode/frontend/settings/OpenCodeSettingsState.kt:20,23` |
+| 地址配置 | 应用级 `PersistentStateComponent`：`serverUrl` 默认 `http://127.0.0.1:4096`、`username` 默认 `opencode` | `opencode-frontend/src/main/kotlin/com/ayongw/idea/agentpanel/frontend/settings/AgentSettingsState.kt:20,23` |
 | 密码配置 | 走 `PasswordSafe`（不进插件设置文件，避免 IDE 判敏感信息） | `settings/OpenCodePasswordStore.kt:20`（`CredentialAttributes`）、`:26-39`（`load`/`save`） |
 | 地址下发 | 设置页「OK」把三项下发到后端，后端重建 REST 客户端与事件流 | `settings/ConnectionSettingsTab.kt:74-92` → `BackendChatRepositoryModel.kt:665-683`（`updateServerConfig`） |
-| 认证 | HTTP Basic（用户名默认 `opencode`，密码非空才附加头） | `opencode-backend/src/main/kotlin/com/ayongw/idea/opencode/backend/repository/OpenCodeAuth.kt:15-19` |
+| 认证 | HTTP Basic（用户名默认 `opencode`，密码非空才附加头） | `opencode-backend/src/main/kotlin/com/ayongw/idea/agentpanel/backend/agent/opencode/repository/OpenCodeAuth.kt:15-19` |
 | 密码发现链 | 显式值 → `OPENCODE_SERVER_PASSWORD` → `~/.config/opencode/service.json` | `repository/OpenCodeCredentials.kt:16-24,34` |
 | 健康检查 | `GET /api/project`（注释说明 v2 无 `/global/health`），另有 `GET /api/info`（返回 version/pid/urls/paths） | `repository/OpenCodeRestClient.kt:43`（`healthCheck`）、`:414`（`getInfo`） |
 | 事件流连接 | okhttp-sse，指数退避重连（1s→30s）、401/403 停止重连并交设置页、读超时 60s 判链路死 | `backend/event/OpenCodeEventClient.kt:25-34,72-84,117-139` |
 | 服务模式 | `@Service(Service.Level.PROJECT)` + `Disposable`，`dispose()` 关事件流 + 取消协程 | `BackendChatRepositoryModel.kt:43-44,116-122,852-856` |
-| 后端模块 | `opencode-backend` 走 `intellij.platform.module`，有 `remoteApiProvider` 注册；`splitMode = true`、`pluginInstallationTarget = BOTH` | `opencode-backend/src/main/resources/opencode-idea-panel.opencode-backend.xml:6-14`、`build.gradle.kts:117-118` |
+| 后端模块 | `opencode-backend` 走 `intellij.platform.module`，有 `remoteApiProvider` 注册；`splitMode = true`、`pluginInstallationTarget = BOTH` | `opencode-backend/src/main/resources/idea-agent-panel.opencode-backend.xml:6-14`、`build.gradle.kts:117-118` |
 | 最低平台 | `sinceBuild = "262"`（2026.2），本地 SDK 为 2026.2.3 | `build.gradle.kts:120-125`、`README.md:106` |
 | 现有测试约束 | `./gradlew test` 默认 `exclude("**/*ITest.class")`，`-Pit=true` 才纳入 | `build.gradle.kts:152-158` |
 
@@ -78,7 +78,7 @@
 - **不引入新三方依赖**：只用平台 API + JDK；HTTP 探测改用 JDK `HttpURLConnection` + `Proxy.NO_PROXY`（见 §3.5），不把 okhttp 引入进程管理链路。
 - **不做跨机器/远程部署方案**：不实现「在远端主机安装并启动 opencode」；split mode 与远程开发下仅做**安全降级**（见 §7 R4）。
 - **不做 Server 版本升级/安装器**：**不**代用户安装 `opencode`，只做「提醒 + 引导 + CLI 路径覆盖」，不做版本自愈升级（G5 版本适配属另一议题，见《TSD-30-会话面板整体优化方案》§9.2 G5）。
-- **不改设置页的既有三项（地址/用户名/密码）语义与存储位置**（地址仍入 `OpenCodeSettingsState`、密码仍入 `PasswordSafe`），仅**新增** Server 管理相关项。
+- **不改设置页的既有三项（地址/用户名/密码）语义与存储位置**（地址仍入 `AgentSettingsState`、密码仍入 `PasswordSafe`），仅**新增** Server 管理相关项。
 - **不做多 Server 池化/负载均衡**：一个 Project 一个活动 Server 端点。
 - **不引入 `verifyPlugin` 到本地流程**（与项目约束一致）。
 
@@ -203,7 +203,7 @@ flowchart LR
 
 **候选地址顺序（探测顺序）**
 
-1. 设置项 `OpenCodeSettingsState.serverUrl`（`OpenCodeSettingsState.kt:20`）——用户**显式**配置为非默认值时优先，**永远第一个探测**。
+1. 设置项 `AgentSettingsState.serverUrl`（`AgentSettingsState.kt:20`）——用户**显式**配置为非默认值时优先，**永远第一个探测**。
 2. 默认地址：环境变量 `OPENCODE_SERVER_URL`（设置留空/为默认值时生效，本方案新增）若存在则用它，否则 `http://127.0.0.1:4096`（**默认端口 4096**，`BackendChatRepositoryModel.kt:47` 的既有默认）。
 3. **备用端口候选**：`http://127.0.0.1:4097` 起，最多 N 个（建议 N=8），用于承接「4096 被占用 / 上次退避到备用端口」的场景。
 
@@ -233,7 +233,7 @@ flowchart LR
 
 | 优先级 | 来源 | 用途 | 备注 |
 |---|---|---|---|
-| 1 | 设置项 `OpenCodeSettingsState.serverUrl`（显式非默认值） | 探测目标（**不**作为新实例的绑定端口来源，除非用户显式给了非默认端口） | 用户显式配置优先 |
+| 1 | 设置项 `AgentSettingsState.serverUrl`（显式非默认值） | 探测目标（**不**作为新实例的绑定端口来源，除非用户显式给了非默认端口） | 用户显式配置优先 |
 | 2 | 默认端口 `http://127.0.0.1:4096`（或环境变量 `OPENCODE_SERVER_URL`，见 §12 A15） | 探测目标 + **新实例首选绑定端口** | 默认与插件启动**都用 4096**（用户决策） |
 | 3 | 备用端口 `http://127.0.0.1:4097` 起（最多 N 个） | 探测目标 + 4096 冲突时新实例的绑定端口 | 用户决策：冲突时启用备用端口 |
 | 4 | 设置项显式指定的非默认端口（如 `:4097`） | 新实例绑定端口 | 绑定失败即报「端口占用」，**不静默换端口** |
@@ -329,7 +329,7 @@ flowchart LR
 
 | 场景 | `baseUrl` 来源 | `username` 来源 | `password` 来源 |
 |---|---|---|---|
-| 复用他人实例 | 探测命中的候选地址 | 设置项 `OpenCodeSettingsState.username`（默认 `opencode`），或用户在 `NEEDS_CREDENTIALS` 交互中提供的用户名 | `OpenCodeCredentials.resolvePassword(设置页密码)`：显式值 → `OPENCODE_SERVER_PASSWORD` → `~/.config/opencode/service.json`（`OpenCodeCredentials.kt:16-24`）；缺凭据时由 §4.5 交互补充 |
+| 复用他人实例 | 探测命中的候选地址 | 设置项 `AgentSettingsState.username`（默认 `opencode`），或用户在 `NEEDS_CREDENTIALS` 交互中提供的用户名 | `OpenCodeCredentials.resolvePassword(设置页密码)`：显式值 → `OPENCODE_SERVER_PASSWORD` → `~/.config/opencode/service.json`（`OpenCodeCredentials.kt:16-24`）；缺凭据时由 §4.5 交互补充 |
 | 复用自有实例（含另一 IDE 窗口拉起） | 注册表登记的 `url` | 插件自有用户名（建议固定 `opencode`） | **插件生成并仅存 `PasswordSafe`**（§4.2），优先级高于环境变量与 `service.json` |
 | 新建自有实例 | 由分配端口构造 `http://127.0.0.1:<port>`（首选 4096） | 同上 | 同上（先定密码，再以该密码注入子进程环境变量并登记） |
 
@@ -347,7 +347,7 @@ flowchart LR
 1. 探测/健康检查收到 `401/403`：
    - 若目标为**他人实例** → 转 `NEEDS_CREDENTIALS`，走 §4.5 交互（**不**做指数退避空转）。
    - 若目标为**自有实例** → 分类 `AUTH_FAILED` → **立即停止重试**（与 `OpenCodeEventClient.kt:117-124` 口径一致），转 `FAILED`。
-2. `S1` 把分类透出 → 状态条提示「认证失败」+「打开设置」按钮（直达 `OpenCodeSettingsConfigurable` 的连接页）。
+2. `S1` 把分类透出 → 状态条提示「认证失败」+「打开设置」按钮（直达 `AgentSettingsConfigurable` 的连接页）。
 3. 用户在设置页改完并点「OK」→ 既有路径下发（`ConnectionSettingsTab.kt:74-92`）→ `S1` 收到端点变更 → 重新 `DISCOVERING`（**不**自动重启自有进程，因为自有进程不受 401 影响；401 通常意味着复用了别人的实例）。
 4. 若明确为他人实例且用户拒绝提供密钥 → 明确提示「该端口上的 Server 不是本插件启动的，可填写凭据接入，或改用手动地址、或改用插件自启实例」。
 
@@ -419,12 +419,12 @@ flowchart LR
 
 ### 5.3 Notification（CLI 引导等场景）
 
-- **引入通知**（用户决策要求 CLI 缺失时「提醒并引导安装」），注册在 **frontend 模块**（`opencode-idea-panel.opencode-frontend.xml`，`extensions defaultExtensionNs="com.intellij"`）：
+- **引入通知**（用户决策要求 CLI 缺失时「提醒并引导安装」），注册在 **frontend 模块**（`idea-agent-panel.opencode-frontend.xml`，`extensions defaultExtensionNs="com.intellij"`）：
 
   ```xml
   <notificationGroup id="OpenCode.Server"
                      displayType="BALLOON"
-                     bundle="messages.OpencodeFrontendBundle"
+                     bundle="messages.AgentPanelBundle"
                      key="notification.group.server"/>
   ```
 
@@ -440,7 +440,7 @@ flowchart LR
 
 ### 6.1 新增包与类（`opencode-backend`）
 
-包：`com.ayongw.idea.opencode.backend.server`
+包：`com.ayongw.idea.agentpanel.backend.server`
 
 | 类 | 类型 | 职责 | 可单测性 |
 |---|---|---|---|
@@ -467,14 +467,14 @@ flowchart LR
 | 文件 | 职责 |
 |---|---|
 | `chatApp/ui/ServerStatusStrip.kt` | 状态条组件（§5.1，含 `NEEDS_CREDENTIALS` 凭据输入、`FAILED` 输出尾巴展开） |
-| `chatApp/OpenCodeChatApp.kt`（改） | 装配状态条到 `TopBar` 与 `ChatList` 之间；订阅状态流；转发重试/自启/凭据/设置/安装引导五个动作 |
+| `chatApp/AgentChatApp.kt`（改） | 装配状态条到 `TopBar` 与 `ChatList` 之间；订阅状态流；转发重试/自启/凭据/设置/安装引导五个动作 |
 | `chatApp/viewmodel/ChatRepositoryApi.kt`、`FrontendChatRepositoryModel.kt`、`ChatViewModel.kt`（改） | 暴露 Server 运行时能力（状态流 + 4 个动作）；CLI 缺失的一次性引导通知（§5.3）挂在此项目级服务上 |
 | `chatApp/ui/utils/ChatAppColors.kt`（改） | 状态条配色（进行中/失败底色与文字色） |
 | `settings/ConnectionSettingsTab.kt`（改） | 新增「Server 管理」分组 + CLI 路径 + 停止自有实例 / 重置注册表（§5.2） |
-| `settings/OpenCodeSettingsState.kt`（改） | 新增 `autoStartServer` / `reuseExternalServer` / `cliPath` 三个字段（密码字段不动） |
-| `settings/OpenCodeSettingsConfigurable.kt`（改） | 新增 `CONNECTION_TAB_INDEX`（状态条「打开设置」直达连接页） |
-| `messages/OpencodeFrontendBundle.properties`（改） | 新增状态条、失败分类、设置项与通知文案 |
-| `opencode-frontend/src/main/resources/opencode-idea-panel.opencode-frontend.xml`（改） | 注册 `notificationGroup` 扩展点（§5.3） |
+| `settings/AgentSettingsState.kt`（改） | 新增 `autoStartServer` / `reuseExternalServer` / `cliPath` 三个字段（密码字段不动） |
+| `settings/AgentSettingsConfigurable.kt`（改） | 新增 `CONNECTION_TAB_INDEX`（状态条「打开设置」直达连接页） |
+| `messages/AgentPanelBundle.properties`（改） | 新增状态条、失败分类、设置项与通知文案 |
+| `opencode-frontend/src/main/resources/idea-agent-panel.opencode-frontend.xml`（改） | 注册 `notificationGroup` 扩展点（§5.3） |
 
 ### 6.3 对既有连接层的影响（仅「地址来源」变化）
 
@@ -528,11 +528,11 @@ flowchart LR
 | **T5** 生命周期编排与自愈 | 状态机（含 `NEEDS_CREDENTIALS` 转移）、编排 T2/T3/T4、退出监听、退避重启与上限、健康轮询、状态流 `StateFlow` | `server/OpenCodeServerManager.kt` | T1–T4 | `OpenCodeServerManagerUnitTest`（注入假 Discovery/Launcher/Registry）：状态转移全覆盖、自愈上限、401 分流（他人→NEEDS_CREDENTIALS / 自有→FAILED）、他人实例不终止 | 否（依赖 T1–T4） |
 | **T6** 连接层接线 | `S1` 端点到 `BackendChatRepositoryModel.updateServerConfig`；`dispose()` 顺序（先释放引用 → 再停事件流）；`Project.basePath` 作为工作目录来源 | `BackendChatRepositoryModel.kt`（小改） | T5 | 既有全量单测不回归 + `OpenCodeServerManagerUnitTest` 的「端点变化触发一次下发」断言 | 否 |
 | **T7** RPC 与 shared 契约 | `getServerStateFlow` / `retryServerStart` / `stopServer`（自有实例）/ `submitServerCredentials`（他人实例凭据）（含 DTO：状态、失败分类、端口、是否自有、refCount） | `opencode-shared/.../ChatRepositoryRpcApi.kt`、`opencode-shared/.../dtos.kt`、`BackendChatRepositoryRpcApi.kt` | T5（接口冻结即可开工） | 契约单测（DTO 序列化往返）+ 编译（`rpc` 插件对接口变更的校验） | 可与 T6 并行 |
-| **T8** 前端状态条与设置项 | `ServerStatusStrip`（含凭据输入）、装配进 `OpenCodeChatApp`、设置页「Server 管理」分组、`notificationGroup` 注册、bundle 文案、（可选）「测试连接」复用 Discovery 分类 | `chatApp/ui/ServerStatusStrip.kt`、`chatApp/OpenCodeChatApp.kt`、`settings/ConnectionSettingsTab.kt`、`settings/OpenCodeSettingsState.kt`、`messages/OpencodeFrontendBundle.properties`、`opencode-idea-panel.opencode-frontend.xml` | T7 | `ServerStatusStripUnitTest`（Platform test framework 构造组件，按状态序列断言整条显隐、按钮可见性、凭据输入可用与按钮回调）；装机验收见 §9.2 | 否（依赖 T7） |
+| **T8** 前端状态条与设置项 | `ServerStatusStrip`（含凭据输入）、装配进 `AgentChatApp`、设置页「Server 管理」分组、`notificationGroup` 注册、bundle 文案、（可选）「测试连接」复用 Discovery 分类 | `chatApp/ui/ServerStatusStrip.kt`、`chatApp/AgentChatApp.kt`、`settings/ConnectionSettingsTab.kt`、`settings/AgentSettingsState.kt`、`messages/AgentPanelBundle.properties`、`idea-agent-panel.opencode-frontend.xml` | T7 | `ServerStatusStripUnitTest`（Platform test framework 构造组件，按状态序列断言整条显隐、按钮可见性、凭据输入可用与按钮回调）；装机验收见 §9.2 | 否（依赖 T7） |
 | **T9** 测试横切基建 | 短命进程桩脚本（模拟 `opencode serve`：解析 `--port`、暴露 `GET /api/info` 返回 `pid`、可注入「慢启动/拒绝/401」形态）、HTTP 桩工具类 | `src/test/resources/server/` + `src/test/kotlin/.../server/*Support.kt` | 无（可先于 T2/T4 落地，供其复用） | 自身跑通「桩可启停、可切形态」的用例 | 是（应最先/与 T1 并行） |
 | **T10** 共享注册表与引用计数 | 引用计数 acquire/release、「最后一个引用者」判定（锁内 refCount==0 且 references 为空）、心跳与崩溃残留清理、强制归零（用户停止 / 重置） | `server/OpenCodeServerRegistry.kt`（扩展）、`server/OpenCodeServerManager.kt`（接入） | T3、T5 | `OpenCodeServerRegistryUnitTest`：两引用者场景（关一不停、关最后一才停）、崩溃残留（心跳过期）清理、并发 release 只终止一次 | 否（依赖 T3/T5） |
 | **T11** 他人实例的凭据交互 | `NEEDS_CREDENTIALS` 交互链路：状态透出 → 前端凭据输入 → `submitServerCredentials` → 验证 → `REUSING`/保持 | `server/OpenCodeServerManager.kt`、RPC（T7）、`chatApp/ui/ServerStatusStrip.kt` | T5、T7、T8 | `OpenCodeServerManagerUnitTest`（凭据通过/不通过转移 + 不终止他人进程）+ UI 冒烟（凭据输入可用） | 否 |
-| **T12** CLI 检测与引导安装 | `CLI_NOT_FOUND` 检测（PATH/cliPath）、**引导通知**（打开文档/官网，外链仅官方）、设置页 CLI 路径生效与复检 | `server/OpenCodeServerCliLocator.kt`（T4 已含解析，此处补引导）、`chatApp/ui/ServerStatusStrip.kt`、`settings/ConnectionSettingsTab.kt`、`OpencodeFrontendBundle.properties` | T4、T8 | `OpenCodeServerCliLocatorUnitTest`（PATH 命中/未命中/覆写）+ 装机验收 §9.2 第 4 条 | 否 |
+| **T12** CLI 检测与引导安装 | `CLI_NOT_FOUND` 检测（PATH/cliPath）、**引导通知**（打开文档/官网，外链仅官方）、设置页 CLI 路径生效与复检 | `server/OpenCodeServerCliLocator.kt`（T4 已含解析，此处补引导）、`chatApp/ui/ServerStatusStrip.kt`、`settings/ConnectionSettingsTab.kt`、`AgentPanelBundle.properties` | T4、T8 | `OpenCodeServerCliLocatorUnitTest`（PATH 命中/未命中/覆写）+ 装机验收 §9.2 第 4 条 | 否 |
 | **T13** 文档回填（**本方案落地后**执行，非本次） | 回填《TSD-30-会话面板整体优化方案》§9.2 G4 行状态为「已立项/已实现」；`README.md` 依赖表与「关键技术点」更新；PRD §4.1 补「最低 2026.2」「CLI 路径可覆盖」 | 上述既有文档 | T1–T12 完成 | 人工核对文档与实现一致（无需构建） | 否（收尾） |
 
 **并行批次建议**：批 1 = T9 + T1 → 批 2 = T2 + T3 → 批 3 = T4 + T5 → 批 4 = T6 + T7 + T10 → 批 5 = T8 + T11 + T12 → 收尾 T13。
@@ -642,9 +642,9 @@ flowchart LR
 | A5 | `ProcessListener` / `ProcessAdapter` / `ProcessOutputType` | **可用** | `util-8.jar`：`ProcessListener.onTextAvailable(ProcessEvent, com.intellij.openapi.util.Key)`（default 方法）、`processTerminated(ProcessEvent)`、`processWillTerminate(ProcessEvent, boolean)`、`processNotStarted()`、`startNotified(ProcessEvent)`；`ProcessAdapter`（abstract，无成员）；`ProcessOutputType` 含 `STDOUT` / `STDERR` / `SYSTEM`，并有静态 `isStdout(Key)`/`isStderr(Key)`；`ProcessEvent` 提供 `getText()` / `getExitCode()` | §3.6/§3.8 采用 `onTextAvailable` + `isStdout/isStderr` 区分流；`processTerminated` 做退出监听 |
 | A6 | 空闲端口获取 | **`findAvailableSocketPort()` 可用、未弃用**；**`SocketUtil` 未找到** | `util.jar` `com.intellij.util.net.NetUtils`：`public static int findAvailableSocketPort() throws IOException`、`public static int tryToFindAvailableSocketPort()`、`tryToFindAvailableSocketPort(int)`、`findAvailableSocketPorts(int)`、`getProxySelector(String)`、`canConnectToSocket/isLocalhost/canConnectToRemoteSocket`（后三者标注 `@ApiStatus$Obsolete`；`findAvailableSocketPort()` **无** @Deprecated/@ApiStatus.Obsolete）。`com.intellij.util.net.SocketUtil` 与 `com.intellij.util.io.SocketUtil` 全量搜索**未找到** | T1 用 `NetUtils.findAvailableSocketPort*`；**不要**引用 `SocketUtil`（SDK 无此类） |
 | A7 | `PathManager.getSystemPath()` | **可用** | `util-8.jar` `com.intellij.openapi.application.PathManager`：`public static String getSystemPath()`、`getSystemDir()`（返回 `java.nio.file.Path`）、`getConfigPath()`、`getLogPath()`、`getPluginsPath()` | T3 注册表落盘根用 `PathManager.getSystemPath()`（或 `getSystemDir()`） |
-| A8 | 模块可得性（`opencode-backend`） | **无需新增依赖（v1.2 修正）**；`intellij.platform.execution` 反而**不可声明** | `javap -classpath "<IDEA>/Contents/lib/util.jar:<IDEA>/Contents/lib/util-8.jar"` 可解析出 `GeneralCommandLine` / `OSProcessHandler` / `KillableProcessHandler`（即这些类在 `util.jar`，属公开模块 `intellij.platform.util`）；沙箱实证：在 backend 的 `<dependencies>` 加 `<module name="intellij.platform.execution"/>` 后，测试沙箱启动报 `opencode-idea-panel.opencode-backend isn't loaded: it is from namespace 'com.ayongw...' and depends on module 'intellij.platform.execution' which is registered in 'com.intellij' plugin with internal visibility in namespace 'jetbrains'`（`PluginSetBuilder.kt:308`），插件整体不加载 | 保持 backend 依赖声明**不变**（`platform.backend` / `kernel.backend` / `rpc.backend` + shared），进程管理类经传递依赖即可用；`intellij.platform.execution` 一律**不得**出现（§6.1） |
+| A8 | 模块可得性（`opencode-backend`） | **无需新增依赖（v1.2 修正）**；`intellij.platform.execution` 反而**不可声明** | `javap -classpath "<IDEA>/Contents/lib/util.jar:<IDEA>/Contents/lib/util-8.jar"` 可解析出 `GeneralCommandLine` / `OSProcessHandler` / `KillableProcessHandler`（即这些类在 `util.jar`，属公开模块 `intellij.platform.util`）；沙箱实证：在 backend 的 `<dependencies>` 加 `<module name="intellij.platform.execution"/>` 后，测试沙箱启动报 `idea-agent-panel.opencode-backend isn't loaded: it is from namespace 'com.ayongw...' and depends on module 'intellij.platform.execution' which is registered in 'com.intellij' plugin with internal visibility in namespace 'jetbrains'`（`PluginSetBuilder.kt:308`），插件整体不加载 | 保持 backend 依赖声明**不变**（`platform.backend` / `kernel.backend` / `rpc.backend` + shared），进程管理类经传递依赖即可用；`intellij.platform.execution` 一律**不得**出现（§6.1） |
 | A9 | split mode 主机判定 | `ClientHost` / `RemoteApiProvider` **未找到**；**可用替代已定位** | `intellij.platform.core.jar`：`ClientSessionsUtil.getCurrentSessionOrNull(Project)` → `ClientProjectSession`（`ClientSession.isLocal()` / `isRemote()`）；`ClientKind{LOCAL,FRONTEND,REMOTE,…}`。`intellij.platform.projectModel.impl.jar`：`EelProviderUtil.getEelDescriptor(Project)`；`util-8.jar`/`lib`：`com.intellij.platform.eel.provider.LocalEelDescriptor.INSTANCE`（本机单例）。`util.jar`：`GeneralCommandLine.getNonLocalEelDescriptor()`（非本机时非 null） | R4 降级判定入口：`EelProviderUtil.getEelDescriptor(project) !== LocalEelDescriptor.INSTANCE`（或 `ClientSessionsUtil.getCurrentSessionOrNull(project).isLocal()`）即非本机 → 默认关闭自动启动 |
-| A10 | 通知 API 与 `notificationGroup` 扩展点 | **可用** | `intellij.platform.ide.core.jar`：`NotificationGroupManager`（`getInstance()` / `getNotificationGroup(String)` / `isGroupRegistered(String)`）、`NotificationGroup`（`createNotification(...)`）、`Notification`、`NotificationType{INFORMATION,WARNING,ERROR,…}`。EP 实证样例（内置插件 jar 内 `META-INF/plugin.xml`）：`<notificationGroup id="Coverage" displayType="BALLOON" bundle="messages.JavaCoverageBundle" key="notification.group.coverage"/>` | §5.3 采用该写法在 **frontend 模块**注册 `<notificationGroup>`（bundle 指向 `OpencodeFrontendBundle`） |
+| A10 | 通知 API 与 `notificationGroup` 扩展点 | **可用** | `intellij.platform.ide.core.jar`：`NotificationGroupManager`（`getInstance()` / `getNotificationGroup(String)` / `isGroupRegistered(String)`）、`NotificationGroup`（`createNotification(...)`）、`Notification`、`NotificationType{INFORMATION,WARNING,ERROR,…}`。EP 实证样例（内置插件 jar 内 `META-INF/plugin.xml`）：`<notificationGroup id="Coverage" displayType="BALLOON" bundle="messages.JavaCoverageBundle" key="notification.group.coverage"/>` | §5.3 采用该写法在 **frontend 模块**注册 `<notificationGroup>`（bundle 指向 `AgentPanelBundle`） |
 | A11 | 子进程环境变量注入 | **可用**（父环境默认继承）；语义**需实测** | `util.jar`：`GeneralCommandLine.withEnvironment(String,String)` / `withEnvironment(Map)`；`GeneralCommandLine$ParentEnvironmentType{NONE, SYSTEM, CONSOLE}`；`isPassParentEnvironment()` / `getParentEnvironment()` / `getEffectiveEnvironment()`。opencode v2.0.18 二进制含 `OPENCODE_SERVER_PASSWORD` / `OPENCODE_PASSWORD`（`strings` 证据） | §3.6 采用 `withEnvironment("OPENCODE_SERVER_PASSWORD", pw)`，保持默认 `ParentEnvironmentType.CONSOLE` 以继承父环境；**「父进程注入即子进程可见」以签名/枚举推断，需实测**（A11 保留一条实测项） |
 | A12 | 跨进程文件锁（`java.nio.channels.FileLock`） | **需运行时验证** | 无法静态核实：SDK 未改变 JDK 锁语义；`FileLock` 为 JDK 类型，多实例/跨平台（macOS/Windows）行为须实测 | §3.3/§3.7 保留 `FileLock`，但**必须有降级路径**：注册表「原子写（临时文件 + rename）+ 心跳收敛」，不依赖强互斥（R13） |
 | A13 | 代理污染回环探测 | **平台提供关闭代理的现成能力**；`HttpRequests` 在 `com.intellij.util.io`（**非** `util.net`） | `intellij.platform.ide.core.jar`：`com.intellij.util.io.HttpRequests.request(String/Url)` → `RequestBuilder`，含 `public RequestBuilder useProxy(boolean)`、`connectTimeout(int)`、`readTimeout(int)`、`tuner(ConnectionTuner)`、`connect(RequestProcessor)`；`util.jar`：`NetUtils.getProxySelector(String)`；`com.intellij.util.net.ProxySettings`（接口，`getInstance()`）存在。`com.intellij.util.net.HttpRequests` **未找到**（类在 `util.io`） | §3.5 改用 JDK `HttpURLConnection` + `Proxy.NO_PROXY`（**显式关代理**，且不引入内部模块依赖）；okhttp（事件流）默认走 `ProxySelector.getDefault()`，回环是否被代理仍**需实测**（R3） |
@@ -683,7 +683,7 @@ flowchart LR
 | T5 生命周期编排与自愈 | `server/OpenCodeServerManager.kt` | `OpenCodeServerManagerUnitTest`（15 例） |
 | T6 连接层接线 | `BackendChatRepositoryModel.kt`、`server/ProjectServerHost.kt`、`BackendChatRepositoryRpcApi.kt` | 全量单测不回归 |
 | T7 RPC 与 shared 契约 | `opencode-shared/.../ChatRepositoryRpcApi.kt`、`BackendChatRepositoryRpcApi.kt` | `ServerStateDtoUnitTest` |
-| T8 前端状态条与设置项 | `opencode-frontend/.../chatApp/ui/ServerStatusStrip.kt`（新）、`chatApp/OpenCodeChatApp.kt`、`settings/ConnectionSettingsTab.kt`、`settings/OpenCodeSettingsState.kt`、`messages/OpencodeFrontendBundle.properties`、`opencode-idea-panel.opencode-frontend.xml` | `ServerStatusStripUnitTest`（5 例：显隐 / 按钮可见性 / 凭据输入 / 回调） |
+| T8 前端状态条与设置项 | `opencode-frontend/.../chatApp/ui/ServerStatusStrip.kt`（新）、`chatApp/AgentChatApp.kt`、`settings/ConnectionSettingsTab.kt`、`settings/AgentSettingsState.kt`、`messages/AgentPanelBundle.properties`、`idea-agent-panel.opencode-frontend.xml` | `ServerStatusStripUnitTest`（5 例：显隐 / 按钮可见性 / 凭据输入 / 回调） |
 | T9 测试横切基建 | `src/test/kotlin/.../server/stub/OpenCodeServerStubMain.kt` | 被 T2/T4 用例复用（`ok` / `unauthorized` / `notjson` / `slow` / `exit` 形态） |
 | T10 共享注册表引用计数 | `server/OpenCodeServerRegistry.kt` + `server/OpenCodeServerManager.kt` | `OpenCodeServerRegistryUnitTest` + `OpenCodeServerManagerUnitTest`（关一个不停 / 关最后一个才停） |
 | T11 他人实例的凭据交互 | `ServerStatusStrip.kt`（凭据输入）+ `ChatViewModel` / `FrontendChatRepositoryModel` + `submitServerCredentials` | `OpenCodeServerManagerUnitTest`（凭据通过/不通过、不终止他人进程）+ `ServerStatusStripUnitTest` |

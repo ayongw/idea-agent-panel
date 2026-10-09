@@ -1,6 +1,6 @@
 # TSD-33-Git 提交信息生成按钮设计
 
-> 适用范围：opencode-idea-panel 在 **IDE 提交窗口（Commit 工具窗 / Commit 对话框）** 增加一个「生成提交信息」按钮；用户**手工点击**后由 opencode 生成提交信息并回填输入框。
+> 适用范围：idea-agent-panel 在 **IDE 提交窗口（Commit 工具窗 / Commit 对话框）** 增加一个「生成提交信息」按钮；用户**手工点击**后由 opencode 生成提交信息并回填输入框。
 > 关联文档：面板整体与输入区见《TSD-07-主界面布局设计》《TSD-08-输入区与上下文交互设计》；进程与连接管理纪律见《TSD-31-进程与连接管理方案》；消息渲染与事件流见《TSD-06-事件流接入设计》《TSD-30-会话面板整体优化方案》。
 > 契约依据：平台扩展点与数据通路均已对本机 **IntelliJ IDEA 2026.2.3（build #IU-262.10968.63）** 实测核对（§2），非凭记忆推断。
 
@@ -86,13 +86,13 @@ control?.setCommitMessage(generatedText)
 
 ### 2.4 split mode 模块依赖
 
-`VcsDataKeys` / `CommitMessageI` 位于 `intellij.platform.vcs.jar`（platform-api）。前端模块需在 `opencode-idea-panel.opencode-frontend.xml` 增加：
+`VcsDataKeys` / `CommitMessageI` 位于 `intellij.platform.vcs.jar`（platform-api）。前端模块需在 `idea-agent-panel.opencode-frontend.xml` 增加：
 
 ```xml
 <dependencies>
     <module name="intellij.platform.frontend"/>
     <module name="intellij.platform.vcs"/>   <!-- 新增 -->
-    <module name="opencode-idea-panel.opencode-shared"/>
+    <module name="idea-agent-panel.opencode-shared"/>
 </dependencies>
 ```
 
@@ -245,7 +245,7 @@ suspend fun generateCommitMessage(projectId: ProjectId, request: CommitMessageRe
 
 ---
 
-## 6. 设置项（frontend，复用 `OpenCodeSettingsState`）
+## 6. 设置项（frontend，复用 `AgentSettingsState`）
 
 | 设置 | 默认 | 说明 |
 |---|---|---|

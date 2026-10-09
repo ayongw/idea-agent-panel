@@ -1,6 +1,6 @@
 # TSD-08-输入区与上下文交互设计
 
-> 适用范围：opencode-idea-panel 主界面**输入区**的上下文获取与参数选择——`/` 触发命令/技能/规则选择、`#` 触发工作区文件与目录选择、附件按钮选择本机任意文件，以及底部的**模式（Build/Plan）**与**模型（按供应商分组 + 筛选）**选择。
+> 适用范围：idea-agent-panel 主界面**输入区**的上下文获取与参数选择——`/` 触发命令/技能/规则选择、`#` 触发工作区文件与目录选择、附件按钮选择本机任意文件，以及底部的**模式（Build/Plan）**与**模型（按供应商分组 + 筛选）**选择。
 > 关联文档：布局与组件职责见《TSD-07-主界面布局设计》；设置读写（供应商/模型/技能配置来源）见《TSD-05-设置管理设计》；事件流见《TSD-06-事件流接入设计》。
 > 服务端契约依据：本机 opencode v2.0.18 实例导出的 `openapi.json`（115 个端点）实测。
 
@@ -84,7 +84,7 @@ mention 使用**工作区相对路径**（服务端 `FileSystem.Entry.path` 原�
 
 ### 2.3 chips 栏
 
-沿用 [ContextChipBar](../../opencode-frontend/src/main/kotlin/com/ayongw/idea/opencode/frontend/chatApp/ui/ContextChipBar.kt)，分为两段，中间用竖线分隔：
+沿用 [ContextChipBar](../../opencode-frontend/src/main/kotlin/com/ayongw/idea/agentpanel/frontend/chatApp/ui/ContextChipBar.kt)，分为两段，中间用竖线分隔：
 
 | 段 | 来源 | 内容 | 点 × 的行为 |
 |----|------|------|------------|
@@ -259,13 +259,13 @@ flowchart LR
 |------|------|
 | 顶部 | 搜索框（占位「搜索模型」），对 `name` / `modelID` / `id` 模糊过滤，实时生效 |
 | 主体 | 供应商分组头（`name`）+ 该组模型项；选中项右侧 `✓`；`free` 项带「免费」标签；搜索命中时按模型平铺（弱化分组） |
-| 底部 | 「管理模型」→ 打开设置页并定位到 Models Tab（`OpenCodeSettingsConfigurable`，见 §7.3） |
+| 底部 | 「管理模型」→ 打开设置页并定位到 Models Tab（`AgentSettingsConfigurable`，见 §7.3） |
 | 交互 | 组件式弹窗（`JBPopupFactory.createComponentPopupBuilder`），向上弹出、点击外部关闭、窗口宽度固定 360 px、最大高度 360 px |
 | 空态 | 加载中显示「Loading...」，过滤无结果显示「No results」 |
 
 ### 7.3 设置页初始 Tab
 
-`OpenCodeSettingsConfigurable` 增加伴生入口 `openAt(project, tabIndex)`：写一个待选下标，`createComponent()` 时按该下标选中 `JBTabbedPane`，供「管理模型」（Models 为下标 1）复用。
+`AgentSettingsConfigurable` 增加伴生入口 `openAt(project, tabIndex)`：写一个待选下标，`createComponent()` 时按该下标选中 `JBTabbedPane`，供「管理模型」（Models 为下标 1）复用。
 
 ## 8. 状态与持久化
 
@@ -337,7 +337,7 @@ flowchart LR
 | S2 `#` 文件与目录 | **已实施** | backend：`findEntries` / `listDirectory`（`location[directory]`）+ `findWorkspaceEntries` / `listWorkspaceDirectory`；frontend：`MentionSupport.detectTrigger/spans`、`MentionPopup`、`PromptInput` 触发与插入（`→` 进入目录）、`ChatViewModel.searchWorkspace`（200 ms 去抖）/`browseWorkspaceDirectory` |
 | S3 `/` 命令 / 技能 / 规则 | **已实施** | backend：`listCommands` / `listReferences` / `listSkillInfos` + RPC `listCommands` / `listReferences` / `listSkills`；frontend：分组候选（命令 / 技能 / 规则）、`MentionSupport.resolve`（命令单选 + 技能 `skills[]` + 规则转文件 + 未命中 `#path` 兜底）、命令走 `/command` 且 mention 从文本剔除 |
 | S4 模式（Build / Plan） | **已实施** | backend：`listAgents` 按 `build → plan → 其余` 排序；frontend：默认取 `build`（退化 `plan` → 首项）、`switchSession` 后 `getSessionSelection` 回读 agent/model |
-| S5 模型（分组 + 筛选） | **已实施** | backend：`listProviderNames` + `cost` 判免费 + `listModelProviders`；frontend：`ModelPickerPopup`（搜索框、供应商分组头、免费标签、`✓` 选中、向上弹出）、`InputToolbar.updateProviders`、「管理模型」→ `OpenCodeSettingsConfigurable.selectTab(MODELS_TAB_INDEX)` |
+| S5 模型（分组 + 筛选） | **已实施** | backend：`listProviderNames` + `cost` 判免费 + `listModelProviders`；frontend：`ModelPickerPopup`（搜索框、供应商分组头、免费标签、`✓` 选中、向上弹出）、`InputToolbar.updateProviders`、「管理模型」→ `AgentSettingsConfigurable.selectTab(MODELS_TAB_INDEX)` |
 | S6 单测与验证 | **已实施** | 新增 `MentionSupportUnitTest`（触发/定位/解析）、`AttachmentPickerUnitTest`（文件/目录判定）；扩展 `OpenCodeRestClientUnitTest`（prompt+skills 体、command 端点、command/reference/fs/provider 解析、免费判定）；`./gradlew test`、`./gradlew buildPlugin --no-daemon --no-configuration-cache` 通过 |
 
 > 手工冒烟（§10 第 1–6 项）需沙箱 IDE，尚未执行；§12.1 / §12.2 的服务端行为待连通环境实测后回填。

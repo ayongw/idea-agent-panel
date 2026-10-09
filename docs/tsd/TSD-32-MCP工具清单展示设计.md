@@ -1,6 +1,6 @@
 # TSD-32-MCP工具清单展示设计
 
-> 适用范围：opencode-idea-panel **设置页 MCP 面板**——在每张 MCP 服务器卡片下展示该服务器提供的**工具清单**（工具名 + 描述，可展开/收起），并把工具数并入状态徽章。
+> 适用范围：idea-agent-panel **设置页 MCP 面板**——在每张 MCP 服务器卡片下展示该服务器提供的**工具清单**（工具名 + 描述，可展开/收起），并把工具数并入状态徽章。
 > 关联文档：设置页整体与卡片组件见《TSD-05-设置管理设计》；进程与连接管理纪律见《TSD-31-进程与连接管理方案》；供应商/模型表格（同页相邻区块）见《TSD-05》。
 > 契约依据：本机 opencode v2.0.18 实测（`127.0.0.1:4096`、ITest 实例 `4097` 活体 `openapi.json` 均为 **115 个端点**；MCP 相关端点共 5 个，见 §2）。工具清单可行性由 PoC 脚本 [temp/opencode-mcp-probe/mcp_list_tools.py](../../temp/opencode-mcp-probe/mcp_list_tools.py) 验证。
 
@@ -120,7 +120,7 @@
 
 ### 3.4 前置修复：MCP 配置读取兼容（P0）
 
-现状 [SettingsMapping.mcpServers](../../opencode-backend/src/main/kotlin/com/ayongw/idea/opencode/backend/SettingsMapping.kt#L212-L246) 只读 `mcp.servers.<name>`；opencode 源码 [normalize.ts](../../../opencode/packages/core/src/config/normalize.ts#L260-L294) 显示：**原生形态是 `mcp.servers.<name>`，同时兼容 V1 扁平形态 `mcp.<name>`**（本机 `opencode.jsonc` 正是扁平形态）。基线配置字段（源码 `v1/config/mcp.ts`）：`type`、`command`、`cwd`、`environment`、`enabled`、`url`、`headers`、`oauth`、`timeout`。
+现状 [SettingsMapping.mcpServers](../../opencode-backend/src/main/kotlin/com/ayongw/idea/agentpanel/backend/SettingsMapping.kt#L212-L246) 只读 `mcp.servers.<name>`；opencode 源码 [normalize.ts](../../../opencode/packages/core/src/config/normalize.ts#L260-L294) 显示：**原生形态是 `mcp.servers.<name>`，同时兼容 V1 扁平形态 `mcp.<name>`**（本机 `opencode.jsonc` 正是扁平形态）。基线配置字段（源码 `v1/config/mcp.ts`）：`type`、`command`、`cwd`、`environment`、`enabled`、`url`、`headers`、`oauth`、`timeout`。
 
 修复内容：
 
@@ -175,7 +175,7 @@ suspend fun listMcpTools(projectId: ProjectId, serverName: String): McpToolsDto
 
 | 项 | 规则 |
 |----|------|
-| 卡片结构 | 在 [SettingsCard](../../opencode-frontend/src/main/kotlin/com/ayongw/idea/opencode/frontend/settings/SettingsCards.kt#L113-L159) 增「可展开」能力：标题行左侧加折叠箭头（`AllIcons.General.ArrowRight/ArrowDown`），点击标题行（或箭头）切换；展开区在卡片下方，缩进 12px |
+| 卡片结构 | 在 [SettingsCard](../../opencode-frontend/src/main/kotlin/com/ayongw/idea/agentpanel/frontend/settings/SettingsCards.kt#L113-L159) 增「可展开」能力：标题行左侧加折叠箭头（`AllIcons.General.ArrowRight/ArrowDown`），点击标题行（或箭头）切换；展开区在卡片下方，缩进 12px |
 | 展开区内容 | 每行 = 工具名（等宽小字、加粗）+ 描述（`UIUtil.getContextHelpForeground()` 小字、单行截断 `…`、tooltip 显示全文） |
 | 行数上限 | 展开区最多显示 10 行，超出在展开区内部滚动（`JBScrollPane`，高度 ~160px），不撑高整个设置页 |
 | 状态徽章 | 首次拉取成功后，徽章文案追加 `(N tools)`；`N=1` 用单数 `tool`。未展开过则维持现状（仅状态） |

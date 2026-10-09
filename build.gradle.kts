@@ -2,6 +2,7 @@ import org.jetbrains.changelog.Changelog
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.tasks.aware.SplitModeAware
+import java.io.File
 
 group = "com.ayongw.idea"
 
@@ -160,4 +161,107 @@ tasks.test {
         exclude("**/*ITest.class")
     }
     systemProperty("opencode.it", integrationTestEnabled.toString())
+}
+
+// ==================== 部署到真实 IDE ====================
+
+/**
+ * 真实 IDE 的插件目录 = `<IDE 配置目录>/plugins`。
+ *
+ * 优先 `-PpluginInstallDir=<plugins 目录>` 显式指定；否则读 `ideaHome` 的
+ * `product-info.json` 取 `dataDirectoryName`（如 `IntelliJIdea2026.2`）再拼出平台目录。
+ *
+ * 用配置文件而不是从 build 号推导（262 → 2026.2）：推导规则会随平台变，配置文件不会。
+ * `providers.fileContents` 让该文件成为配置缓存输入——IDEA 升级后无需手动清缓存。
+ */
+val realIdePluginsDir: File? = providers
+    .fileContents(layout.file(provider { File(ideaHome, "Contents/Resources/product-info.json") }))
+    .asText
+    .map { Regex("\"dataDirectoryName\"\\s*:\\s*\"([^\"]+)\"").find(it)?.groupValues?.get(1) }
+    .orNull
+    ?.let { dataDirName ->
+        val homeDir = System.getProperty("user.home")
+        val osName = System.getProperty("os.name").orEmpty()
+        val base = when {
+            osName.startsWith("Mac") -> File(homeDir, "Library/Application/JetBrains")
+            osName.startsWith("Windows") -> File(System.getenv("APPDATA") ?: "$homeDir/AppData/Roaming", "JetBrains")
+            else -> File(homeDir, ".local/share/JetBrains")
+        }
+        File(File(base, dataDirName), "plugins")
+    }
+
+// zip 名随 rootProject.name（改名时只需改 settings.gradle.kts 一处）
+val builtPluginZip = layout.buildDirectory.file("distributions/${rootProject.name}-$version.zip")
+val unpackedPluginDir = layout.buildDirectory.dir("tmp/install-plugin")
+
+// 探测不到时给个构建目录内的占位路径：真正报错放在 doFirst，
+// 否则配置期就中断——本项目 ideaHome 默认写死 /Applications，换机/换 IDE 版本会连带编译失败。
+// 注意是 `<配置目录>/plugins/<插件名>`：Sync 的 into 是「内容落地根」，
+// 写成 plugins 根会把 lib/ 直接平铺进 plugins/，并删掉 plugins 下原有的插件目录。
+val installTargetDir: File = realIdePluginsDir
+    ?.resolve(rootProject.name)
+    ?: File(layout.buildDirectory.get().asFile, "tmp/install-plugin/unresolved-target")
+
+/** 解压 `buildPlugin` 的 zip 到构建目录（zip 内已含顶层插件目录） */
+val unpackPlugin by tasks.registering(Sync::class) {
+    group = "intellij platform"
+    description = "解压 buildPlugin 产出的插件 zip 到构建目录"
+    dependsOn(tasks.named("buildPlugin"))
+    from(zipTree(builtPluginZip))
+    into(unpackedPluginDir)
+}
+
+/**
+ * 把插件装到真实 IDE 的 plugins 目录：`./gradlew installPlugin`（已含打包）。
+ *
+ * 与 `buildPlugin` **刻意分开**：`buildPlugin` 只产出 zip、不碰真实 IDE，
+ * 避免「只想打个包」也顺手改掉 IDE 的插件目录（CI、只想验证构建产物时都需要这个语义）。
+ *
+ * IPGP 2.x 不提供该能力（只有 buildPlugin / prepareSandbox / runIde / publishPlugin…），
+ * 这里用 `Sync` 一步完成「删除目标插件目录 + 写入新包」，天然幂等。
+ *
+ * 生效仍需**重启 IDE**：真实 IDE 默认不开 `idea.auto.reload.plugins`（只有 IPGP 的 runIde 会传）。
+ * 想免重启，自行在 `Help | Edit Custom Properties` 加 `idea.auto.reload.plugins=true`。
+ *
+ * 注意：目标目录不要做成软链（Gradle 会跟随软链删真实目录里的文件），也不要在 IDE 运行中
+ * 手动改这个目录——统一走本任务，避免与 IDE 的插件管理状态不一致。
+ *
+ * 实现约束：doFirst/doLast 是执行期 action，必须**只读 task 自身的 Property**。
+ * 直接引用脚本里的 val 会把 Gradle 脚本对象拖进闭包，配置缓存序列化失败。
+ */
+val installPlugin by tasks.registering(Sync::class) {
+    group = "intellij platform"
+    description = "把插件安装到真实 IDE 的 plugins 目录（需重启 IDE 生效）"
+    dependsOn(unpackPlugin)
+    from(unpackedPluginDir.map { it.dir(rootProject.name) })
+    into(installTargetDir)
+
+    // ↓ 配置期从脚本取值后存进 task 自身的 Property，供执行期回调使用
+    val targetResolved = objects.property<Boolean>().convention(realIdePluginsDir != null)
+    val ideaProductInfo = objects.property<String>()
+        .convention(File(ideaHome, "Contents/Resources/product-info.json").path)
+    val pluginVersion = objects.property<String>().convention(version.toString())
+
+    doFirst {
+        check(targetResolved.get()) {
+            "未找到 ${ideaProductInfo.get()}，无法推导 IDE 的插件目录；" +
+                "请用 -PpluginInstallDir=<IDEA 的 plugins 目录> 显式指定"
+        }
+        check(destinationDir.parentFile.isDirectory) {
+            "IDE 插件目录不存在：${destinationDir.parentFile}；" +
+                "请用 -PpluginInstallDir=<IDEA 的 plugins 目录> 显式指定"
+        }
+    }
+
+    doLast {
+        println(
+            """
+            |
+            |✅ 插件已安装：${destinationDir}
+            |   版本：${pluginVersion.get()}
+            |   ⚠️ 重启 IntelliJ IDEA 后生效
+            |     （免重启热重载：在 Help | Edit Custom Properties 里加 idea.auto.reload.plugins=true）
+            """.trimMargin()
+        )
+    }
 }
