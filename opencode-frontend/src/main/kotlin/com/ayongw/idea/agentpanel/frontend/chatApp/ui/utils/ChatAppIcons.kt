@@ -39,7 +39,9 @@ object ChatAppIcons {
 
     object Session {
         val rename: Icon = AllIcons.Actions.EditSource
-        val delete: Icon = AllIcons.General.Remove
+
+        /** 垃圾桶：与 IDE 其它删除按钮同源（General.Remove 是减号，语义不符） */
+        val delete: Icon = AllIcons.General.Delete
         val duplicate: Icon = AllIcons.Actions.Copy
     }
 }

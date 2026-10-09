@@ -1,5 +1,6 @@
 package com.ayongw.idea.agentpanel.frontend.chatApp.viewmodel
 
+import com.ayongw.idea.agentpanel.shared.SessionStateDto
 import com.intellij.openapi.diagnostic.Logger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +40,16 @@ internal class SessionController(
     /** 切换会话进行中（供 UI 显示加载提示）；失败路径也会复位 */
     private val _switching = MutableStateFlow(false)
     internal val switchingFlow: StateFlow<Boolean> = _switching.asStateFlow()
+
+    /**
+     * 会话列表拉取进行中。
+     *
+     * `allSessionsFlow` 初始值为空列表，与「拉到了但确实没有会话」无法区分 ——
+     * 首次打开「全部会话」弹窗时若直接渲染空列表，用户会看到「没有任何会话」，
+     * 实际只是还没加载完。UI 据此显示 loading 而非空态。
+     */
+    private val _sessionsLoading = MutableStateFlow(false)
+    override val sessionsLoading: StateFlow<Boolean> = _sessionsLoading.asStateFlow()
 
     /** 顶部已打开会话（tab）顺序，供核心 ChatViewModel 暴露 */
     internal val openedSessionIdsFlow: StateFlow<List<String>> = _openedSessionIds.asStateFlow()
@@ -95,7 +106,17 @@ internal class SessionController(
     }
 
     override fun loadSessions() {
-        coroutineScope.launch { repository.loadSessions() }
+        coroutineScope.launch { loadSessionsWithIndicator() }
+    }
+
+    /** 拉取会话列表并维护 [sessionsLoading]（成功/失败都复位，避免 loading 永久挂住） */
+    private suspend fun loadSessionsWithIndicator(): List<SessionStateDto> {
+        _sessionsLoading.value = true
+        try {
+            return repository.loadSessions()
+        } finally {
+            _sessionsLoading.value = false
+        }
     }
 
     /** 关闭会话 tab（核心 ChatViewModel 委托调用；删除会话时内部也会调用） */
@@ -149,7 +170,7 @@ internal class SessionController(
      * 启动引导：拉取本工作区历史会话 → 恢复上次的 tab / 会话 → 一个都没有时默认创建一个
      */
     private suspend fun bootstrapSessions() {
-        val sessions = runCatching { repository.loadSessions() }.getOrDefault(emptyList())
+        val sessions = runCatching { loadSessionsWithIndicator() }.getOrDefault(emptyList())
         val existingIds = sessions.map { it.sessionId }.toSet()
         // 会话已被删除的 tab 不再恢复；只在拉取成功且非空时裁剪，避免服务不可达时清空 tab
         if (existingIds.isNotEmpty()) {

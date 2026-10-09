@@ -129,10 +129,12 @@ class AgentChatApp(
      *
      * 服务端已按 `?directory=` 过滤，这里再做路径归一化兜底：去尾斜杠 + canonicalPath，
      * 兼容符号链接（如 `/var` 与 `/private/var`）与结尾斜杠差异。
+     *
+     * @param source 数据源；默认取面板缓存，弹窗订阅时传入流里的最新值
      */
-    private fun workspaceSessions(): List<SessionStateDto> {
+    private fun workspaceSessions(source: List<SessionStateDto> = allSessions): List<SessionStateDto> {
         val basePath = project.basePath
-        return allSessions.filter { session ->
+        return source.filter { session ->
             val directory = session.directory
             directory == null || basePath == null || normalizePath(directory) == normalizePath(basePath)
         }
@@ -143,6 +145,14 @@ class AgentChatApp(
 
     /**
      * 「全部会话」弹窗：查看当前工作区内的所有会话
+     *
+     * 列表**必须随数据流刷新**，不能只吃打开瞬间的快照：
+     * - 删除 / 重命名成功后服务端会重拉列表（`allSessionsFlow` 更新），不订阅则弹窗内毫无变化，
+     *   表现为「点了删除没反应」；
+     * - 打开时还会触发一次 [SessionApi.loadSessions]，首次拉取完成前列表是空的，
+     *   靠 [SessionApi.sessionsLoading] 显示 loading 而不是「没有会话」。
+     *
+     * 订阅随弹窗销毁而取消（[Disposer.register] 挂 popup），否则每次打开都会多留一个订阅。
      */
     private fun showAllSessionsPopup(anchor: Component) {
         allSessionsPopup?.cancel()
@@ -163,12 +173,6 @@ class AgentChatApp(
             onRenameSession = { sessionId, newTitle -> viewModel.sessions.renameSession(sessionId, newTitle) },
             onDeleteSession = { sessionId -> viewModel.sessions.deleteSession(sessionId) }
         )
-        // 分组展示依赖「已打开的会话 id」（tab 集合）：Active / History 分开展示
-        sessionList.updateSessions(
-            workspaceSessions(),
-            viewModel.currentSessionId.value,
-            viewModel.openedSessionIds.value
-        )
 
         val content = JPanel(BorderLayout()).apply {
             preferredSize = Dimension(
@@ -178,7 +182,7 @@ class AgentChatApp(
             add(sessionList, BorderLayout.CENTER)
         }
 
-        allSessionsPopup = JBPopupFactory.getInstance()
+        val popup = JBPopupFactory.getInstance()
             .createComponentPopupBuilder(content, null)
             .setTitle(AgentPanelBundle.message("chat.topbar.all.sessions"))
             .setRequestFocus(true)
@@ -186,9 +190,40 @@ class AgentChatApp(
             .setMovable(false)
             .setCancelOnClickOutside(true)
             .createPopup()
+        allSessionsPopup = popup
 
-        allSessionsPopup?.showUnderneathOf(anchor)
+        val subscription = panelScope.launch {
+            combine(
+                viewModel.sessions.allSessionsFlow,
+                viewModel.openedSessionIds,
+                viewModel.currentSessionId,
+                viewModel.sessions.sessionsLoading
+            ) { sessions, openedIds, currentId, loading ->
+                SessionListState(sessions, openedIds, currentId, loading)
+            }.collect { state ->
+                ApplicationManager.getApplication().invokeLater {
+                    // 分组展示依赖「已打开的会话 id」（tab 集合）：Active / History 分开展示
+                    sessionList.updateSessions(
+                        workspaceSessions(state.sessions),
+                        state.currentSessionId,
+                        state.openedIds,
+                        state.loading
+                    )
+                }
+            }
+        }
+        Disposer.register(popup) { subscription.cancel() }
+
+        popup.showUnderneathOf(anchor)
     }
+
+    /** 弹窗列表的渲染输入（一次 combine 的四个流合成，避免多次刷新互相覆盖） */
+    private data class SessionListState(
+        val sessions: List<SessionStateDto>,
+        val openedIds: List<String>,
+        val currentSessionId: String?,
+        val loading: Boolean
+    )
 
     private fun openSettings(tabIndex: Int? = null) {
         if (tabIndex != null) AgentSettingsConfigurable.selectTab(tabIndex)

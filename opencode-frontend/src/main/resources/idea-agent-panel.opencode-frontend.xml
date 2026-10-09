@@ -9,8 +9,10 @@
     <extensions defaultExtensionNs="com.intellij">
         <applicationService serviceImplementation="com.ayongw.idea.agentpanel.frontend.settings.AgentSettingsState"/>
         <projectService serviceImplementation="com.ayongw.idea.agentpanel.frontend.chatApp.viewmodel.AgentSessionTabsState"/>
+        <!-- anchor=right：默认停靠右侧（聊天类工具窗惯例）。仅对未记住位置的新窗口生效 -->
         <toolWindow factoryClass="com.ayongw.idea.agentpanel.frontend.toolWindow.AgentToolWindowFactory"
                     id="Idea Agent Panel"
+                    anchor="right"
                     icon="/icons/opencode.svg"/>
         <!-- 项目启动后自动显示一次工具窗：新 UI 对未激活过的工具窗不常驻按钮，需 show 一次让入口可见 -->
         <backgroundPostStartupActivity implementation="com.ayongw.idea.agentpanel.frontend.toolWindow.AgentToolWindowAutoShowActivity"/>

@@ -1,9 +1,12 @@
 package com.ayongw.idea.agentpanel.frontend.settings
 
 import com.ayongw.idea.agentpanel.frontend.AgentPanelBundle
+import com.ayongw.idea.agentpanel.shared.AgentPluginVersion
 import com.intellij.openapi.options.Configurable
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.Rectangle
@@ -62,10 +65,25 @@ class AgentSettingsConfigurable : Configurable {
         pendingTabIndex = null
         tabbed = pane
 
-        val wrapper = SettingsPage().apply { add(pane, BorderLayout.CENTER) }
+        // 版本号紧贴内容底部：整体放 NORTH，不用 SOUTH——
+        // SOUTH 会被 BorderLayout 推到面板最底端，内容不足一屏时中间留出大片空白
+        val body = JPanel(BorderLayout()).apply {
+            add(pane, BorderLayout.CENTER)
+            add(versionLabel(), BorderLayout.SOUTH)
+        }
+        val wrapper = SettingsPage().apply { add(body, BorderLayout.NORTH) }
         panel = wrapper
         reloadSelectedTab()
         return wrapper
+    }
+
+    /** 内容下方的版本号：报障时用户能直接报出确切版本，省去「你装的是哪个包」的追问 */
+    private fun versionLabel(): JBLabel = JBLabel(
+        AgentPanelBundle.message("settings.version.label", AgentPluginVersion.get())
+    ).apply {
+        foreground = UIUtil.getContextHelpForeground()
+        font = JBUI.Fonts.smallFont()
+        border = JBUI.Borders.emptyTop(4)
     }
 
     override fun isModified(): Boolean = tabs.any { it.isModified() }

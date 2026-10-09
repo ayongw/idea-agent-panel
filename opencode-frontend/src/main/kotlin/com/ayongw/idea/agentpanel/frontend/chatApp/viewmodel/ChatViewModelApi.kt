@@ -80,6 +80,14 @@ interface SessionApi {
     /** 重新拉取本工作区会话列表（打开「全部会话」弹窗前刷新） */
     fun loadSessions()
 
+    /**
+     * 会话列表拉取进行中。
+     *
+     * `allSessionsFlow` 初始为空列表，与「拉到了但确实没有会话」不可区分；
+     * UI 据此在首次打开时显示 loading，而不是直接给一个「空列表」的误导结论。
+     */
+    val sessionsLoading: StateFlow<Boolean>
+
     /** 切走前保存当前会话草稿 */
     fun saveDraft(sessionId: String?, text: String)
 

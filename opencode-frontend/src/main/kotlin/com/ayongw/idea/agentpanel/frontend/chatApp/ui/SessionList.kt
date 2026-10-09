@@ -3,6 +3,7 @@ package com.ayongw.idea.agentpanel.frontend.chatApp.ui
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
@@ -26,6 +27,8 @@ import java.awt.Component
 import java.awt.Container
 import java.awt.Dimension
 import java.awt.event.ActionEvent
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.time.format.DateTimeFormatter
@@ -65,6 +68,7 @@ class SessionList(
     private val sessionList = SessionRowList()
     private val scrollPane = JBScrollPane(sessionList)
     private val emptyState = createEmptyState()
+    private val loadingState = createLoadingState()
 
     /** 过滤输入框（顶部） */
     private val filterField = JBTextField().apply {
@@ -85,13 +89,17 @@ class SessionList(
     /** 过滤文本（标题模糊匹配，大小写不敏感） */
     private var filterText: String = ""
 
+    /** 列表是否仍在拉取：为空时优先显示 loading 而非空状态 */
+    private var loading: Boolean = false
+
     /** 鼠标悬停的行下标；-1 表示无悬停（决定是否显示行尾删除按钮） */
     private var hoverIndex: Int = -1
 
     private companion object {
-        /** CardLayout 视图标识：会话列表 / 空状态 */
+        /** CardLayout 视图标识：会话列表 / 空状态 / 加载中 */
         const val CARD_LIST = "list"
         const val CARD_EMPTY = "empty"
+        const val CARD_LOADING = "loading"
     }
 
     init {
@@ -142,6 +150,32 @@ class SessionList(
         }
     }
 
+    /**
+     * 加载态：会话列表首次拉取中。
+     *
+     * 必须与空状态区分开 —— `allSessionsFlow` 初始就是空列表，渲染成「空」会被读成
+     * 「这个工作区没有会话」，而实际只是还没拉完。
+     */
+    private fun createLoadingState(): JPanel = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        isOpaque = false
+        border = JBUI.Borders.empty(JBUI.scale(ChatUIConstants.Spacing.XLARGE))
+
+        val spinner = JBLabel(AnimatedIcon.Default()).apply {
+            alignmentX = Component.CENTER_ALIGNMENT
+            border = JBUI.Borders.emptyBottom(JBUI.scale(ChatUIConstants.Spacing.MEDIUM))
+        }
+        add(spinner)
+
+        add(
+            JBLabel(AgentPanelBundle.message("chat.session.loading")).apply {
+                foreground = ChatAppColors.Text.disabled
+                font = JBFont.regular()
+                alignmentX = Component.CENTER_ALIGNMENT
+            }
+        )
+    }
+
     private fun setupList() {
         sessionList.model = DefaultListModel<SessionRow>()
 
@@ -149,7 +183,8 @@ class SessionList(
             cellRenderer = SessionRowRenderer(
                 isHovered = { i -> i == hoverIndex },
                 currentSessionId = { this@SessionList.currentSessionId },
-                canDelete = { this@SessionList.canDelete() }
+                canDelete = { this@SessionList.canDelete() },
+                rightInset = { this@SessionList.scrollBarOverlap() }
             )
             selectionMode = ListSelectionModel.SINGLE_SELECTION
             fixedCellHeight = JBUI.scale(ChatUIConstants.SessionList.ITEM_HEIGHT)
@@ -207,7 +242,15 @@ class SessionList(
             layout = CardLayout()
             add(scrollPane, CARD_LIST)
             add(emptyState, CARD_EMPTY)
+            add(loadingState, CARD_LOADING)
         }
+        // overlay 滚动条出现/消失会改变行尾可用宽度（见 scrollBarOverlap），
+        // 必须重绘让删除槽让位，否则会停在「有滚动条时的旧几何」上
+        scrollPane.verticalScrollBar.addComponentListener(object : ComponentAdapter() {
+            override fun componentShown(e: ComponentEvent) = repaintList()
+            override fun componentHidden(e: ComponentEvent) = repaintList()
+            override fun componentResized(e: ComponentEvent) = repaintList()
+        })
         val listColumn = JPanel(BorderLayout()).apply {
             isOpaque = false
             add(
@@ -232,16 +275,38 @@ class SessionList(
         rebuildRows()
     }
 
+    /** 重绘列表（单元格几何依赖行尾 inset，滚动条变化后必须重绘） */
+    private fun repaintList() {
+        sessionList.revalidate()
+        sessionList.repaint()
+    }
+
+    /**
+     * 行尾右侧需为**滚动条**预留的宽度。
+     *
+     * JetBrains 的 `JBScrollPane` 用 overlay 滚动条：viewport **不会**为滚动条缩窄
+     * （实测 420 宽的滚动面板里，滚动条占 x=404~418，列表仍是 417 宽）。
+     * 于是列表最右那一条正压在滚动条下面 —— 行尾删除槽会被遮住，且该区域的点击
+     * 会被滚动条吃掉（表现为「点删除没反应」）。
+     */
+    private fun scrollBarOverlap(): Int =
+        scrollPane.verticalScrollBar
+            .takeIf { it.isVisible }
+            ?.width
+            ?: 0
+
     /**
      * 删除热区判定：行尾固定 [ChatUIConstants.SessionList.DELETE_SLOT] 像素。
      *
      * 单元格由 renderer 每次绘制重建，不能持有按钮引用做事件消费（JList 会把点击
-     * 判成"选中"），故按固定占位做命中测试。
+     * 判成"选中"），故按固定占位做命中测试。右侧要先扣掉滚动条遮挡宽度，
+     * 与 renderer 画删除槽时留的边距用同一个口径（见 [isDeleteSlotHitAt]）。
      */
-    private fun isDeleteSlotHit(x: Int): Boolean {
-        val slot = JBUI.scale(ChatUIConstants.SessionList.DELETE_SLOT)
-        return x >= sessionList.width - sessionList.insets.right - slot
-    }
+    private fun isDeleteSlotHit(x: Int): Boolean = isDeleteSlotHitAt(
+        x = x,
+        rowRight = sessionList.width - sessionList.insets.right,
+        rightInset = scrollBarOverlap()
+    )
 
     private fun setupKeyBindings() {
         val inputMap = sessionList.getInputMap(JComponent.WHEN_FOCUSED)
@@ -358,16 +423,19 @@ class SessionList(
      * 更新会话列表。
      *
      * @param openedIds 已打开（tab 中存在）的会话 id —— 决定 Active / History 分组
+     * @param loading 会话列表仍在拉取：结果为空时显示 loading 而非空状态
      */
     fun updateSessions(
         newSessions: List<SessionStateDto>,
         activeSessionId: String?,
-        openedIds: List<String> = emptyList()
+        openedIds: List<String> = emptyList(),
+        loading: Boolean = false
     ) {
         sessions.clear()
         sessions.addAll(newSessions.map { it.toSessionState() })
         currentSessionId = activeSessionId
         openedSessionIds = openedIds.toSet()
+        this.loading = loading
         rebuildRows()
     }
 
@@ -392,18 +460,21 @@ class SessionList(
         appendSection(model, "chat.session.section.active", opened)
         appendSection(model, "chat.session.section.history", history)
 
-        if (model.size() == 0) {
-            showEmptyState()
-            return
-        }
-        showListState()
-        // 选中当前会话（渲染层另有左侧标记，这里让键盘/滚动定位也一致）
-        val currentIndex = rows().indexOfFirst {
-            it is SessionRow.Item && it.session.sessionId == currentSessionId
-        }
-        if (currentIndex >= 0) {
-            sessionList.selectedIndex = currentIndex
-            sessionList.ensureIndexIsVisible(currentIndex)
+        when (resolveSessionListView(model.size() > 0, loading)) {
+            SessionListView.LIST -> {
+                showListState()
+                // 选中当前会话（渲染层另有左侧标记，这里让键盘/滚动定位也一致）
+                val currentIndex = rows().indexOfFirst {
+                    it is SessionRow.Item && it.session.sessionId == currentSessionId
+                }
+                if (currentIndex >= 0) {
+                    sessionList.selectedIndex = currentIndex
+                    sessionList.ensureIndexIsVisible(currentIndex)
+                }
+            }
+
+            SessionListView.LOADING -> showLoadingState()
+            SessionListView.EMPTY -> showEmptyState()
         }
     }
 
@@ -430,6 +501,12 @@ class SessionList(
         repaint()
     }
 
+    private fun showLoadingState() {
+        (cards.layout as CardLayout).show(cards, CARD_LOADING)
+        revalidate()
+        repaint()
+    }
+
     private fun showListState() {
         (cards.layout as CardLayout).show(cards, CARD_LIST)
         revalidate()
@@ -444,6 +521,34 @@ class SessionList(
             val index = sessionList.selectedIndex
             return if (index >= 0 && index < sessions.size) sessions[index].sessionId else null
         }
+}
+
+/**
+ * 列表该展示哪个视图（纯逻辑，便于单测）。
+ *
+ * **加载中优先于空状态**：`allSessionsFlow` 初始就是空列表，此时渲染成「没有会话」是错误结论 ——
+ * 首次打开「全部会话」时数据还在拉取，用户看到的应该是 loading。
+ *
+ * public 而非 internal：frontend 模块经 `pluginModule` 进根项目，根 `src/test` 访问不到
+ * frontend 的 internal 声明（同 [SessionRow] / [SessionItem] 的处理）。
+ */
+enum class SessionListView { LIST, LOADING, EMPTY }
+
+fun resolveSessionListView(hasRows: Boolean, loading: Boolean): SessionListView = when {
+    hasRows -> SessionListView.LIST
+    loading -> SessionListView.LOADING
+    else -> SessionListView.EMPTY
+}
+
+/**
+ * 删除热区命中判定（纯逻辑，便于单测）。
+ *
+ * @param rowRight 列表可视区右边界（含 inset）
+ * @param rightInset 右侧被 overlay 滚动条遮住的宽度，行尾内容需为它让位
+ */
+fun isDeleteSlotHitAt(x: Int, rowRight: Int, rightInset: Int): Boolean {
+    val slot = JBUI.scale(ChatUIConstants.SessionList.DELETE_SLOT)
+    return x >= rowRight - rightInset - slot
 }
 
 /**
@@ -496,7 +601,9 @@ private class SessionRowRenderer(
     /** 当前会话 id（左侧标记） */
     private val currentSessionId: () -> String?,
     /** 删除策略（列表统一收口） */
-    private val canDelete: () -> Boolean
+    private val canDelete: () -> Boolean,
+    /** 行尾右侧需为 overlay 滚动条预留的宽度 */
+    private val rightInset: () -> Int
 ) : ListCellRenderer<SessionRow> {
 
     override fun getListCellRendererComponent(
@@ -537,11 +644,16 @@ private class SessionRowRenderer(
                 else -> ChatAppColors.Panel.background
             }
             // 当前会话用左侧竖条标记：选中高亮会随鼠标移动，竖条才能稳定指明"当前会话"
-            border = if (isCurrent) {
+            val indicator = if (isCurrent) {
                 BorderFactory.createMatteBorder(0, JBUI.scale(2), 0, 0, ChatAppColors.Tab.selectedIndicator)
             } else {
                 JBUI.Borders.empty(0, JBUI.scale(2), 0, 0)
             }
+            // 右侧再留出 overlay 滚动条压住的宽度，否则行尾删除槽会被滚动条遮住
+            border = BorderFactory.createCompoundBorder(
+                indicator,
+                JBUI.Borders.empty(0, 0, 0, rightInset())
+            )
             add(mainContent(value, isSelected, isCurrent), BorderLayout.CENTER)
             add(rightContent(value, index, isSelected), BorderLayout.EAST)
         }

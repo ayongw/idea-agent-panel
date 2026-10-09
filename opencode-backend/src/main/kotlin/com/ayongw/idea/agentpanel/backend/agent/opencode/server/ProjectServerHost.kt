@@ -1,8 +1,7 @@
 package com.ayongw.idea.agentpanel.backend.agent.opencode.server
 
 import com.ayongw.idea.agentpanel.backend.BackendChatRepositoryModel
-import com.intellij.ide.plugins.PluginManagerCore
-import com.intellij.openapi.extensions.PluginId
+import com.ayongw.idea.agentpanel.shared.AgentPluginVersion
 import com.intellij.openapi.project.Project
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -26,12 +25,5 @@ internal class ProjectServerHost(private val project: Project) : OpenCodeServerH
     }
 
     /** 写入共享注册表，供多窗口归属排查 */
-    override fun pluginVersion(): String =
-        runCatching { PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID))?.version }.getOrNull() ?: UNKNOWN
-
-    private companion object {
-        /** 必须与 plugin.xml 的 `<id>` 一致：查不到插件时归属信息退化为 unknown */
-        const val PLUGIN_ID = "com.ayongw.idea.idea-agent-panel"
-        const val UNKNOWN = "unknown"
-    }
+    override fun pluginVersion(): String = AgentPluginVersion.get()
 }

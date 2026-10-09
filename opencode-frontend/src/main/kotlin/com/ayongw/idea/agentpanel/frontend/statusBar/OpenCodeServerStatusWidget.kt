@@ -2,6 +2,8 @@ package com.ayongw.idea.agentpanel.frontend.statusBar
 
 import com.ayongw.idea.agentpanel.frontend.AgentPanelBundle
 import com.ayongw.idea.agentpanel.frontend.settings.AgentSettingsConfigurable
+import com.ayongw.idea.agentpanel.frontend.settings.htmlEscape
+import com.ayongw.idea.agentpanel.shared.AgentPluginVersion
 import com.ayongw.idea.agentpanel.shared.ChatRepositoryRpcApi
 import com.ayongw.idea.agentpanel.shared.ServerStateDto
 import com.intellij.icons.AllIcons
@@ -83,7 +85,21 @@ private class OpenCodeServerStatusWidget(
 
     private val presentation = object : StatusBarWidget.IconPresentation {
         override fun getIcon(): Icon = ServerStatusPresenter.present(state, this@OpenCodeServerStatusWidget).icon
-        override fun getTooltipText(): String = ServerStatusPresenter.present(state, this@OpenCodeServerStatusWidget).tooltip
+
+        /**
+         * 状态文案 + 末行插件版本：状态栏是用户排查插件问题时的第一眼，报障需能直接报出版本。
+         *
+         * 必须走 HTML：Swing tooltip 对纯文本里的 `\n` 会折叠成空格（实测版本号会挤到状态文案尾部），
+         * 故用 `<br>` 换行，并对状态文案做转义 —— 文案含 `&`（"Models & ..." 类）会被当成实体起始。
+         */
+        override fun getTooltipText(): String = buildString {
+            append("<html>")
+            append(htmlEscape(ServerStatusPresenter.present(state, this@OpenCodeServerStatusWidget).tooltip))
+            append("<br>")
+            append(AgentPanelBundle.message("settings.version.label", AgentPluginVersion.get()))
+            append("</html>")
+        }
+
         override fun getClickConsumer(): Consumer<MouseEvent> = Consumer(::showPopup)
     }
 
