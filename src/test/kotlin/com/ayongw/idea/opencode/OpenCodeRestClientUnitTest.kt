@@ -441,7 +441,8 @@ class OpenCodeRestClientUnitTest {
             {"data":[
               {"id":"msg_1","type":"user","text":"问题","time":{"created":1000}},
               {"id":"msg_2","type":"assistant","time":{"created":2000},
-               "tokens":{"input":480,"output":20,"reasoning":0,"cache":{"read":0,"write":0}},
+               "cost":0.0123,
+               "tokens":{"input":480,"output":69,"reasoning":25,"cache":{"read":8100,"write":120}},
                "content":[{"type":"text","text":"答案A"},{"type":"reasoning","text":"思考"},{"type":"text","text":"答案B"}]},
               {"id":"msg_3","type":"system","time":{"created":3000}}
             ],"cursor":{}}
@@ -454,9 +455,36 @@ class OpenCodeRestClientUnitTest {
         assertEquals("问题", messages[0].content)
         assertEquals(2000L, messages[1].createdMillis)
         assertEquals("assistant 应拼接 text 片段并跳过多余类型", "答案A\n答案B", messages[1].content)
-        assertEquals("assistant 的 input tokens 是上下文占比分子", 480L, messages[1].inputTokens)
-        assertNull("user 消息无 input tokens", messages[0].inputTokens)
+        assertEquals("assistant 的 tokens.input 是上下文占比分子", 480L, messages[1].tokens?.input)
+        assertNull("user 消息无 tokens", messages[0].tokens)
+        assertNull("user 消息无花费", messages[0].costUsd)
         assertNotNull(messages[1].id)
+    }
+
+    @Test
+    fun assistantMessageCarriesFullTokenUsageAndCost() = runBlocking {
+        routes["/api/session/ses_1/message"] = """
+            {"data":[
+              {"id":"msg_1","type":"assistant","time":{"created":1000},"cost":0.0123,
+               "tokens":{"input":480,"output":69,"reasoning":25,"cache":{"read":8100,"write":120}},
+               "content":[{"type":"text","text":"答案"}]},
+              {"id":"msg_2","type":"assistant","time":{"created":2000},
+               "content":[{"type":"text","text":"无用量字段"}]}
+            ],"cursor":{}}
+        """.trimIndent()
+
+        val messages = client().getMessages("ses_1").getOrThrow()
+
+        // 五个分档全量保留（此前只取 .input，其余被丢弃 → 消息末尾的 token 行拿不到缓存/推理）
+        assertEquals(480L, messages[0].tokens?.input)
+        assertEquals(69L, messages[0].tokens?.output)
+        assertEquals(25L, messages[0].tokens?.reasoning)
+        assertEquals(8100L, messages[0].tokens?.cacheRead)
+        assertEquals(120L, messages[0].tokens?.cacheWrite)
+        assertEquals("消息级花费应解析", 0.0123, messages[0].costUsd!!, 1e-9)
+        // 字段缺失时保持 null，不伪造 0
+        assertNull("缺 tokens 字段应为 null", messages[1].tokens)
+        assertNull("缺 cost 字段应为 null", messages[1].costUsd)
     }
 
     @Test

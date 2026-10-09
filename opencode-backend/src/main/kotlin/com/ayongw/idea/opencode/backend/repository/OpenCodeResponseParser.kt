@@ -75,7 +75,8 @@ internal object OpenCodeResponseParser {
                     role = "assistant",
                     content = assistantText(content),
                     createdMillis = createdMillis,
-                    inputTokens = parseTokenUsage(message.getAsJsonObject("tokens"))?.input,
+                    tokens = parseTokenUsage(message.getAsJsonObject("tokens")),
+                    costUsd = message.doubleOrNull("cost"),
                     parts = parseAssistantParts(content)
                 )
             }

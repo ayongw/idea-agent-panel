@@ -97,7 +97,6 @@ object ChatUIConstants {
     object LargeContent {
         const val MAX_TEXT_LENGTH = 10 * 1024 // 10KB
         const val LINES_PER_PAGE = 200
-        const val MAX_CODE_LINES = 500
 
         /** 代码块折叠预览行数（超出部分需点「显示完整」展开） */
         const val CODE_PREVIEW_LINES = 12

@@ -87,6 +87,36 @@ class ContextUsageFormatterUnitTest {
         assertEquals("", ContextUsageFormatter.summary(SessionUsageDto()))
     }
 
+    // ==================== 外层精简档（窄窗口） ====================
+
+    @Test
+    fun compactKeepsOnlyInputAndOutput() {
+        // 外层只留两项：缓存 / 上下文占比会让底部工具条两端重叠（见 temp/layout-probe/Probe2.java）
+        assertEquals("↑12.3k ↓400", ContextUsageFormatter.compact(fullUsage))
+    }
+
+    @Test
+    fun compactOmitsCostAndReasoningAndContextPercent() {
+        val compact = ContextUsageFormatter.compact(fullUsage)
+        assertFalse("外层不应出现缓存", compact.contains("缓存"))
+        assertFalse("外层不应出现上下文占比", compact.contains("上下文"))
+    }
+
+    @Test
+    fun compactIsEmptyWithoutTokenData() {
+        // 只有上下文占比、没有 token 时外层不展示（避免出现只有占比、没有用量的半截信息）
+        val noTokens = SessionUsageDto(lastStepInputTokens = 480, contextWindow = 1_000)
+        assertEquals("", ContextUsageFormatter.compact(noTokens))
+        assertEquals("", ContextUsageFormatter.compact(null))
+        assertEquals("", ContextUsageFormatter.compact(SessionUsageDto()))
+    }
+
+    @Test
+    fun compactStillReportsOutputWhenInputIsZero() {
+        val usage = SessionUsageDto(tokens = TokenUsageDto(output = 69))
+        assertEquals("↑0 ↓69", ContextUsageFormatter.compact(usage))
+    }
+
     @Test
     fun detailListsExactCountsAndCost() {
         val detail = ContextUsageFormatter.detail(fullUsage)

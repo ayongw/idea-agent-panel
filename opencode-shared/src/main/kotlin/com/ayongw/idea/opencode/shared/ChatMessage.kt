@@ -14,7 +14,14 @@ data class ChatMessage(
     val timestamp: LocalDateTime = LocalDateTime.now(),
     val type: ChatMessageType = ChatMessageType.TEXT,
     /** 工具调用卡片数据（仅 [ChatMessageType.TOOL] 有值），见 [ToolCallDto] */
-    val tool: ToolCallDto? = null
+    val tool: ToolCallDto? = null,
+    /**
+     * 本条消息的 token 用量（opencode `Session.Message.Assistant.tokens`）。
+     * 仅助手正文气泡有值：流式期间未产出，终态后随 REST 对账补齐。
+     */
+    val usage: TokenUsageDto? = null,
+    /** 本条消息花费（USD，`Session.Message.Assistant.cost`）；仅助手正文气泡有值 */
+    val costUsd: Double? = null
 ) : Searchable {
 
     enum class ChatMessageType {

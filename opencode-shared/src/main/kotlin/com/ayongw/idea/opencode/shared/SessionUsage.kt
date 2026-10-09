@@ -67,6 +67,19 @@ object ContextUsageFormatter {
         return "${Math.round(used * 100.0 / contextWindow)}%"
     }
 
+    /**
+     * 外层行内摘要（窄）：`↑12.3k ↓0.4k`
+     *
+     * 缓存 / 上下文占比 / 推理等不进外层（宽度不可退让，窄窗口下会与模型名重叠），
+     * 全部信息由 [detail] 以悬浮明细承载，不丢字段。
+     */
+    fun compact(usage: SessionUsageDto?): String {
+        if (usage == null) return ""
+        val tokens = usage.tokens
+        if (tokens == TokenUsageDto()) return ""
+        return "↑${formatTokens(tokens.input)} ↓${formatTokens(tokens.output)}"
+    }
+
     /** 行内摘要：`↑12.3k ↓0.4k · 缓存 8.1k · 上下文 48%`；无数据返回空串（由调用方隐藏） */
     fun summary(usage: SessionUsageDto?): String {
         if (usage == null) return ""

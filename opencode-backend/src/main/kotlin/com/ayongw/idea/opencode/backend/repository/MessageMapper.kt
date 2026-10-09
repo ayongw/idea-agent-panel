@@ -1,6 +1,7 @@
 package com.ayongw.idea.opencode.backend.repository
 
 import com.ayongw.idea.opencode.shared.ChatMessage
+import com.ayongw.idea.opencode.shared.TokenUsageDto
 import com.ayongw.idea.opencode.shared.ToolCallDto
 import java.time.Instant
 import java.time.LocalDateTime
@@ -79,6 +80,12 @@ internal class MessageMapper(private val aiAuthor: String) {
         type = ChatMessage.ChatMessageType.AI_THINKING
     )
 
+    /**
+     * 助手正文气泡：挂载本条消息的 token 用量与花费（气泡末尾的 token 行渲染它们）。
+     *
+     * 只挂正文气泡：思考 / 工具卡片是同一条助手消息的组成部分，重复展示会误导
+     * 「本次花费」的归属；一条消息的用量归到承载最终回复的那个气泡上。
+     */
     private fun assistantTextMessage(
         openCodeMsg: OpenCodeMessage,
         at: LocalDateTime
@@ -88,7 +95,18 @@ internal class MessageMapper(private val aiAuthor: String) {
         author = aiAuthor,
         isMyMessage = false,
         timestamp = at,
-        type = ChatMessage.ChatMessageType.TEXT
+        type = ChatMessage.ChatMessageType.TEXT,
+        usage = openCodeMsg.tokens?.toDto(),
+        costUsd = openCodeMsg.costUsd
+    )
+
+    /** 后端 token 用量 → 前端 DTO */
+    private fun OpenCodeTokenUsage.toDto() = TokenUsageDto(
+        input = input,
+        output = output,
+        reasoning = reasoning,
+        cacheRead = cacheRead,
+        cacheWrite = cacheWrite
     )
 
     /** 工具卡片气泡：id 用 `call_*`，与事件流侧一致，两路可原地互相覆盖 */

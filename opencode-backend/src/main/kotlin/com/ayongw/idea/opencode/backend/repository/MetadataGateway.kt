@@ -74,8 +74,9 @@ internal class MetadataGateway(
         val session = restClient.getSession(sessionId).getOrThrow()
         val lastStepInput = restClient.getMessages(sessionId).getOrNull()
             ?.asReversed()
-            ?.firstOrNull { it.role == "assistant" && it.inputTokens != null }
-            ?.inputTokens
+            ?.firstOrNull { it.role == "assistant" && it.tokens != null }
+            ?.tokens
+            ?.input
         return SessionUsageDto(
             tokens = session.tokens?.toDto() ?: TokenUsageDto(),
             cost = session.costUsd,

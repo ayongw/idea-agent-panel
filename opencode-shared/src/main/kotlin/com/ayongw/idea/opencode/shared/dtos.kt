@@ -15,7 +15,11 @@ data class ChatMessageDto(
     @Serializable(with = LocalDateTimeSerializer::class)
     val timestamp: LocalDateTime,
     val type: ChatMessage.ChatMessageType,
-    val tool: ToolCallDto? = null
+    val tool: ToolCallDto? = null,
+    /** 本条消息 token 用量；仅助手正文气泡有值（见 [ChatMessage.usage]） */
+    val usage: TokenUsageDto? = null,
+    /** 本条消息花费（USD）；仅助手正文气泡有值（见 [ChatMessage.costUsd]） */
+    val costUsd: Double? = null
 )
 
 fun ChatMessageDto.toChatMessage(): ChatMessage {
@@ -26,7 +30,9 @@ fun ChatMessageDto.toChatMessage(): ChatMessage {
         isMyMessage = isMyMessage,
         timestamp = timestamp,
         type = type,
-        tool = tool
+        tool = tool,
+        usage = usage,
+        costUsd = costUsd
     )
 }
 
@@ -38,7 +44,9 @@ fun ChatMessage.toChatMessageDto(): ChatMessageDto {
         isMyMessage = isMyMessage,
         timestamp = timestamp,
         type = type,
-        tool = tool
+        tool = tool,
+        usage = usage,
+        costUsd = costUsd
     )
 }
 

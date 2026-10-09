@@ -38,8 +38,10 @@ data class OpenCodeMessage(
     val role: String,
     val content: String,
     val createdMillis: Long,
-    /** 助手消息本次 step 的 input tokens（上下文占比分子）；用户消息或字段缺失为 null */
-    val inputTokens: Long? = null,
+    /** 助手消息本次 step 的 token 用量（用户消息或字段缺失为 null）；`tokens.input` 亦为上下文占比分子 */
+    val tokens: OpenCodeTokenUsage? = null,
+    /** 助手消息本次 step 花费（USD，`Money.USD`）；用户消息或字段缺失为 null */
+    val costUsd: Double? = null,
     /** 助手消息 `content[]` 部件（按原顺序）；用户消息为空 */
     val parts: List<OpenCodePart> = emptyList()
 )

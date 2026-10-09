@@ -113,6 +113,9 @@ class OpenCodeChatApp(
     private fun setupAppearance() {
         layout = BorderLayout()
         background = ChatAppColors.Panel.background
+        // 最小宽度必须设在**工具窗内容根**（本组件）：BorderLayout 未实现 MinimumLayout，
+        // 只设子组件（PromptInput）不会向上传播，IDE 侧也只看内容根的 minimumSize。
+        minimumSize = Dimension(JBUI.scale(ChatUIConstants.Panel.MIN_WIDTH), 0)
     }
 
     /**

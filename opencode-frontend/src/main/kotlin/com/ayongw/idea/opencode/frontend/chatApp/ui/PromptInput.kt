@@ -26,6 +26,8 @@ import javax.swing.Icon
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JList
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
 import javax.swing.JScrollPane
@@ -85,6 +87,9 @@ class PromptInput(
         onInputChanged(text)
     }
 
+    /** 底部工具条一行（需在 resize 时把右侧用量宽度下发给工具条，故持有引用） */
+    private lateinit var toolbarRow: JPanel
+
     private var currentState: MessageInputState = MessageInputState.Enabled("")
     private var skipInputChangeUpdate = false
 
@@ -102,7 +107,13 @@ class PromptInput(
 
         add(createChipRow(), BorderLayout.NORTH)
         add(createInputArea(), BorderLayout.CENTER)
-        add(createToolbarRow(), BorderLayout.SOUTH)
+        toolbarRow = createToolbarRow()
+        // 宽度变化时把本排行宽下发给工具条，供其省略模型名（否则两端会重叠，见 syncToolbarMetrics）
+        toolbarRow.addComponentListener(object : ComponentAdapter() {
+            override fun componentResized(e: ComponentEvent?) = syncToolbarMetrics()
+            override fun componentShown(e: ComponentEvent?) = syncToolbarMetrics()
+        })
+        add(toolbarRow, BorderLayout.SOUTH)
 
         contextChipBar.onRemoveMention = { span -> removeMention(span) }
         contextChipBar.onRemoveAttachment = { file -> onRemoveAttachment(file) }
@@ -168,6 +179,22 @@ class PromptInput(
     /** 更新会话用量展示（由外层订阅 ViewModel 状态后调用） */
     fun updateUsage(usage: SessionUsageDto?) {
         usageIndicator.updateUsage(usage)
+        // 用量文本宽度会变（精简档切换、隐藏/显示），需重算给工具条预留的宽度
+        syncToolbarMetrics()
+    }
+
+    /**
+     * 把本排行宽与右侧用量宽度下发给底部工具条，供其按剩余空间省略模型名。
+     *
+     * BorderLayout 的 WEST / EAST 各自按 preferred 摆放且从不压缩，两端 preferred
+     * 之和超过可用宽度时是**重叠绘制**而非裁剪（实机症状：模型名与 token 用量叠字）。
+     * 工具条自身看不到 EAST、也不该用自身宽度当预算（会与 BorderLayout 互相拉扯），
+     * 故由这层（同时持有行容器与两侧）下发。
+     */
+    private fun syncToolbarMetrics() {
+        val usageWidth = if (usageIndicator.isVisible) usageIndicator.preferredSize.width else 0
+        inputToolbar.setReservedRightWidth(usageWidth + JBUI.scale(ChatUIConstants.Spacing.NORMAL))
+        inputToolbar.setAvailableWidth(toolbarRow.width)
     }
 
     /** 更新待决权限确认条（由外层订阅 ViewModel 状态后调用） */

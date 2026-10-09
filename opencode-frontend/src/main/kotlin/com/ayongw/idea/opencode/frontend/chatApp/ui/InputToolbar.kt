@@ -6,6 +6,7 @@ import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ButtonUtils
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatAppColors
 import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.ChatUIConstants
+import com.ayongw.idea.opencode.frontend.chatApp.ui.utils.TextElipsis
 import com.ayongw.idea.opencode.frontend.chatApp.viewmodel.ApprovalMode
 import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ModelDto
@@ -49,6 +50,15 @@ class InputToolbar(
     private var providers: List<ModelProviderDto> = emptyList()
     private var selectedAgentId: String? = null
     private var selectedModel: ModelDto? = null
+
+    /** 模型名（不含下拉箭头）；可见文本由 [applyModelElision] 按宽度省略后拼装 */
+    private var modelName: String = ""
+
+    /** 同排右侧其它组件占用宽度（见 [setReservedRightWidth]） */
+    private var reservedRightWidth: Int = 0
+
+    /** 本排可用宽度（见 [setAvailableWidth]）；0 表示外层尚未告知 */
+    private var availableWidth: Int = 0
 
     init {
         layout = BoxLayout(this, BoxLayout.X_AXIS)
@@ -136,12 +146,85 @@ class InputToolbar(
     }
 
     private fun updateLabels() {
-        approvalButton.text = "${message(approvalMode.labelKey)} ▾"
-        modeButton.text = "${agents.firstOrNull { it.id == selectedAgentId }?.name ?: message("chat.input.mode")} ▾"
-        modelButton.text = "${selectedModel?.name ?: message("chat.input.model")} ▾"
+        approvalButton.text = "${message(approvalMode.labelKey)}$ARROW"
+        modeButton.text = "${agents.firstOrNull { it.id == selectedAgentId }?.name ?: message("chat.input.mode")}$ARROW"
+        // 模型名长度不可控（MiMo-V2.6-Flash Free / claude-sonnet-4-5-thinking-…）：
+        // 只留名字本身，可见的「名字 + 下拉箭头」由 applyModelElision 按可用宽度拼装。
+        modelName = selectedModel?.name ?: message("chat.input.model")
+        modelButton.toolTipText = "$modelName$ARROW"
+        modelButton.text = "$modelName$ARROW"
 
         revalidate()
         repaint()
+    }
+
+    /**
+     * 本排可用宽度（工具条所在行的实测宽度），由外层在 resize 时下发。
+     *
+     * **不能用自身 `width` 当预算**：`BorderLayout` 把 WEST 的宽度设成它的 preferredSize，
+     * 而 preferredSize 又由省略结果决定 —— 两者互相依赖会来回震荡（实测 450 → 预算 193，
+     * 随后被压到 404 → 预算 147），既收敛不了也保证不了 EAST 有位置。
+     * 取外层给的行宽则与自身 preferredSize 无关，一次算定即稳定。
+     */
+    fun setAvailableWidth(width: Int) {
+        val w = width.coerceAtLeast(0)
+        if (availableWidth == w) return
+        availableWidth = w
+        revalidate()
+        repaint()
+    }
+
+    /**
+     * 同一排右侧其它组件（如右侧用量指示器）占用的宽度。
+     *
+     * 必须由外层告知：本工具条是 `BorderLayout` 的 WEST 子组件，看不到 EAST 有多宽，
+     * 若把富余全额吃掉，EAST 会被挤出可视区（实测 450px 下重叠 22px）。
+     */
+    fun setReservedRightWidth(width: Int) {
+        val w = width.coerceAtLeast(0)
+        if (reservedRightWidth == w) return
+        reservedRightWidth = w
+        revalidate()
+        repaint()
+    }
+
+    /**
+     * 窄窗口下收缩模型名：模型按钮吸收本排的剩余宽度，审核 / 模式按钮宽度固定。
+     *
+     * 放在 [doLayout] 而非 resize 监听里：每次布局都会重算，天然跟随窗口变化，
+     * 且不需要额外的 ComponentListener 生命周期管理。
+     */
+    override fun doLayout() {
+        applyModelElision()
+        super.doLayout()
+    }
+
+    /** 按本排可用宽度省略模型名（下拉箭头始终保留，不参与省略） */
+    private fun applyModelElision() {
+        // 外层未下发行宽时退回自身宽度（首次布局前的兜底）
+        val budgetWidth = if (availableWidth > 0) availableWidth else width
+        if (modelName.isEmpty() || budgetWidth <= 0) return
+        val fixedWidth = approvalButton.preferredSize.width +
+            modeButton.preferredSize.width +
+            2 * JBUI.scale(ChatUIConstants.Spacing.NORMAL) +
+            reservedRightWidth
+        val insets = modelButton.insets
+        val budget = budgetWidth - fixedWidth - insets.left - insets.right
+        val metrics = modelButton.getFontMetrics(modelButton.font)
+        val shown = TextElipsis.elide(modelName, budget, metrics::stringWidth)
+        val text = shown + ARROW
+        if (text == modelButton.text) return
+        modelButton.text = text
+        // 仅靠 modelButton.revalidate() 不足以让本容器的 preferredSize 缓存失效
+        //（实测改文本后 getPreferredSize() 仍返回旧值），需显式 invalidate 整条链
+        modelButton.revalidate()
+        revalidate()
+        invalidate()
+    }
+
+    private companion object {
+        /** 下拉 affordance：始终保留，不参与省略 */
+        const val ARROW = " ▾"
     }
 
     private fun <T> showMenu(

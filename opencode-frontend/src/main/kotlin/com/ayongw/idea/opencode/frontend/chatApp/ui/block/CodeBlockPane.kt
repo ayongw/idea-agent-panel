@@ -123,10 +123,9 @@ internal class CodeBlockPane(
     private fun toggle() {
         expanded = !expanded
         if (expanded) {
-            textArea.text = codeLines
-                .take(ChatUIConstants.LargeContent.MAX_CODE_LINES)
-                .joinToString("\n")
-            applyPaneHeight(ChatUIConstants.LargeContent.MAX_CODE_LINES)
+            // 展开渲染全部行（不再截断行数）：高度仍封顶 320px，超长在块内滚动查看
+            textArea.text = codeLines.joinToString("\n")
+            applyPaneHeight(codeLines.size)
         } else {
             textArea.text = previewText()
             applyPaneHeight(previewLineCount())

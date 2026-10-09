@@ -61,6 +61,9 @@ class MessageBubble(
     /** 时间行（独立于气泡）：用户消息的气泡只包住内容，绘制时需避开该行 */
     private var timestampRow: JComponent? = null
 
+    /** 本次 token 行（助手消息末尾）：随终态对账补齐的用量刷新 */
+    private var tokenUsageRow: TokenUsageRow? = null
+
     /** 当前渲染的正文段落 */
     private var currentSegments: List<MarkdownSegment> = emptyList()
 
@@ -105,7 +108,20 @@ class MessageBubble(
     fun containsId(id: String): Boolean = id == messageId || id in memberIds
 
     private fun signatureOf(message: ChatMessage): String =
-        if (message.isToolMessage()) message.tool?.let(::toolSignature) ?: "" else message.content
+        if (message.isToolMessage()) {
+            message.tool?.let(::toolSignature) ?: ""
+        } else {
+            // 必须纳入 usage/cost：正文内容不变但 token 到达（终态对账补齐）时，
+            // 若签名只看 content，syncWith 会 early-return，token 行永远不出现。
+            message.content + usageSignature(message)
+        }
+
+    /** token 行签名：用量 + 花费；两者皆空返回空串 */
+    private fun usageSignature(message: ChatMessage): String {
+        val usage = message.usage ?: return ""
+        return "#u:${usage.input}/${usage.output}/${usage.reasoning}/${usage.cacheRead}/${usage.cacheWrite}" +
+            "#c:${message.costUsd ?: -1.0}"
+    }
 
     /** 路由一条消息到对应内容块（构造首条 / 流式并入共用） */
     private fun route(message: ChatMessage, streaming: Boolean) {
@@ -284,10 +300,13 @@ class MessageBubble(
                 add(it, index)
             }
         } else {
-            ToolCallCard(tool).also {
-                toolCards[tool.callId] = it
-                add(it, toolInsertIndex())
-            }
+            // 插入位置必须在写入 toolCards 之前计算：map 先放入新卡后，
+            // toolInsertIndex 会把「尚未挂载的自己」当成队尾卡（indexOf=-1）→ 返回 0，
+            // 新卡被插到作者行之前（多卡时还会逐张前插，顺序整体倒置）。
+            val card = ToolCallCard(tool)
+            val index = toolInsertIndex()
+            toolCards[tool.callId] = card
+            add(card, index)
         }
         revalidate()
         repaint()
@@ -319,6 +338,8 @@ class MessageBubble(
         } else {
             populateContentContainer(container, textMessage.content)
         }
+        // token 用量随终态对账后到达（正文内容可能未变），需单独刷新该行
+        tokenUsageRow?.update(textMessage)
         revalidate()
         repaint()
     }
@@ -340,6 +361,8 @@ class MessageBubble(
         }
         add(Box.createVerticalStrut(JBUI.scale(gapBeforeTimestamp)))
         add(TimeStampLabel(textMessage).also { timestampRow = it })
+        // 本次 token 行（助手消息末尾）：无用量时自身隐藏，不占高度
+        add(TokenUsageRow(textMessage).also { tokenUsageRow = it })
     }
 
     /** 撤掉思考动画（思考块/正文首帧 / 气泡销毁）：组件移除并释放 animator，防 ROOT 泄漏 */

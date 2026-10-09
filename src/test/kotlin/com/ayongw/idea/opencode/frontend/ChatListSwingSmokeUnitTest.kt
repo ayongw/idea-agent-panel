@@ -332,6 +332,143 @@ class ChatListSwingSmokeUnitTest {
         }
     }
 
+    @Test
+    fun 多工具卡片顺序为作者行思考块卡片正文且长输出多行预览() {
+        val user = ChatMessage(
+            id = "msg_11461dafd001qYidHotx361jLd", content = "当前项目的入口类在哪儿？",
+            author = "me", isMyMessage = true
+        )
+        val pending = ChatMessage(
+            id = "pending_thinking", content = "", author = "AI Buddy",
+            type = ChatMessage.ChatMessageType.AI_THINKING
+        )
+        fun reasoning(id: String, text: String) = ChatMessage(
+            id = "$id#reasoning", content = text, author = "AI Buddy",
+            type = ChatMessage.ChatMessageType.AI_THINKING
+        )
+        fun tool(callId: String, input: String, output: String, status: ToolCallStatus) =
+            ChatMessage(
+                id = callId, content = "", author = "AI Buddy",
+                type = ChatMessage.ChatMessageType.TOOL,
+                tool = ToolCallDto(
+                    callId = callId, name = "execute", input = input,
+                    output = output, status = status,
+                    exit = if (status == ToolCallStatus.COMPLETED) 0 else null,
+                    truncated = false
+                )
+            )
+        val inputJson = """{"code":"await tools[\"codegraph\"].codegraph_explore({ query: \"x\" })"}"""
+        val output539 = buildString {
+            append("**Exploration: Spring Boot 启动类 main 方法 Application**")
+            repeat(538) { append("\n行").append(it + 2) }
+        }
+        val r1 = "msg_11461db2a0019UQ3nD9BBlGRAA"
+        val r2 = "msg_11461eb64001"
+        val r3 = "msg_11461fd4b001"
+
+        // 按真实流式时序逐批推送（pending → 首轮思考 → 工具1运行/完成 → 二轮思考 →
+        // 工具2运行/完成 → 三轮思考 → 正文）
+        chatList.setMessages(listOf(user, pending))
+        listOf(10, 21, 60, 81, 98, 116).forEach { len ->
+            chatList.setMessages(listOf(user, reasoning(r1, "思考".repeat(len))))
+        }
+        chatList.setMessages(listOf(user, reasoning(r1, "思考x"), tool("functions.execute_1", inputJson, "", ToolCallStatus.RUNNING)))
+        chatList.setMessages(listOf(user, reasoning(r1, "思考x"), tool("functions.execute_1", inputJson, output539, ToolCallStatus.COMPLETED)))
+        listOf(9, 38).forEach { len ->
+            chatList.setMessages(listOf(user, reasoning(r1, "x"), tool("functions.execute_1", inputJson, output539, ToolCallStatus.COMPLETED), reasoning(r2, "第二轮".repeat(len))))
+        }
+        chatList.setMessages(listOf(user, reasoning(r1, "x"), tool("functions.execute_1", inputJson, output539, ToolCallStatus.COMPLETED), reasoning(r2, "x"), tool("functions.execute_2", """{"query":"y"}""", "", ToolCallStatus.RUNNING)))
+        chatList.setMessages(listOf(user, reasoning(r1, "x"), tool("functions.execute_1", inputJson, output539, ToolCallStatus.COMPLETED), reasoning(r2, "x"), tool("functions.execute_2", """{"query":"y"}""", "{", ToolCallStatus.COMPLETED)))
+        listOf(61, 80, 115).forEach { len ->
+            chatList.setMessages(listOf(user, reasoning(r1, "x"), tool("functions.execute_1", inputJson, output539, ToolCallStatus.COMPLETED), reasoning(r2, "x"), tool("functions.execute_2", """{"query":"y"}""", "{", ToolCallStatus.COMPLETED), reasoning(r3, "第三轮".repeat(len))))
+        }
+        val answerText = """
+            入口类是 `Application`，位于：
+
+            `user-service/src/main/java/com/switchpower/Application.java`
+
+            ```java
+            }
+            ```
+
+            是标准的 Spring Boot 启动类，APPID 已设为 `AppSwitchPowerUserService`。
+        """.trimIndent()
+        listOf(18, 119, 229, 385).forEach { len ->
+            chatList.setMessages(listOf(user, reasoning(r1, "x"), tool("functions.execute_1", inputJson, output539, ToolCallStatus.COMPLETED), reasoning(r2, "x"), tool("functions.execute_2", """{"query":"y"}""", "{", ToolCallStatus.COMPLETED), reasoning(r3, "x"), ChatMessage(id = r3, content = answerText.take(len), author = "AI Buddy")))
+        }
+
+        // headless 下视口链路不分配尺寸：固定容器宽度后多趟布局，模拟换行收敛
+        val messagesContainer = gridBagContainer(chatList)!!
+        repeat(3) {
+            messagesContainer.setSize(548, messagesContainer.preferredSize.height)
+            layoutTree(messagesContainer)
+        }
+        val turn = messagesContainer.components.filterIsInstance<MessageBubble>().first { !it.isMy }
+
+        // 1) 气泡内组件顺序：作者行 → 思考块 → 工具卡（按到达顺序）→ 正文
+        val classes = turn.components.map { it::class.java.simpleName }
+        assertTrue("首组件应为作者行，实际：$classes", classes.first() == "AuthorRow")
+        val reasoningIndex = classes.indexOf("ReasoningSection")
+        val cardIndices = classes.indices.filter { classes[it] == "ToolCallCard" }
+        val contentIndex = classes.indexOf("JPanel")
+        assertEquals("思考块应紧随作者行（index=2）", 2, reasoningIndex)
+        assertEquals("应有两张工具卡且位于思考块之后", listOf(3, 4), cardIndices)
+        assertTrue("正文应在所有工具卡之后，实际：$classes", contentIndex > cardIndices.last())
+
+        // 2) 纵向位置同样满足 思考块 → 卡1 → 卡2 → 正文，且无重叠
+        val cards = cardIndices.map { turn.components[it] }
+        val reasoningY = turn.components[reasoningIndex].bounds.y
+        assertTrue("思考块 y 应小于卡1", reasoningY < cards[0].bounds.y)
+        assertTrue("卡1 应在卡2 之前", cards[0].bounds.y < cards[1].bounds.y)
+        assertTrue("卡2 应在正文之前", cards[1].bounds.y < turn.components[contentIndex].bounds.y)
+        assertTrue("卡1 与卡2 不应重叠", cards[0].bounds.y + cards[0].bounds.height <= cards[1].bounds.y)
+
+        // 3) 卡1 长输出（539 行）默认按 12 行预览：滚动区高度 ≥ 12 行，而不是一行
+        val card1Scroll = scrollPaneOf(cards[0] as Container)
+        assertTrue(
+            "539 行输出应展示 12 行预览（≥200px），实际高度=${card1Scroll.bounds.height}",
+            card1Scroll.bounds.height >= 200
+        )
+        assertEquals(
+            "滚动区实际高度应等于其 preferredSize 高度",
+            card1Scroll.preferredSize.height, card1Scroll.bounds.height
+        )
+
+        // 4) 单行输出（卡2 的 "{"、正文内 JAVA 块的 "}"）保持单行高度，不被放大
+        val card2Scroll = scrollPaneOf(cards[1] as Container)
+        assertTrue(
+            "单行输出应保持紧凑高度（28~60px），实际=${card2Scroll.bounds.height}",
+            card2Scroll.bounds.height in 28..60
+        )
+        val content = turn.components[contentIndex] as Container
+        val answerScroll = scrollPaneOf(content)
+        assertTrue(
+            "正文 JAVA 单行块应保持紧凑高度，实际=${answerScroll.bounds.height}",
+            answerScroll.bounds.height in 28..60
+        )
+
+        // 5) 展开后不再截断行数：539 行全部渲染，块内滚动；收起恢复预览
+        val pane = codeBlockPaneOf(cards[0] as Container)
+        val toggleMethod = pane::class.java.getDeclaredMethod("toggle").apply { isAccessible = true }
+        toggleMethod.invoke(pane)
+        val area = pane::class.java.getDeclaredField("textArea").apply { isAccessible = true }
+            .get(pane) as JTextArea
+        assertEquals("展开后应渲染全部 539 行（不再截断为 500 行）", 539, area.text.lines().size)
+        toggleMethod.invoke(pane)
+        assertEquals("收起后恢复 12 行预览", 12, area.text.lines().size)
+    }
+
+    /** 取卡片/正文容器内的 CodeBlockPane（internal，测试模块不可见） */
+    private fun codeBlockPaneOf(container: Container): Container =
+        container.components.first { it::class.java.simpleName == "CodeBlockPane" } as Container
+
+    /** 反射取卡片/正文容器内 CodeBlockPane 的 scrollPane（CodeBlockPane 为 internal，测试模块不可见） */
+    private fun scrollPaneOf(container: Container): Component {
+        val pane = codeBlockPaneOf(container)
+        val field = pane::class.java.getDeclaredField("scrollPane").apply { isAccessible = true }
+        return field.get(pane) as Component
+    }
+
     /** 深度优先 doLayout（headless 下替代真实窗口校验，让每个容器拿到父级分配的尺寸） */
     private fun layoutTree(root: Container) {
         root.doLayout()
