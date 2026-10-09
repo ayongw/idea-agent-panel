@@ -1,11 +1,11 @@
-# OpenCode IDEA Panel
+# Idea Agent Panel
 
 [![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)]()
 [![IntelliJ Platform](https://img.shields.io/badge/IntelliJ%20Platform-2026.2.3-orange.svg)]()
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.3.20-purple.svg)]()
 [![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)]()
 
-IntelliJ IDEA 插件，在 IDE 内集成 [OpenCode](https://opencode.ai/) AI 编程助手，提供原生 Tool Window 界面，支持流式对话、代码块渲染、权限确认、上下文注入等完整功能。
+IntelliJ IDEA 插件，把 AI 编程 Agent 集成进 IDE 原生 Tool Window：流式对话、工具调用卡片、权限确认、上下文注入等完整能力。当前支持 [OpenCode](https://opencode.ai/)，架构上为多 Agent 预留——新增 agent 只需在 `backend/agent/<name>/` 加一层协议适配，UI 与共享契约不变。
 
 ---
 
@@ -65,7 +65,7 @@ idea-agent-panel/
 - JDK 21 (系统默认)
 - **JBR 25** (项目自动使用 IDE 內建，路径: `/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home/`)
 - **`opencode` CLI**：已安装并可在 PATH 中找到；未安装时插件会给出引导通知，
-  也可在 `Settings → OpenCode → Connection → Server management` 中直接填写 CLI 路径（插件不代为安装）
+  也可在 `Settings → Idea Agent Panel → Connection → Server management` 中直接填写 CLI 路径（插件不代为安装）
 
 ### 构建插件
 
@@ -228,7 +228,6 @@ Apache License 2.0 - 详见 [LICENSE](LICENSE)
 
 ## 🔗 相关链接
 
-- [OpenCode 官网](https://opencode.ai/)
-- [OpenCode GitHub](https://github.com/opencode-ai/opencode)
+- [OpenCode 官网](https://opencode.ai/) · [GitHub](https://github.com/opencode-ai/opencode) — 当前支持的 Agent
 - [IntelliJ Platform SDK 文档](https://plugins.jetbrains.com/docs/intellij/)
 - [JetBrains Runtime (JBR)](https://github.com/JetBrains/JetBrainsRuntime)
