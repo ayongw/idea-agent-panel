@@ -79,6 +79,14 @@ object ChatUIConstants {
         const val ITEM_HEIGHT = 56
         const val MIN_WIDTH = 240
         const val PREF_WIDTH = 280
+
+        /**
+         * 行尾删除按钮的固定占位宽度（像素）。
+         *
+         * 常驻占位、仅 hover 时显示图标：几何固定 → 删除热区可由「距行右边 x 像素」直接算出，
+         * 无需在点击时反查组件（单元格 renderer 每次绘制都重建，拿不到稳定引用）。
+         */
+        const val DELETE_SLOT = 22
     }
 
     object TopBar {

@@ -9,6 +9,7 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.Service.Level
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.platform.project.projectId
 import fleet.rpc.client.durable
@@ -50,6 +51,9 @@ class FrontendChatRepositoryModel(
     private val project: Project,
     private val coroutineScope: CoroutineScope
 ) : ChatRepositoryApi {
+
+    private val log = Logger.getInstance(FrontendChatRepositoryModel::class.java)
+
     companion object {
         /** 通知分组 id（注册于 opencode-idea-panel.opencode-frontend.xml） */
         private const val NOTIFICATION_GROUP = "OpenCode.Server"
@@ -160,11 +164,25 @@ class FrontendChatRepositoryModel(
         return sessionId
     }
 
-    override suspend fun switchSession(sessionId: String) {
-        ChatRepositoryRpcApi.getInstance().switchSession(project.projectId(), sessionId)
+    /**
+     * 切换会话；失败时**不**改 currentSessionId。
+     *
+     * 旧实现无条件改 currentSessionId，而后端 switchSession 可能静默失败（服务不可达 /
+     * 会话已被删），结果是 tab 高亮切过去、消息仍停在上一个会话 —— 观感即「切了但没反应」。
+     * 现以返回标志为准：失败保持原会话，调用方可给出提示。
+     */
+    override suspend fun switchSession(sessionId: String): Boolean {
+        val ok = runCatching {
+            ChatRepositoryRpcApi.getInstance().switchSession(project.projectId(), sessionId)
+        }.getOrDefault(false)
+        if (!ok) {
+            log.warn("切换会话失败（消息未加载），保持当前会话 session=$sessionId")
+            return false
+        }
         _currentSessionId.value = sessionId
         refreshSessionScopedFlows()
         coroutineScope.launch { refreshSessions() }
+        return true
     }
 
     override suspend fun deleteSession(sessionId: String) {

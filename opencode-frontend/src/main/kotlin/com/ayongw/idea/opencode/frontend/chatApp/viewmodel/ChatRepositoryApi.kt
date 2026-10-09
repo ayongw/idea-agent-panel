@@ -116,11 +116,12 @@ interface ChatRepositoryApi {
     suspend fun createSession(initialTitle: String?): String
 
     /**
-     * Switches to the specified session.
+     * 切换到指定会话；返回是否成功。
      *
-     * @param sessionId The ID of the session to switch to.
+     * @param sessionId 要切换的会话 ID
+     * @return true 表示消息已加载；false 表示失败（调用方不得改 currentSessionId）
      */
-    suspend fun switchSession(sessionId: String)
+    suspend fun switchSession(sessionId: String): Boolean
 
     /**
      * Deletes the specified session.

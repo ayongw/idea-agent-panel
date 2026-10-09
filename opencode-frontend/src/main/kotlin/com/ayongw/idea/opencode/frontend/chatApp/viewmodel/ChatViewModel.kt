@@ -177,6 +177,8 @@ class ChatViewModel(
 
     override val sessions: SessionApi = sessionController
 
+    override val sessionSwitchingFlow: StateFlow<Boolean> = sessionController.switchingFlow
+
     override val compose: ComposeApi = composeController
 
     override val server: ServerApi = serverController

@@ -71,6 +71,10 @@ subprojects {
                     local(ideaHome)
                     compileOnly("org.jetbrains.kotlin:kotlin-serialization:2.3.20")
                     compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.0")
+                    // TSD-33：提交窗口「生成提交信息」按钮需要 VcsDataKeys / CommitMessageI
+                    // （位于 intellij.platform.vcs.jar，platform-api 公开 API）
+                    // 注意：只声明具体 bundled module，不加 com.intellij.modules.platform（split mode 限制）
+                    bundledModule("intellij.platform.vcs")
                 }
                 implementation(project(":opencode-shared"))
                 implementation("org.jetbrains:markdown:0.7.3")

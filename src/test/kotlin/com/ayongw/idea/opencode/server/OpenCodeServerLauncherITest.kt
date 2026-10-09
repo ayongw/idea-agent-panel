@@ -117,7 +117,7 @@ class OpenCodeServerLauncherITest {
     @Test
     fun `CLI 不存在时抛出 CLI 未找到`() {
         val launcher = OpenCodeServerLauncher(
-            cliLocator = OpenCodeServerCliLocator(pathEnv = null, isExecutable = { false }),
+            cliLocator = OpenCodeServerCliLocator(pathEnv = { null }, isExecutable = { false }),
         )
 
         assertThrows(OpenCodeServerCliNotFoundException::class.java) {
@@ -142,7 +142,7 @@ class OpenCodeServerLauncherITest {
     /** 用 JVM 自身拉起桩进程（跨平台，无需 shell）；`--mode` 决定桩形态 */
     private fun launcher(mode: String): OpenCodeServerLauncher = OpenCodeServerLauncher(
         // cliPath 由夹具显式给出（java 可执行文件），故可执行性判定一律放行
-        cliLocator = OpenCodeServerCliLocator(pathEnv = null, isExecutable = { true }),
+        cliLocator = OpenCodeServerCliLocator(pathEnv = { null }, isExecutable = { true }),
         commandFactory = { spec, cliPath ->
             listOf(
                 cliPath,

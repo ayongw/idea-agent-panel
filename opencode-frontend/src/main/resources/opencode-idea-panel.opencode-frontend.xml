@@ -1,6 +1,8 @@
 <idea-plugin>
     <dependencies>
         <module name="intellij.platform.frontend"/>
+        <!-- TSD-33：VcsDataKeys.COMMIT_MESSAGE_CONTROL / CommitMessageI（公开 API） -->
+        <module name="intellij.platform.vcs"/>
         <module name="opencode-idea-panel.opencode-shared"/>
     </dependencies>
 
@@ -14,9 +16,20 @@
         <backgroundPostStartupActivity implementation="com.ayongw.idea.opencode.frontend.toolWindow.OpenCodeToolWindowAutoShowActivity"/>
         <applicationConfigurable instance="com.ayongw.idea.opencode.frontend.settings.OpenCodeSettingsConfigurable"/>
         <postStartupActivity implementation="com.ayongw.idea.opencode.frontend.settings.OpenCodePasswordPreloadActivity"/>
+        <!-- Server 状态全局可见：工具窗关闭时也能在状态栏看到服务是否可用（面板内状态条只管重交互） -->
+        <statusBarWidgetFactory id="OpenCode.ServerStatus"
+                                implementation="com.ayongw.idea.opencode.frontend.statusBar.OpenCodeServerStatusWidgetFactory"/>
         <notificationGroup id="OpenCode.Server"
                            displayType="BALLOON"
                            bundle="messages.OpencodeFrontendBundle"
                            key="notification.group.server"/>
     </extensions>
+
+    <!-- TSD-33：提交信息区域的「生成提交信息」按钮（与平台「消息历史」按钮同一分组） -->
+    <actions>
+        <action id="OpenCode.GenerateCommitMessage"
+                class="com.ayongw.idea.opencode.frontend.vcs.GenerateCommitMessageAction">
+            <add-to-group group-id="Vcs.MessageActionGroup" anchor="first"/>
+        </action>
+    </actions>
 </idea-plugin>

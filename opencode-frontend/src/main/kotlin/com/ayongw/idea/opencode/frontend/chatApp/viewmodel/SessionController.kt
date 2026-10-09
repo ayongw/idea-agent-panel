@@ -26,6 +26,8 @@ internal class SessionController(
     private val afterSessionCreated: suspend (sessionId: String) -> Unit,
     private val afterSessionActivated: suspend (sessionId: String) -> Unit,
     private val onDraftRestored: (draft: String) -> Unit,
+    /** 切换失败回调（供 UI 提示；默认为空即静默） */
+    private val onSwitchFailed: () -> Unit = {},
 ) : SessionApi {
 
     private val log = Logger.getInstance(SessionController::class.java)
@@ -33,6 +35,10 @@ internal class SessionController(
     private val _currentSessionId = MutableStateFlow<String?>(null)
 
     private val _openedSessionIds = MutableStateFlow(emptyList<String>())
+
+    /** 切换会话进行中（供 UI 显示加载提示）；失败路径也会复位 */
+    private val _switching = MutableStateFlow(false)
+    internal val switchingFlow: StateFlow<Boolean> = _switching.asStateFlow()
 
     /** 顶部已打开会话（tab）顺序，供核心 ChatViewModel 暴露 */
     internal val openedSessionIdsFlow: StateFlow<List<String>> = _openedSessionIds.asStateFlow()
@@ -189,9 +195,19 @@ internal class SessionController(
             return
         }
         log.info("请求切换会话 session=$sessionId")
-        repository.switchSession(sessionId)
-        openTab(sessionId)
-        afterSessionActivated(sessionId)
+        _switching.value = true
+        try {
+            // 失败时保持原会话：不新开 tab、不联动输入区（否则会出现"高亮切了但消息没换"）
+            if (!repository.switchSession(sessionId)) {
+                log.warn("切换会话失败，已保持当前会话 session=$sessionId")
+                onSwitchFailed?.invoke()
+                return
+            }
+            openTab(sessionId)
+            afterSessionActivated(sessionId)
+        } finally {
+            _switching.value = false
+        }
     }
 
     /** 落盘 tab 状态（项目级持久化，IDE 重启后恢复） */

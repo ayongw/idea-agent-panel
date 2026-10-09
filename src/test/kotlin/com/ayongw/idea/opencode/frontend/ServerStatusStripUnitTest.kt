@@ -5,6 +5,7 @@ import com.ayongw.idea.opencode.shared.ServerStateDto
 import com.intellij.testFramework.TestApplicationManager
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -13,6 +14,7 @@ import java.awt.Container
 import java.util.Locale
 import java.util.ResourceBundle
 import javax.swing.JButton
+import javax.swing.JLabel
 import javax.swing.JPasswordField
 
 /**
@@ -125,7 +127,49 @@ class ServerStatusStripUnitTest {
         assertTrue("点击自启应回调", click(button(START_OWN)) && startedOwn)
     }
 
+    @Test
+    fun `窄宽度下按钮独占一行且不与文案重叠`() {
+        strip.update(
+            ServerStateDto(
+                state = ServerStateDto.STATE_FAILED,
+                failure = ServerStateDto.FAILURE_CLI_NOT_FOUND,
+                detail = "未找到 opencode CLI",
+            )
+        )
+        // 830px 是实测会发生重叠的工具窗宽度，取更窄的 520px 兜住下限
+        strip.setSize(520, 400)
+        layoutTree(strip)
+
+        val label = descendants(strip, JLabel::class.java)
+            .first { it.text == bundle.getString("server.failure.cli.not.found") }
+        val labelRow = rowOf(label)
+        val buttonRow = rowOf(button(RETRY))
+
+        assertNotSame("按钮必须与文案分行（同行时 BorderLayout 会挤压成重叠）", labelRow, buttonRow)
+        assertTrue(
+            "按钮行应整体位于文案行下方，不得重叠",
+            buttonRow.bounds.y >= labelRow.bounds.y + labelRow.bounds.height,
+        )
+    }
+
+    @Test
+    fun `无操作按钮时按钮行折叠不占空间`() {
+        strip.update(ServerStateDto(state = ServerStateDto.STATE_STARTING, port = 4096))
+        assertFalse("启动中无任何按钮，按钮行不应占纵向空间", rowOf(button(RETRY)).isVisible)
+    }
+
     // ==================== 夹具 ====================
+
+    /** 组件所在的直接子行（父级即状态条本身的行容器） */
+    private fun rowOf(component: Component): Container = component.parent as Container
+
+    /** 深度优先强制布局（headless 下组件未挂到 Window 上，不走 validate 链路） */
+    private fun layoutTree(root: Container) {
+        root.doLayout()
+        root.components.forEach { child ->
+            if (child is Container) layoutTree(child)
+        }
+    }
 
     /** 沿父链判断可见性（组件未挂到 Window 上时 `isShowing` 恒为 false） */
     private fun effectivelyVisible(component: Component): Boolean {

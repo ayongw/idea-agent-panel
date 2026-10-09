@@ -69,6 +69,9 @@ class SessionList(
     private val sessions = mutableListOf<SessionState>()
     private var currentSessionId: String? = null
 
+    /** 鼠标悬停的行下标；-1 表示无悬停（决定是否显示行尾删除按钮） */
+    private var hoverIndex: Int = -1
+
     private companion object {
         /** CardLayout 视图标识：会话列表 / 空状态 */
         const val CARD_LIST = "list"
@@ -128,24 +131,47 @@ class SessionList(
         sessionList.model = listModel
 
         sessionList.apply {
-            cellRenderer = SessionCellRenderer()
+            cellRenderer = SessionCellRenderer(
+                isHovered = { index -> index == hoverIndex },
+                canDelete = ::canDelete
+            )
             selectionMode = ListSelectionModel.SINGLE_SELECTION
             fixedCellHeight = JBUI.scale(ChatUIConstants.SessionList.ITEM_HEIGHT)
 
+            addMouseMotionListener(object : MouseAdapter() {
+                override fun mouseMoved(e: MouseEvent) {
+                    val index = locationToIndex(e.point)
+                    if (index != hoverIndex) {
+                        hoverIndex = index
+                        repaint()
+                    }
+                }
+
+                override fun mouseExited(e: MouseEvent) {
+                    if (hoverIndex != -1) {
+                        hoverIndex = -1
+                        repaint()
+                    }
+                }
+            })
+
             addMouseListener(object : MouseAdapter() {
                 override fun mouseClicked(e: MouseEvent) {
-                    if (e.clickCount == 2) {
-                        val index = locationToIndex(e.point)
-                        if (index >= 0) {
-                            val session = sessions[index]
-                            onSessionClick(session.sessionId)
-                        }
-                    } else if (e.button == MouseEvent.BUTTON3) { // Right click
-                        val index = locationToIndex(e.point)
-                        if (index >= 0) {
-                            setSelectedIndex(index)
-                            showContextMenu(index, e.x, e.y)
-                        }
+                    val index = locationToIndex(e.point)
+                    if (index < 0) return
+
+                    // 删除热区优先于切换：点在删除槽上不触发会话切换
+                    if (e.clickCount == 1 && isDeleteSlotHit(e.x)) {
+                        onDeleteSession(sessions[index].sessionId)
+                        return
+                    }
+
+                    if (e.button == MouseEvent.BUTTON3) { // Right click
+                        setSelectedIndex(index)
+                        showContextMenu(index, e.x, e.y)
+                    } else {
+                        // 单击即切换：此前要求双击，用户表现为「点了没反应」（只会高亮选中）
+                        onSessionClick(sessions[index].sessionId)
                     }
                 }
             })
@@ -157,6 +183,17 @@ class SessionList(
         }
         add(cards, BorderLayout.CENTER)
         showEmptyState()
+    }
+
+    /**
+     * 删除热区判定：行尾固定 [ChatUIConstants.SessionList.DELETE_SLOT] 像素。
+     *
+     * 单元格由 renderer 每次绘制重建，不能持有按钮引用做事件消费（JList 会把点击
+     * 判成"选中"），故按固定占位做命中测试。
+     */
+    private fun isDeleteSlotHit(x: Int): Boolean {
+        val slot = JBUI.scale(ChatUIConstants.SessionList.DELETE_SLOT)
+        return x >= sessionList.width - sessionList.insets.right - slot
     }
 
     private fun setupKeyBindings() {
@@ -179,11 +216,8 @@ class SessionList(
         actionMap.put("deleteSession", object : AbstractAction() {
             override fun actionPerformed(e: ActionEvent?) {
                 val index = sessionList.selectedIndex
-                if (index >= 0) {
-                    val session = sessions[index]
-                    if (sessions.size > 1) { // Don't delete last session
-                        onDeleteSession(session.sessionId)
-                    }
+                if (index >= 0 && canDelete()) {
+                    onDeleteSession(sessions[index].sessionId)
                 }
             }
         })
@@ -210,8 +244,8 @@ class SessionList(
         renameAction.putValue(AbstractAction.SMALL_ICON, ChatAppIcons.Session.rename)
         menu.add(renameAction)
 
-        // Delete (if not last)
-        if (sessions.size > 1) {
+        // Delete（策略统一走 canDelete，不再散落 `sessions.size > 1`）
+        if (canDelete()) {
             val deleteAction = object : AbstractAction(OpencodeFrontendBundle.message("chat.session.delete")) {
                 override fun actionPerformed(e: ActionEvent?) {
                     onDeleteSession(session.sessionId)
@@ -232,6 +266,16 @@ class SessionList(
 
         menu.show(sessionList, x, y)
     }
+
+    /**
+     * 是否允许删除会话 —— 唯一的删除策略点（行尾按钮 / 右键菜单 / Delete 键三处共用）。
+     *
+     * 允许删到只剩 0 个：删除当前会话且没有可切换的会话时，
+     * `SessionController.removeTabAndRelocate` 会自动新建一个空会话兜底
+     * （与关闭最后一个 tab 的行为一致），面板不会停在空白态。
+     * 旧实现两处 `sessions.size > 1` 会留下「最后一个会话删不掉」的死角。
+     */
+    private fun canDelete(): Boolean = sessions.isNotEmpty()
 
     private fun showRenameDialog(session: SessionState) {
         val textField = JTextField(session.title).apply {
@@ -323,9 +367,18 @@ data class SessionItem(
 }
 
 /**
- * 会话列表单元格渲染器
+ * 会话列表单元格渲染器。
+ *
+ * 行尾固定一个删除槽（[ChatUIConstants.SessionList.DELETE_SLOT]）：hover 该行时显示删除图标。
+ * 槽位常驻只画图标与否，几何不随 hover 变化 —— 删除热区因此可由固定像素算出，
+ * 无需持有按钮实例（JList 单元格每次绘制都新建，拿不到稳定引用）。
  */
-private class SessionCellRenderer : ListCellRenderer<SessionItem> {
+private class SessionCellRenderer(
+    /** 该行是否处于鼠标悬停（由列表跟踪 hoverIndex 后回传，便于单测） */
+    private val isHovered: (Int) -> Boolean,
+    /** 删除策略（列表统一收口，见 [SessionList.canDelete]） */
+    private val canDelete: () -> Boolean
+) : ListCellRenderer<SessionItem> {
 
     override fun getListCellRendererComponent(
         list: JList<out SessionItem>?,
@@ -363,17 +416,31 @@ private class SessionCellRenderer : ListCellRenderer<SessionItem> {
         }
         panel.add(mainPanel, BorderLayout.CENTER)
 
-        // 右侧信息
+        // 右侧信息：时间 + 行尾删除槽
         val rightPanel = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            layout = BoxLayout(this, BoxLayout.X_AXIS)
             isOpaque = false
 
             val timeLabel = JBLabel(value.timestamp).apply {
                 font = JBFont.small()
                 foreground = if (isSelected) JBColor.GRAY.darker() else ChatAppColors.Text.disabled
-                alignmentX = Component.RIGHT_ALIGNMENT
             }
             add(timeLabel)
+
+            // 删除槽：宽度恒定，hover 才显示图标（与 isDeleteSlotHit 的像素口径一致）
+            val slot = JBUI.scale(ChatUIConstants.SessionList.DELETE_SLOT)
+            add(JPanel().apply {
+                isOpaque = false
+                preferredSize = Dimension(slot, slot)
+                minimumSize = Dimension(slot, slot)
+                maximumSize = Dimension(slot, slot)
+                if (isHovered(index) && canDelete()) {
+                    toolTipText = OpencodeFrontendBundle.message("chat.session.delete")
+                    add(JBLabel(ChatAppIcons.Session.delete).apply {
+                        foreground = if (isSelected) JBColor.BLACK else ChatAppColors.Text.disabled
+                    })
+                }
+            })
         }
         panel.add(rightPanel, BorderLayout.EAST)
 

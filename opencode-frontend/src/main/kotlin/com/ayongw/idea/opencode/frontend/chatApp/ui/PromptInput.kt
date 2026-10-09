@@ -93,9 +93,35 @@ class PromptInput(
     private var currentState: MessageInputState = MessageInputState.Enabled("")
     private var skipInputChangeUpdate = false
 
-    /** 输入历史 */
-    private val inputHistory = mutableListOf<String>()
+    /**
+     * 输入历史，**按会话隔离**。
+     *
+     * 原实现是单一全局列表，切到别的会话按 ↑ 会翻出上一个会话发过的内容 ——
+     * 输入草稿已按会话隔离（`SessionController.drafts`），历史漏了，这里补齐。
+     */
+    private val histories = mutableMapOf<String, MutableList<String>>()
+
+    /** 当前会话 id（由外层在会话切换时下发；null 表示尚未绑定） */
+    private var currentSessionId: String? = null
+
+    /** 历史游标（相对当前会话的历史列表） */
     private var historyIndex = -1
+
+    /** 当前会话的历史列表；未绑定会话时用匿名列表（行为等同旧的全局单列表） */
+    private val inputHistory: MutableList<String>
+        get() = histories.getOrPut(currentSessionId ?: ANONYMOUS_SESSION) { mutableListOf() }
+
+    /**
+     * 切换会话：重置历史游标。
+     *
+     * 历史本身按 [currentSessionId] 取用，切换后自动指向新会话的列表；
+     * 游标必须重置，否则会把上个会话的下标带过来。
+     */
+    fun setCurrentSessionId(sessionId: String?) {
+        if (currentSessionId == sessionId) return
+        currentSessionId = sessionId
+        historyIndex = -1
+    }
 
     init {
         setupAppearance()
@@ -500,6 +526,7 @@ class PromptInput(
 
     private fun addToHistory(text: String) {
         if (text.isBlank()) return
+        val inputHistory = inputHistory
         // Remove if already exists
         inputHistory.remove(text)
         // Add to front
@@ -578,6 +605,9 @@ class PromptInput(
     }
 
     private companion object {
+        /** 未绑定会话时的历史桶 key（未绑定期间的历史不与任何会话混用） */
+        const val ANONYMOUS_SESSION = "__anonymous__"
+
         /** 上下文条高度（单行 chips） */
         const val CHIP_ROW_HEIGHT = 30
     }

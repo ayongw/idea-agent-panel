@@ -72,6 +72,22 @@ class ServerStatusStrip(
         addActionListener { onOpenSettings() }
     }
 
+    /**
+     * 操作按钮行（独立于文案行，右对齐）。
+     *
+     * 不能与文案同行用 `BorderLayout`（WEST 文案 + EAST 按钮）拼：宽度不足时 BorderLayout
+     * 给 WEST 完整 preferred 宽度、EAST 又定位在 `width - eastWidth`，两者会**直接重叠**
+     * （实测 830px 宽的工具窗即重叠）。拆行后任意宽度都不重叠；全部按钮不可见时整行折叠。
+     */
+    private val actionRow = JPanel(FlowLayout(FlowLayout.RIGHT, ChatUIConstants.Spacing.SMALL, 0)).apply {
+        isOpaque = false
+        isVisible = false
+        add(retryButton)
+        add(startOwnButton)
+        add(cliDocsButton)
+        add(settingsButton)
+    }
+
     private val usernameField = JBTextField(OpenCodeSettingsState.DEFAULT_USERNAME).apply { columns = 10 }
 
     private val passwordField = JBPasswordField().apply { columns = 14 }
@@ -127,7 +143,8 @@ class ServerStatusStrip(
             BorderFactory.createMatteBorder(JBUI.scale(1), 0, JBUI.scale(1), 0, ChatAppColors.Server.border),
             BorderFactory.createEmptyBorder(JBUI.scale(4), JBUI.scale(8), JBUI.scale(4), JBUI.scale(8)),
         )
-        add(buildMainRow())
+        add(buildMessageRow())
+        add(actionRow)
         add(detailLabel)
         add(credentialsRow)
         add(outputRow)
@@ -256,6 +273,8 @@ class ServerStatusStrip(
         startOwnButton.isVisible = startOwn
         cliDocsButton.isVisible = docs
         settingsButton.isVisible = settings
+        // 无按钮时整行折叠，不占纵向空间
+        actionRow.isVisible = retry || startOwn || docs || settings
     }
 
     /** 失败分类 → 文案 key；分类由后端枚举下发，未知分类回落到通用文案 */
@@ -271,24 +290,12 @@ class ServerStatusStrip(
         }
     )
 
-    private fun buildMainRow(): JPanel {
-        val left = JPanel(FlowLayout(FlowLayout.LEFT, ChatUIConstants.Spacing.SMALL, 0)).apply {
-            isOpaque = false
-            add(messageLabel)
-            add(progressBar)
-        }
-        val right = JPanel(FlowLayout(FlowLayout.RIGHT, ChatUIConstants.Spacing.SMALL, 0)).apply {
-            isOpaque = false
-            add(retryButton)
-            add(startOwnButton)
-            add(cliDocsButton)
-            add(settingsButton)
-        }
-        return JPanel(BorderLayout()).apply {
-            isOpaque = false
-            add(left, BorderLayout.WEST)
-            add(right, BorderLayout.EAST)
-        }
+    private fun buildMessageRow(): JPanel = JPanel(
+        FlowLayout(FlowLayout.LEFT, ChatUIConstants.Spacing.SMALL, 0),
+    ).apply {
+        isOpaque = false
+        add(messageLabel)
+        add(progressBar)
     }
 
     private companion object {

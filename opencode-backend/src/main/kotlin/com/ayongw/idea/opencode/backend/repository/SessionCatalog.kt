@@ -59,17 +59,19 @@ internal class SessionCatalog(
         return null
     }
 
-    /** 切换会话 */
-    suspend fun switchSession(sessionId: String) {
-        val result = restClientProvider().getSession(sessionId)
-        if (result.isSuccess()) {
-            onCurrentSessionChanged(sessionId)
-            log.info("切换会话 session=$sessionId")
-            loadMessages(sessionId)
-            loadSessions()
-        } else {
-            log.warn("切换会话失败 session=$sessionId: ${result.exceptionOrNull()?.message}")
-        }
+    /**
+     * 切换会话：返回是否成功（消息已加载）。
+     *
+     * 不再用 `getSession` 做前置门禁：它把「一次切换」变成 3 次串行往返
+     * （getSession → loadMessages → loadSessions），且失败时整次切换被静默丢弃，
+     * 前端却已乐观改了 currentSessionId → 观感是「切了但没反应」。
+     * 现在只以 `loadMessages` 结果为准（失败不清空旧消息，见该方法注释），
+     * 会话列表由前端 `getAllSessions` / `refreshSessions` 刷新，不在此重复拉取。
+     */
+    suspend fun switchSession(sessionId: String): Boolean {
+        onCurrentSessionChanged(sessionId)
+        log.info("切换会话 session=$sessionId")
+        return loadMessages(sessionId)
     }
 
     /** 删除会话 */
@@ -133,8 +135,8 @@ internal class SessionCatalog(
     private fun JsonObject.primitiveString(key: String): String? =
         get(key)?.takeIf { it.isJsonPrimitive }?.asString?.takeIf { it.isNotBlank() }
 
-    /** 加载指定会话的消息 */
-    suspend fun loadMessages(sessionId: String) {
+    /** 加载指定会话的消息；返回是否加载成功（失败时保留旧消息，不清空） */
+    suspend fun loadMessages(sessionId: String): Boolean {
         // 切换/新建会话：清空上一会话的流式缓冲、运行态与待决权限，避免串值
         eventStreamReset()
         runningState.value = false
@@ -146,10 +148,12 @@ internal class SessionCatalog(
             messagesState.value = bubbles
             onCurrentSessionChanged(sessionId)
             log.info("加载会话消息 session=$sessionId: REST 消息 ${messages.size} 条 → 气泡 ${bubbles.size} 条")
+            return true
         } else {
             log.warn("加载会话消息失败 session=$sessionId: ${result.exceptionOrNull()?.message}")
             // 失败不清空：currentSessionId 未切换（成功分支才变更），保留旧列表保证 UI 数据
             // 与当前会话状态一致；清空会造成「UI 空白但会话未变」的永久性消息消失观感
+            return false
         }
     }
 }

@@ -27,6 +27,14 @@ interface ChatViewModelApi : Disposable {
     /** 当前会话是否正在执行（决定输入框显示「发送」还是「停止」） */
     val sessionRunningFlow: StateFlow<Boolean>
 
+    /**
+     * 是否正在切换会话（消息加载中）。
+     *
+     * 切换期间消息区**刻意保留上一个会话的内容**（失败不清空，保证数据与当前会话一致），
+     * 若无任何反馈，用户感知就是「点了没反应」。UI 据此显示加载提示。
+     */
+    val sessionSwitchingFlow: StateFlow<Boolean>
+
     /** 当前会话的待决权限请求；null 表示无需确认 */
     val pendingPermissionFlow: StateFlow<PendingPermissionDto?>
 

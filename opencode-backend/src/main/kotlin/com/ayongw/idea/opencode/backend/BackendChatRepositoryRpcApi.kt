@@ -85,10 +85,10 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
         return sessionId ?: java.util.UUID.randomUUID().toString()
     }
 
-    override suspend fun switchSession(projectId: ProjectId, sessionId: String) {
-        val backendProject = projectId.findProjectOrNull() ?: return
+    override suspend fun switchSession(projectId: ProjectId, sessionId: String): Boolean {
+        val backendProject = projectId.findProjectOrNull() ?: return false
         val model = BackendChatRepositoryModel.getInstance(backendProject)
-        model.switchSession(sessionId)
+        return model.switchSession(sessionId)
     }
 
     override suspend fun deleteSession(projectId: ProjectId, sessionId: String) {

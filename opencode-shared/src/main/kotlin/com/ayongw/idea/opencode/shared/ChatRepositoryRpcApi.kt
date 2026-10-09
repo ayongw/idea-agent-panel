@@ -51,9 +51,12 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
     suspend fun createSession(projectId: ProjectId, initialTitle: String? = null): String
 
     /**
-     * 切换会话
+     * 切换会话；返回是否成功（消息已加载）。
+     *
+     * 返回成功标志而非 Unit：失败时前端不能乐观改 currentSessionId，
+     * 否则会出现「tab 高亮切过去了、消息却是旧的」观感。
      */
-    suspend fun switchSession(projectId: ProjectId, sessionId: String)
+    suspend fun switchSession(projectId: ProjectId, sessionId: String): Boolean
 
     /**
      * 删除会话

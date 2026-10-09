@@ -270,7 +270,7 @@ class BackendChatRepositoryModel(private val project: Project) : Disposable {
     suspend fun createNewSession(title: String? = null, directory: String? = null): String? =
         sessionCatalog.createNewSession(title, directory)
 
-    suspend fun switchSession(sessionId: String): Unit = sessionCatalog.switchSession(sessionId)
+    suspend fun switchSession(sessionId: String): Boolean = sessionCatalog.switchSession(sessionId)
 
     suspend fun deleteSession(sessionId: String): Unit = sessionCatalog.deleteSession(sessionId)
 

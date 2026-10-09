@@ -25,6 +25,7 @@ import java.awt.Point
 import java.awt.Rectangle
 import javax.swing.Box
 import javax.swing.JLabel
+import javax.swing.JProgressBar
 import javax.swing.JPanel
 import javax.swing.JScrollPane
 import javax.swing.Scrollable
@@ -64,6 +65,18 @@ class ChatList(
     /** 会话执行态（G3）：运行中思考气泡保持展开，结束后折叠（由装配方经 [setStreamRunning] 注入） */
     private var streamRunning = false
 
+    /**
+     * 切换会话加载提示条（常驻 NORTH，默认不可见）。
+     *
+     * 只加一条细线而**不替换消息区卡片**：切换期间旧内容留在原位，无闪烁；
+     * 本地 RTT 仅几十~几百毫秒，全屏骨架反而更差（见 TSD-34 §4.3）。
+     */
+    private val switchingBar = JProgressBar().apply {
+        isIndeterminate = true
+        isVisible = false
+        preferredSize = Dimension(0, JBUI.scale(SWITCHING_BAR_HEIGHT))
+    }
+
     /** 布局单一入口（TSD-30 §5.1）：revalidate + 几何自愈兜底 + repaint 收敛到一处 */
     private val layoutCoordinator: LayoutCoordinator
 
@@ -75,6 +88,9 @@ class ChatList(
     companion object {
         private const val CARD_EMPTY = "empty"
         private const val CARD_MESSAGES = "messages"
+
+        /** 切换加载提示条高度（逻辑像素） */
+        private const val SWITCHING_BAR_HEIGHT = 2
 
         /** 滚动/布局自愈重试上限：覆盖首帧与切卡后 viewport validate 的调度窗口 */
         private const val SCROLL_RETRY_MAX = 3
@@ -130,6 +146,15 @@ class ChatList(
         }
 
         add(cardPanel, BorderLayout.CENTER)
+        add(switchingBar, BorderLayout.NORTH)
+    }
+
+    /** 切换会话中：显示/隐藏顶部加载提示条（幂等，重复调用不叠加） */
+    fun setSwitching(switching: Boolean) {
+        if (switchingBar.isVisible == switching) return
+        switchingBar.isVisible = switching
+        revalidate()
+        repaint()
     }
 
     private fun setupAppearance() {

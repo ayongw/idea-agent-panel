@@ -1,5 +1,6 @@
 package com.ayongw.idea.opencode.backend.server
 
+import com.ayongw.idea.opencode.backend.mcp.LoginShellPath
 import com.intellij.execution.ExecutionException
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.process.KillableProcessHandler
@@ -60,7 +61,14 @@ interface OpenCodeServerProcess {
  * - 输出：`ProcessListener.onTextAvailable` → [OpenCodeServerOutputBuffer]（写入即脱敏）。
  */
 open class OpenCodeServerLauncher(
-    private val cliLocator: OpenCodeServerCliLocator = OpenCodeServerCliLocator(),
+    /**
+     * 登录 shell 的 `PATH` 探测：IDE 进程 `PATH` 极窄（从 Dock 启动时只有系统目录），
+     * opencode 装在 `~/.opencode/bin` 或 nvm 的 bin 下时用它补齐（同 MCP 侧见 [LoginShellPath]）。
+     */
+    private val loginShellPath: LoginShellPath = LoginShellPath(),
+    private val cliLocator: OpenCodeServerCliLocator = OpenCodeServerCliLocator(
+        pathEnv = { loginShellPath.effectivePath() },
+    ),
     private val outputBuffer: OpenCodeServerOutputBuffer = OpenCodeServerOutputBuffer(),
     private val commandFactory: (OpenCodeServerLaunchSpec, String) -> List<String> = ::defaultCommand,
 ) {

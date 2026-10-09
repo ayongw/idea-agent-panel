@@ -97,14 +97,20 @@ class OpenCodeChatApp(
             onBrowseDirectory = { path -> viewModel.compose.browseWorkspaceDirectory(path) }
         )
 
-        add(topBar, BorderLayout.NORTH)
+        // 全局层（不随会话切换）：tab 栏 + 操作按钮 + Server 状态条
+        // 状态条原先挂在 CENTER 里（会话内容区），但 Server 是**项目级**全局资源，
+        // 语义上应与会话内容解耦，且失败/进行中时必须始终可见（与当前会话无关）。
         add(
             JPanel(BorderLayout()).apply {
-                add(serverStatusStrip, BorderLayout.NORTH)
-                add(chatList, BorderLayout.CENTER)
+                isOpaque = false
+                add(topBar, BorderLayout.CENTER)
+                add(serverStatusStrip, BorderLayout.SOUTH)
             },
-            BorderLayout.CENTER
+            BorderLayout.NORTH
         )
+        // 会话层：消息列表
+        add(chatList, BorderLayout.CENTER)
+        // 会话层：输入区与操作区
         add(promptInput, BorderLayout.SOUTH)
 
         subscribeToViewModelUpdates()
@@ -210,6 +216,8 @@ class OpenCodeChatApp(
                 if (sessionId != lastBoundSessionId) {
                     val oldId = lastBoundSessionId
                     lastBoundSessionId = sessionId
+                    // 输入历史按会话隔离：切换时同步换桶 + 重置游标（否则会翻到上个会话的历史）
+                    promptInput.setCurrentSessionId(sessionId)
                     if (oldId != null) viewModel.sessions.saveDraft(oldId, promptInput.currentText())
                     val draft = viewModel.sessions.loadDraft(sessionId)
                     viewModel.sessions.restoreDraft(sessionId, draft)
@@ -221,6 +229,15 @@ class OpenCodeChatApp(
         coroutineScope.launch {
             viewModel.promptInputState.collect { state ->
                 promptInput.updateState(state)
+            }
+        }
+
+        // 切换会话中 → 顶部加载提示条（切换期间旧消息刻意保留，需显式反馈避免"点了没反应"）
+        coroutineScope.launch {
+            viewModel.sessionSwitchingFlow.collect { switching ->
+                ApplicationManager.getApplication().invokeLater {
+                    chatList.setSwitching(switching)
+                }
             }
         }
 
