@@ -163,7 +163,12 @@ class OpenCodeChatApp(
             onRenameSession = { sessionId, newTitle -> viewModel.sessions.renameSession(sessionId, newTitle) },
             onDeleteSession = { sessionId -> viewModel.sessions.deleteSession(sessionId) }
         )
-        sessionList.updateSessions(workspaceSessions(), viewModel.currentSessionId.value)
+        // 分组展示依赖「已打开的会话 id」（tab 集合）：Active / History 分开展示
+        sessionList.updateSessions(
+            workspaceSessions(),
+            viewModel.currentSessionId.value,
+            viewModel.openedSessionIds.value
+        )
 
         val content = JPanel(BorderLayout()).apply {
             preferredSize = Dimension(

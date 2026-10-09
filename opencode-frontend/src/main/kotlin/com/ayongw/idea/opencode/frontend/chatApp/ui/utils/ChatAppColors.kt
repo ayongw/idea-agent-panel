@@ -98,6 +98,9 @@ object ChatAppColors {
     object Selection {
         /** 行/条目高亮底色（会话行、mention 高亮等） */
         val rowHighlight: Color = JBColor(Color(200, 220, 255), Color(40, 60, 90))
+
+        /** 当前会话行底色（比普通高亮更明确，配合左侧竖条使用） */
+        val currentRowHighlight: Color = JBColor(Color(214, 231, 255), Color(36, 52, 78))
     }
 
     object Status {

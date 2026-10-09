@@ -1,5 +1,6 @@
 package com.ayongw.idea.opencode.frontend.chatApp.ui
 
+import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
@@ -11,7 +12,6 @@ import com.ayongw.idea.opencode.frontend.chatApp.viewmodel.ApprovalMode
 import com.ayongw.idea.opencode.shared.AgentDto
 import com.ayongw.idea.opencode.shared.ModelDto
 import com.ayongw.idea.opencode.shared.ModelProviderDto
-import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.ButtonGroup
 import javax.swing.JComponent
@@ -39,6 +39,14 @@ class InputToolbar(
     private val approvalButton = createMenuButton()
     private val modeButton = createMenuButton()
     private val modelButton = createMenuButton()
+
+    /** 按钮之间的竖线分隔（左右各留白，宽度计入 [applyModelElision] 的固定宽度预算） */
+    private val modeSeparator = createSeparator()
+    private val modelSeparator = createSeparator()
+
+    /** 不随宽度收缩的左侧固定部分（省略预算用，必须与实际挂载的组件保持一致） */
+    private val fixedLeftComponents: List<JComponent>
+        get() = listOf(approvalButton, modeSeparator, modeButton, modelSeparator)
 
     private val modelPicker = ModelPickerPopup(
         onSelect = { model -> selectModel(model) },
@@ -103,9 +111,9 @@ class InputToolbar(
         }
 
         add(approvalButton)
-        add(Box.createHorizontalStrut(JBUI.scale(ChatUIConstants.Spacing.NORMAL)))
+        add(modeSeparator)
         add(modeButton)
-        add(Box.createHorizontalStrut(JBUI.scale(ChatUIConstants.Spacing.NORMAL)))
+        add(modelSeparator)
         add(modelButton)
 
         updateLabels()
@@ -131,6 +139,13 @@ class InputToolbar(
         border = JBUI.Borders.empty(JBUI.scale(3), JBUI.scale(8))
         font = JBFont.small()
         foreground = ChatAppColors.Text.disabled
+    }
+
+    /** 竖线分隔：取分隔线色（弱于按钮文字，不抢注意力），两侧留白由自身 border 承担 */
+    private fun createSeparator(): JComponent = JBLabel("|").apply {
+        font = JBFont.small()
+        foreground = ChatAppColors.Divider.line
+        border = JBUI.Borders.empty(0, JBUI.scale(ChatUIConstants.Spacing.SMALL), 0, JBUI.scale(ChatUIConstants.Spacing.SMALL))
     }
 
     /** 模型弹窗选中回调（成功后由 ViewModel 状态回流更新标签） */
@@ -204,13 +219,17 @@ class InputToolbar(
         // 外层未下发行宽时退回自身宽度（首次布局前的兜底）
         val budgetWidth = if (availableWidth > 0) availableWidth else width
         if (modelName.isEmpty() || budgetWidth <= 0) return
-        val fixedWidth = approvalButton.preferredSize.width +
-            modeButton.preferredSize.width +
-            2 * JBUI.scale(ChatUIConstants.Spacing.NORMAL) +
-            reservedRightWidth
+        // 固定宽度按实际挂载的左侧组件累加（审核 / 分隔线 / 模式 / 分隔线），
+        // 写死常量会在增减组件时与真实布局漂移，导致模型按钮挤压右侧用量
+        val fixedWidth = fixedLeftComponents.sumOf { it.preferredSize.width } + reservedRightWidth
         val insets = modelButton.insets
-        val budget = budgetWidth - fixedWidth - insets.left - insets.right
         val metrics = modelButton.getFontMetrics(modelButton.font)
+        // 极窄窗口下 budget 可能 ≤ 0；此时 TextElipsis 会「视为不限」而原样返回全名，
+        // 反而更挤。故下限取一个省略号宽：退化到只显示「…」，不溢出。
+        val budget = maxOf(
+            budgetWidth - fixedWidth - insets.left - insets.right,
+            metrics.stringWidth(TextElipsis.ELLIPSIS)
+        )
         val shown = TextElipsis.elide(modelName, budget, metrics::stringWidth)
         val text = shown + ARROW
         if (text == modelButton.text) return

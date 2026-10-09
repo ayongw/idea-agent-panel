@@ -7,6 +7,7 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
@@ -41,6 +42,8 @@ import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
 import javax.swing.JTextField
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
 import javax.swing.KeyStroke
 import javax.swing.ListCellRenderer
 import javax.swing.ListSelectionModel
@@ -59,15 +62,28 @@ class SessionList(
     private val onDeleteSession: (String) -> Unit,          // sessionId -> 删除
 ) : JPanel() {
 
-    private val sessionList = JBList<SessionItem>()
+    private val sessionList = SessionRowList()
     private val scrollPane = JBScrollPane(sessionList)
     private val emptyState = createEmptyState()
+
+    /** 过滤输入框（顶部） */
+    private val filterField = JBTextField().apply {
+        emptyText.text = OpencodeFrontendBundle.message("chat.session.filter.placeholder")
+    }
 
     /** 列表/空状态双视图容器（CardLayout 切换；两者都放 CENTER 会互相覆盖导致列表永远不可见） */
     private val cards = JPanel(CardLayout())
 
     private val sessions = mutableListOf<SessionState>()
+
+    /** 当前会话 id（行左侧标记） */
     private var currentSessionId: String? = null
+
+    /** 已打开（tab 中存在）的会话 id：决定 Active / History 分组 */
+    private var openedSessionIds: Set<String> = emptySet()
+
+    /** 过滤文本（标题模糊匹配，大小写不敏感） */
+    private var filterText: String = ""
 
     /** 鼠标悬停的行下标；-1 表示无悬停（决定是否显示行尾删除按钮） */
     private var hoverIndex: Int = -1
@@ -127,13 +143,13 @@ class SessionList(
     }
 
     private fun setupList() {
-        val listModel = DefaultListModel<SessionItem>()
-        sessionList.model = listModel
+        sessionList.model = DefaultListModel<SessionRow>()
 
         sessionList.apply {
-            cellRenderer = SessionCellRenderer(
-                isHovered = { index -> index == hoverIndex },
-                canDelete = ::canDelete
+            cellRenderer = SessionRowRenderer(
+                isHovered = { i -> i == hoverIndex },
+                currentSessionId = { this@SessionList.currentSessionId },
+                canDelete = { this@SessionList.canDelete() }
             )
             selectionMode = ListSelectionModel.SINGLE_SELECTION
             fixedCellHeight = JBUI.scale(ChatUIConstants.SessionList.ITEM_HEIGHT)
@@ -159,10 +175,13 @@ class SessionList(
                 override fun mouseClicked(e: MouseEvent) {
                     val index = locationToIndex(e.point)
                     if (index < 0) return
+                    // 分组标题行不响应点击
+                    val row = (model as? DefaultListModel<SessionRow>)?.getElementAt(index) ?: return
+                    val item = row as? SessionRow.Item ?: return
 
                     // 删除热区优先于切换：点在删除槽上不触发会话切换
                     if (e.clickCount == 1 && isDeleteSlotHit(e.x)) {
-                        onDeleteSession(sessions[index].sessionId)
+                        onDeleteSession(item.session.sessionId)
                         return
                     }
 
@@ -171,18 +190,46 @@ class SessionList(
                         showContextMenu(index, e.x, e.y)
                     } else {
                         // 单击即切换：此前要求双击，用户表现为「点了没反应」（只会高亮选中）
-                        onSessionClick(sessions[index].sessionId)
+                        onSessionClick(item.session.sessionId)
                     }
                 }
             })
         }
+
+        // 过滤：标题模糊匹配（大小写不敏感），即时过滤
+        filterField.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) = onFilterChanged()
+            override fun removeUpdate(e: DocumentEvent) = onFilterChanged()
+            override fun changedUpdate(e: DocumentEvent) = onFilterChanged()
+        })
+
         cards.apply {
             layout = CardLayout()
             add(scrollPane, CARD_LIST)
             add(emptyState, CARD_EMPTY)
         }
-        add(cards, BorderLayout.CENTER)
+        val listColumn = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(
+                JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    add(filterField, BorderLayout.CENTER)
+                    border = JBUI.Borders.empty(
+                        JBUI.scale(ChatUIConstants.Spacing.SMALL),
+                        JBUI.scale(ChatUIConstants.Spacing.NORMAL)
+                    )
+                },
+                BorderLayout.NORTH
+            )
+            add(cards, BorderLayout.CENTER)
+        }
+        add(listColumn, BorderLayout.CENTER)
         showEmptyState()
+    }
+
+    private fun onFilterChanged() {
+        filterText = filterField.text.orEmpty().trim()
+        rebuildRows()
     }
 
     /**
@@ -308,28 +355,73 @@ class SessionList(
     }
 
     /**
-     * 更新会话列表
+     * 更新会话列表。
+     *
+     * @param openedIds 已打开（tab 中存在）的会话 id —— 决定 Active / History 分组
      */
-    fun updateSessions(newSessions: List<com.ayongw.idea.opencode.shared.SessionStateDto>, activeSessionId: String?) {
+    fun updateSessions(
+        newSessions: List<SessionStateDto>,
+        activeSessionId: String?,
+        openedIds: List<String> = emptyList()
+    ) {
         sessions.clear()
         sessions.addAll(newSessions.map { it.toSessionState() })
         currentSessionId = activeSessionId
+        openedSessionIds = openedIds.toSet()
+        rebuildRows()
+    }
 
-        val listModel = sessionList.model as DefaultListModel<SessionItem>
-        listModel.clear()
-        newSessions.forEach { listModel.addElement(SessionItem(it.toSessionState())) }
+    /**
+     * 按「过滤 → 已打开/未打开分组 → 排序」重建列表行。
+     *
+     * - 过滤：标题包含匹配（大小写不敏感），对两组同时生效
+     * - 分组：已打开（Active）在上，未打开（History）在下，各自按更新时间倒序
+     * - 只有非空分组才输出标题行（过滤后某组为空时不留孤零零的标题）
+     */
+    private fun rebuildRows() {
+        val model = sessionList.model as? DefaultListModel<SessionRow> ?: return
+        model.clear()
 
-        if (sessions.isEmpty()) {
-            showEmptyState()
+        val matched = if (filterText.isBlank()) {
+            sessions
         } else {
-            showListState()
-            // 选中当前会话
-            val activeIndex = sessions.indexOfFirst { it.sessionId == activeSessionId }
-            if (activeIndex >= 0) {
-                sessionList.selectedIndex = activeIndex
-                sessionList.ensureIndexIsVisible(activeIndex)
-            }
+            sessions.filter { SessionTitles.display(it.title).contains(filterText, ignoreCase = true) }
         }
+
+        val (opened, history) = matched.partition { it.sessionId in openedSessionIds }
+        appendSection(model, "chat.session.section.active", opened)
+        appendSection(model, "chat.session.section.history", history)
+
+        if (model.size() == 0) {
+            showEmptyState()
+            return
+        }
+        showListState()
+        // 选中当前会话（渲染层另有左侧标记，这里让键盘/滚动定位也一致）
+        val currentIndex = rows().indexOfFirst {
+            it is SessionRow.Item && it.session.sessionId == currentSessionId
+        }
+        if (currentIndex >= 0) {
+            sessionList.selectedIndex = currentIndex
+            sessionList.ensureIndexIsVisible(currentIndex)
+        }
+    }
+
+    private fun appendSection(
+        model: DefaultListModel<SessionRow>,
+        titleKey: String,
+        items: List<SessionState>
+    ) {
+        if (items.isEmpty()) return
+        model.addElement(SessionRow.Header(OpencodeFrontendBundle.message(titleKey)))
+        items.sortedByDescending { it.updatedAt }.forEach {
+            model.addElement(SessionRow.Item(it))
+        }
+    }
+
+    private fun rows(): List<SessionRow> {
+        val model = sessionList.model as? DefaultListModel<SessionRow> ?: return emptyList()
+        return (0 until model.size()).map { model.getElementAt(it) }
     }
 
     private fun showEmptyState() {
@@ -355,6 +447,21 @@ class SessionList(
 }
 
 /**
+ * 列表行：分组标题 或 会话项。
+ *
+ * 「已打开（Active）」与「未打开（History）」分组展示 —— 两者混排时用户无法一眼看出
+ * 哪些会话已经打开过（tab 里已有），点进去才发现是刚打开过的。
+ * 分组标题与会话共用**同一个 JList**（保留虚拟化），标题行不可选中。
+ */
+sealed class SessionRow {
+    /** 分组标题（Active Sessions / Session History） */
+    data class Header(val title: String) : SessionRow()
+
+    /** 会话条目 */
+    data class Item(val session: SessionState) : SessionRow()
+}
+
+/**
  * 会话列表项数据类
  */
 data class SessionItem(
@@ -367,83 +474,142 @@ data class SessionItem(
 }
 
 /**
- * 会话列表单元格渲染器。
+ * 会话列表本体。
  *
- * 行尾固定一个删除槽（[ChatUIConstants.SessionList.DELETE_SLOT]）：hover 该行时显示删除图标。
- * 槽位常驻只画图标与否，几何不随 hover 变化 —— 删除热区因此可由固定像素算出，
- * 无需持有按钮实例（JList 单元格每次绘制都新建，拿不到稳定引用）。
+ * **分组标题与会话行共用统一行高**：试过 `BasicListUI.getRowHeight(int)` 做变高行，
+ * 实测它只改返回的 height，`getCellBounds` 的 y 偏移仍按统一行高步进
+ * （20/50 混排时 y = 0,17,34,51，布局错位），故不可用。
+ * 改为统一行高 + 标题行加底部分隔线来表达分组（参考样式里标题行本身也是常规高度）。
  */
-private class SessionCellRenderer(
-    /** 该行是否处于鼠标悬停（由列表跟踪 hoverIndex 后回传，便于单测） */
+private class SessionRowList : JBList<SessionRow>()
+
+/**
+ * 会话列表渲染器：分组标题行 / 会话行 / 当前会话左侧标记 / hover 删除按钮。
+ *
+ * 分组标题与会话共用一个列表（保留虚拟化，见 [SessionRowList]）。
+ * 会话行的删除槽宽度恒定（[ChatUIConstants.SessionList.DELETE_SLOT]），
+ * 与 [SessionList.isDeleteSlotHit] 的像素口径一致。
+ */
+private class SessionRowRenderer(
+    /** 该行是否处于鼠标悬停 */
     private val isHovered: (Int) -> Boolean,
-    /** 删除策略（列表统一收口，见 [SessionList.canDelete]） */
+    /** 当前会话 id（左侧标记） */
+    private val currentSessionId: () -> String?,
+    /** 删除策略（列表统一收口） */
     private val canDelete: () -> Boolean
-) : ListCellRenderer<SessionItem> {
+) : ListCellRenderer<SessionRow> {
 
     override fun getListCellRendererComponent(
-        list: JList<out SessionItem>?,
-        value: SessionItem?,
+        list: JList<out SessionRow>?,
+        value: SessionRow?,
         index: Int,
         isSelected: Boolean,
         cellHasFocus: Boolean
-    ): Component {
-        if (value == null) return JPanel()
+    ): Component = when (value) {
+        null -> JPanel()
+        is SessionRow.Header -> headerRow(value.title)
+        is SessionRow.Item -> sessionRow(value, index, isSelected)
+    }
+
+    /** 分组标题：加粗小字 + 底部分隔线（统一行高下靠分隔线读作分组，不可选中） */
+    private fun headerRow(title: String): Component =
+        JBLabel(title).apply {
+            font = JBFont.medium().asBold()
+            foreground = ChatAppColors.Text.disabled
+            isOpaque = false
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, ChatAppColors.Divider.line),
+                JBUI.Borders.empty(0, JBUI.scale(ChatUIConstants.Spacing.LARGE))
+            )
+            verticalAlignment = SwingConstants.CENTER
+            alignmentX = Component.LEFT_ALIGNMENT
+        }
+
+    private fun sessionRow(row: SessionRow.Item, index: Int, isSelected: Boolean): Component {
+        val value = SessionItem(row.session)
+        val isCurrent = value.sessionId == currentSessionId()
 
         val panel = JPanel(BorderLayout()).apply {
-            isOpaque = isSelected
-            background = if (isSelected) ChatAppColors.Selection.rowHighlight else null
-            border = JBUI.Borders.empty(JBUI.scale(ChatUIConstants.Spacing.NORMAL), JBUI.scale(ChatUIConstants.Spacing.XLARGE))
+            isOpaque = true
+            background = when {
+                isCurrent -> ChatAppColors.Selection.currentRowHighlight
+                isSelected -> ChatAppColors.Selection.rowHighlight
+                else -> ChatAppColors.Panel.background
+            }
+            // 当前会话用左侧竖条标记：选中高亮会随鼠标移动，竖条才能稳定指明"当前会话"
+            border = if (isCurrent) {
+                BorderFactory.createMatteBorder(0, JBUI.scale(2), 0, 0, ChatAppColors.Tab.selectedIndicator)
+            } else {
+                JBUI.Borders.empty(0, JBUI.scale(2), 0, 0)
+            }
+            add(mainContent(value, isSelected, isCurrent), BorderLayout.CENTER)
+            add(rightContent(value, index, isSelected), BorderLayout.EAST)
         }
+        return panel
+    }
 
-        // 主内容区
-        val mainPanel = JPanel().apply {
+    /** 标题 + 预览（后端当前不填预览，故只有标题时也不留空行） */
+    private fun mainContent(value: SessionItem, isSelected: Boolean, isCurrent: Boolean): Component {
+        val panel = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
-
-            val titleLabel = JBLabel(value.title).apply {
-                font = JBFont.medium().asBold()
-                foreground = if (isSelected) JBColor.BLACK else ChatAppColors.Text.normal
+            border = JBUI.Borders.empty(
+                JBUI.scale(ChatUIConstants.Spacing.SMALL),
+                JBUI.scale(ChatUIConstants.Spacing.NORMAL)
+            )
+            add(
+                JBLabel(value.title).apply {
+                    font = JBFont.medium()
+                    foreground = if (isSelected || isCurrent) JBColor.BLACK else ChatAppColors.Text.normal
+                }
+            )
+            if (value.preview.isNotBlank()) {
+                add(Box.createVerticalStrut(JBUI.scale(2)))
+                add(
+                    JBLabel(value.preview.take(PREVIEW_MAX_CHARS)).apply {
+                        font = JBFont.small()
+                        foreground = ChatAppColors.Text.disabled
+                    }
+                )
             }
-            add(titleLabel)
-
-            add(Box.createVerticalStrut(JBUI.scale(2)))
-
-            val previewLabel = JBLabel(value.preview.take(60)).apply {
-                font = JBFont.small()
-                foreground = if (isSelected) JBColor.GRAY.darker() else ChatAppColors.Text.disabled
-            }
-            add(previewLabel)
         }
-        panel.add(mainPanel, BorderLayout.CENTER)
+        return panel
+    }
 
-        // 右侧信息：时间 + 行尾删除槽
-        val rightPanel = JPanel().apply {
+    /** 时间 + 行尾删除槽（hover 才显示图标） */
+    private fun rightContent(value: SessionItem, index: Int, isSelected: Boolean): Component =
+        JPanel().apply {
             layout = BoxLayout(this, BoxLayout.X_AXIS)
             isOpaque = false
 
-            val timeLabel = JBLabel(value.timestamp).apply {
-                font = JBFont.small()
-                foreground = if (isSelected) JBColor.GRAY.darker() else ChatAppColors.Text.disabled
-            }
-            add(timeLabel)
-
-            // 删除槽：宽度恒定，hover 才显示图标（与 isDeleteSlotHit 的像素口径一致）
-            val slot = JBUI.scale(ChatUIConstants.SessionList.DELETE_SLOT)
-            add(JPanel().apply {
-                isOpaque = false
-                preferredSize = Dimension(slot, slot)
-                minimumSize = Dimension(slot, slot)
-                maximumSize = Dimension(slot, slot)
-                if (isHovered(index) && canDelete()) {
-                    toolTipText = OpencodeFrontendBundle.message("chat.session.delete")
-                    add(JBLabel(ChatAppIcons.Session.delete).apply {
-                        foreground = if (isSelected) JBColor.BLACK else ChatAppColors.Text.disabled
-                    })
+            add(
+                JBLabel(value.timestamp).apply {
+                    font = JBFont.small()
+                    foreground = if (isSelected) JBColor.GRAY.darker() else ChatAppColors.Text.disabled
                 }
-            })
-        }
-        panel.add(rightPanel, BorderLayout.EAST)
+            )
 
-        return panel
+            val slot = JBUI.scale(ChatUIConstants.SessionList.DELETE_SLOT)
+            add(
+                JPanel().apply {
+                    isOpaque = false
+                    preferredSize = Dimension(slot, slot)
+                    minimumSize = Dimension(slot, slot)
+                    maximumSize = Dimension(slot, slot)
+                    if (isHovered(index) && canDelete()) {
+                        toolTipText = OpencodeFrontendBundle.message("chat.session.delete")
+                        add(
+                            JBLabel(ChatAppIcons.Session.delete).apply {
+                                foreground = if (isSelected) JBColor.BLACK else ChatAppColors.Text.disabled
+                            }
+                        )
+                    }
+                }
+            )
+        }
+
+    private companion object {
+        /** 预览最大字符数 */
+        const val PREVIEW_MAX_CHARS = 60
     }
 }

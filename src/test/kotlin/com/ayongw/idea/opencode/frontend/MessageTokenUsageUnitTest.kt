@@ -1,7 +1,7 @@
 package com.ayongw.idea.opencode.frontend
 
 import com.ayongw.idea.opencode.frontend.chatApp.ui.bubble.MessageBubble
-import com.ayongw.idea.opencode.frontend.chatApp.ui.bubble.TokenUsageRow
+import com.ayongw.idea.opencode.frontend.chatApp.ui.bubble.MessageFooter
 import com.ayongw.idea.opencode.shared.ChatMessage
 import com.ayongw.idea.opencode.shared.TokenUsageDto
 import org.junit.Assert.assertEquals
@@ -34,14 +34,16 @@ class MessageTokenUsageUnitTest {
         costUsd = cost
     )
 
-    private fun tokenRow(bubble: MessageBubble): TokenUsageRow? =
-        bubble.components.filterIsInstance<TokenUsageRow>().firstOrNull()
+    private fun tokenRow(bubble: MessageBubble): MessageFooter? =
+        bubble.components.filterIsInstance<MessageFooter>().firstOrNull()
 
+    /** 页脚里的 token 段文本（与时间已合并为同一行） */
+
+    /** 页脚里的 **token 段**（页脚已把时间与 token 合并为一行，token 固定是第 0 个标签） */
     private fun rowText(bubble: MessageBubble): String {
         val row = tokenRow(bubble)
-        assertNotNull("助手正文气泡应带 token 行组件", row)
-        return row!!.components.filterIsInstance<javax.swing.JLabel>()
-            .firstOrNull { it.text.isNotBlank() }?.text.orEmpty()
+        assertNotNull("助手正文气泡应带页脚组件", row)
+        return row!!.components.filterIsInstance<javax.swing.JLabel>().first().text.orEmpty()
     }
 
     @Test
@@ -51,27 +53,43 @@ class MessageTokenUsageUnitTest {
         )
 
         assertEquals("↑11.3k ↓69 · 缓存 18.5k", rowText(bubble))
-        assertTrue("有用量时应可见", tokenRow(bubble)!!.isVisible)
     }
 
     @Test
-    fun 无用量时隐藏且不占高度() {
+    fun 时间与token在同一行() {
+        val bubble = MessageBubble(
+            assistant(usage = TokenUsageDto(input = 100, output = 10))
+        )
+        val footer = tokenRow(bubble)!!
+
+        // 页脚是一个组件，内含 token 与时间两个标签 —— 不再是上下两行
+        val labels = footer.components.filterIsInstance<javax.swing.JLabel>()
+        assertEquals("页脚应含 token 与时间两个标签", 2, labels.size)
+        assertTrue("token 段应在时间之前（左对齐）", labels[0].text.startsWith("↑"))
+        assertTrue("时间段为 HH:mm", labels[1].text.matches(Regex("""\d{2}:\d{2}""")))
+    }
+
+    @Test
+    fun 无用量时token段隐藏但时间仍在() {
         val bubble = MessageBubble(assistant())
 
-        assertEquals("无用量时不应有任何文本", "", rowText(bubble))
-        assertFalse("无用量时整体隐藏", tokenRow(bubble)!!.isVisible)
+        assertEquals("无用量时不应有 token 文本", "", rowText(bubble))
+        // 时间标签仍存在且可见
+        val labels = tokenRow(bubble)!!.components.filterIsInstance<javax.swing.JLabel>()
+        assertFalse("无用量时 token 段应隐藏（但时间仍显示）", labels[0].isVisible)
+        assertTrue("时间始终可见", labels[1].isVisible)
     }
 
     @Test
-    fun 仅有花费无token时仍隐藏() {
-        // summary() 以 token 为口径；只有 cost 时外层不展示（避免半截信息），明细里仍有花费
+    fun 仅有花费无token时不展示token段() {
+        // summary() 以 token 为口径；只有 cost 时不展示 token 段（避免半截信息），明细里仍有花费
         val bubble = MessageBubble(assistant(cost = 0.0123))
 
-        assertFalse("仅花费不应展示外层 token 行", tokenRow(bubble)!!.isVisible)
+        assertEquals("", rowText(bubble))
     }
 
     @Test
-    fun 用户消息不展示token行() {
+    fun 用户消息不展示token段() {
         val bubble = MessageBubble(
             ChatMessage(
                 id = "u1",
@@ -82,19 +100,22 @@ class MessageTokenUsageUnitTest {
             )
         )
 
-        assertFalse("用户消息无 token 行", tokenRow(bubble)!!.isVisible)
+        // 用户消息页脚只有时间一个标签（构造时就不加 token 段）
+        val labels = tokenRow(bubble)!!.components.filterIsInstance<javax.swing.JLabel>()
+        assertEquals("用户消息页脚只有时间", 1, labels.size)
     }
 
     @Test
     fun 内容不变仅用量到达时刷新token行() {
         // 模拟真实时序：流式期先建气泡（无用量）→ 终态对账补齐 tokens，正文未变
         val bubble = MessageBubble(assistant(content = "答案"))
-        assertFalse("初始无用量应隐藏", tokenRow(bubble)!!.isVisible)
+        // 页脚本身始终可见（承载时间），隐藏的只是 token 段
+        val labels = tokenRow(bubble)!!.components.filterIsInstance<javax.swing.JLabel>()
+        assertFalse("初始无用量时 token 段应隐藏", labels[0].isVisible)
 
         bubble.syncWith(assistant(content = "答案", usage = TokenUsageDto(input = 480, output = 20)))
 
-        assertEquals("usage 到达后应刷新 token 行", "↑480 ↓20", rowText(bubble))
-        assertTrue("刷新后应可见", tokenRow(bubble)!!.isVisible)
+        assertEquals("usage 到达后应刷新 token 段", "↑480 ↓20", rowText(bubble))
     }
 
     @Test

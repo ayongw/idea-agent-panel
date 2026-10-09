@@ -342,6 +342,12 @@ class BackendChatRepositoryRpcApi : ChatRepositoryRpcApi {
         OpenCodeServerManager.getInstance(backendProject).resetRegistry()
     }
 
+    override suspend fun resolveCliPath(projectId: ProjectId, cliPath: String?): String? {
+        val backendProject = projectId.findProjectOrNull() ?: return null
+        // 首次解析要探一次登录 shell 的 PATH（秒级），放到 IO 线程，避免占住 RPC 线程
+        return withContext(Dispatchers.IO) { OpenCodeServerManager.getInstance(backendProject).resolveCliPath(cliPath) }
+    }
+
     private fun OpenCodeServerStatus.toServerStateDto() = ServerStateDto(
         state = state.name,
         failure = failure?.name,

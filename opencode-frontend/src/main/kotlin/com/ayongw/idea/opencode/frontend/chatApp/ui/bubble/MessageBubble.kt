@@ -61,8 +61,8 @@ class MessageBubble(
     /** 时间行（独立于气泡）：用户消息的气泡只包住内容，绘制时需避开该行 */
     private var timestampRow: JComponent? = null
 
-    /** 本次 token 行（助手消息末尾）：随终态对账补齐的用量刷新 */
-    private var tokenUsageRow: TokenUsageRow? = null
+    /** 末尾单行页脚（时间 + 本次 token）：用户消息在气泡外，助手消息在气泡内 */
+    private var footerRow: MessageFooter? = null
 
     /** 当前渲染的正文段落 */
     private var currentSegments: List<MarkdownSegment> = emptyList()
@@ -338,8 +338,8 @@ class MessageBubble(
         } else {
             populateContentContainer(container, textMessage.content)
         }
-        // token 用量随终态对账后到达（正文内容可能未变），需单独刷新该行
-        tokenUsageRow?.update(textMessage)
+        // token 用量随终态对账后到达（正文内容可能未变），需单独刷新页脚
+        footerRow?.update(textMessage)
         revalidate()
         repaint()
     }
@@ -360,9 +360,11 @@ class MessageBubble(
             ChatUIConstants.Spacing.NORMAL
         }
         add(Box.createVerticalStrut(JBUI.scale(gapBeforeTimestamp)))
-        add(TimeStampLabel(textMessage).also { timestampRow = it })
-        // 本次 token 行（助手消息末尾）：无用量时自身隐藏，不占高度
-        add(TokenUsageRow(textMessage).also { tokenUsageRow = it })
+        // 时间与 token 合并为**一行**（MessageFooter）：用户消息右对齐、助手消息左对齐
+        add(MessageFooter(textMessage).also {
+            timestampRow = it
+            footerRow = it
+        })
     }
 
     /** 撤掉思考动画（思考块/正文首帧 / 气泡销毁）：组件移除并释放 animator，防 ROOT 泄漏 */

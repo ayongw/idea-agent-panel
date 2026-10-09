@@ -21,6 +21,16 @@ object ChatUIConstants {
         const val HORIZONTAL_MARGIN = 12
         const val INNER_PADDING = 10
 
+        /**
+         * 用户消息额外的左缩进。
+         *
+         * 用户消息右对齐、助手消息左对齐并占满整行；两者在左侧都从 0 开始时，
+         * 助手消息的作者头像会紧贴窗口边缘，而用户消息的圆角也在同一位置，
+         * 视觉上分不出谁是谁。给用户消息多留一段左缩进即可拉开层次
+         * （助手 0 / 用户 25），且不影响右对齐。
+         */
+        const val USER_EXTRA_LEFT_INSET = 25
+
         const val CONTENT_WRAP_WIDTH = MAX_WIDTH - 2 * HORIZONTAL_MARGIN - 2 * INNER_PADDING
 
         /** 助手消息头部头像边长 */
@@ -98,8 +108,11 @@ object ChatUIConstants {
     }
 
     object AllSessionsPopup {
-        const val WIDTH = 400
-        const val HEIGHT = 460
+        const val WIDTH = 420
+        const val HEIGHT = 520
+
+        /** 过滤输入框高度 */
+        const val FILTER_HEIGHT = 28
     }
 
     object LargeContent {
@@ -114,5 +127,15 @@ object ChatUIConstants {
 
         /** 代码块单行行高（用于换算预览/展开高度，避免布局自我测量死循环） */
         const val CODE_LINE_HEIGHT = 18
+
+        /**
+         * 短输出「内联块」阈值：行数 ≤ 且字符数 ≤ 时，用紧凑内联渲染代替滚动代码块。
+         *
+         * 滚动代码块的固定开销对短内容极不划算：文本区上下留白 16px + 滚动容器边框 8px
+         * + 头部行 28px ≈ 52px，而 1 行正文只有 ~18px；宽度还被硬编码为
+         * [MessageBubble.CONTENT_WRAP_WIDTH]，于是 `null` 这类输出也占满一整条。
+         */
+        const val INLINE_MAX_LINES = 3
+        const val INLINE_MAX_CHARS = 120
     }
 }

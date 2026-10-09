@@ -1,6 +1,7 @@
 package com.ayongw.idea.opencode.server
 
 import com.ayongw.idea.opencode.backend.server.OpenCodePortAllocator
+import com.ayongw.idea.opencode.backend.server.OpenCodeServerCliLocator
 import com.ayongw.idea.opencode.backend.server.OpenCodeServerCliNotFoundException
 import com.ayongw.idea.opencode.backend.server.OpenCodeServerConnectionConfig
 import com.ayongw.idea.opencode.backend.server.OpenCodeServerDiscovery
@@ -22,6 +23,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -320,6 +322,31 @@ class OpenCodeServerManagerUnitTest {
         assertFalse(launcher.last().isAlive)
         assertEquals(OpenCodeServerState.STOPPED, manager.status.value.state)
         assertTrue(registry.load().isEmpty())
+    }
+
+    // ==================== CLI 路径解析（设置页只读展示） ====================
+
+    @Test
+    fun `解析 CLI 路径与拉起同源且设置项不可执行不回退 PATH`() {
+        val cliLauncher = OpenCodeServerLauncher(
+            cliLocator = OpenCodeServerCliLocator(
+                pathEnv = { "/shell/bin" },
+                isExecutable = { it == "/shell/bin/opencode" },
+            ),
+        )
+        val manager = OpenCodeServerManager(
+            host = host,
+            deps = OpenCodeServerDeps(discovery = discovery, launcher = cliLauncher, registry = registry),
+        )
+        createdManagers += manager
+
+        assertEquals("留空应从 PATH 解析到具体可执行文件", "/shell/bin/opencode", manager.resolveCliPath(null))
+        assertEquals(
+            "设置项可执行时按设置项返回",
+            "/shell/bin/opencode",
+            manager.resolveCliPath("/shell/bin/opencode"),
+        )
+        assertNull("设置了但不可执行应视为未找到，不回退 PATH", manager.resolveCliPath("/broken/opencode"))
     }
 
     // ==================== 夹具 ====================

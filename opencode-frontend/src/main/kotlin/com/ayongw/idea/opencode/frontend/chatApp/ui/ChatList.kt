@@ -315,13 +315,20 @@ class ChatList(
             val bubble = messageBubbles[id] ?: return@forEachIndexed
             gbc.gridy = index
             if (bubble.isMy) {
-                // 用户消息：气泡自适应宽度，右对齐
+                // 用户消息：气泡自适应宽度、右对齐，左侧额外缩进与助手消息拉开层次
                 gbc.anchor = GridBagConstraints.EAST
                 gbc.fill = GridBagConstraints.NONE
+                gbc.insets = JBUI.insets(
+                    ChatUIConstants.Spacing.TINY,
+                    ChatUIConstants.MessageBubble.USER_EXTRA_LEFT_INSET,
+                    ChatUIConstants.Spacing.TINY,
+                    0
+                )
             } else {
                 // 助手消息：整行块（无气泡底），占满可视宽度
                 gbc.anchor = GridBagConstraints.WEST
                 gbc.fill = GridBagConstraints.HORIZONTAL
+                gbc.insets = baseConstraints().insets
             }
             messagesContainer.add(bubble, gbc)
         }

@@ -90,16 +90,23 @@ class ContextUsageFormatterUnitTest {
     // ==================== 外层精简档（窄窗口） ====================
 
     @Test
-    fun compactKeepsOnlyInputAndOutput() {
-        // 外层只留两项：缓存 / 上下文占比会让底部工具条两端重叠（见 temp/layout-probe/Probe2.java）
-        assertEquals("↑12.3k ↓400", ContextUsageFormatter.compact(fullUsage))
+    fun compactKeepsInputOutputAndContextPercent() {
+        // 外层保留三项：输入 / 输出 + 上下文占比（占比是"还能聊多久"的关键信号，须常驻可见）
+        assertEquals("↑12.3k ↓400 · 48%", ContextUsageFormatter.compact(fullUsage))
     }
 
     @Test
-    fun compactOmitsCostAndReasoningAndContextPercent() {
+    fun compactOmitsCacheReasoningAndCost() {
+        // 宽度敏感/次要项不进外层（底部工具条两端不压缩），全部由 detail 承载
         val compact = ContextUsageFormatter.compact(fullUsage)
         assertFalse("外层不应出现缓存", compact.contains("缓存"))
-        assertFalse("外层不应出现上下文占比", compact.contains("上下文"))
+        assertFalse("外层不应出现花费", compact.contains("花费"))
+        assertTrue("占比仍应在外层", compact.contains("48%"))
+    }
+
+    @Test
+    fun compactDropsPercentWhenContextUnknown() {
+        assertEquals("↑12.3k ↓400", ContextUsageFormatter.compact(fullUsage.copy(contextWindow = null)))
     }
 
     @Test

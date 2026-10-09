@@ -76,6 +76,13 @@ open class OpenCodeServerLauncher(
     private val log = Logger.getInstance(OpenCodeServerLauncher::class.java)
 
     /**
+     * 解析 CLI 可执行路径（设置页只读展示用），与 [launch] 走同一份定位逻辑，未找到返回 null。
+     *
+     * 阻塞：默认装配下首次调用要探一次登录 shell 的 `PATH`（结果有缓存），调用方放后台线程。
+     */
+    fun resolveCliPath(configuredPath: String? = null): String? = cliLocator.locate(configuredPath)
+
+    /**
      * 拉起子进程并开始采集输出
      *
      * @throws OpenCodeServerCliNotFoundException CLI 未找到或不可执行（含可执行文件不存在导致的启动失败）

@@ -15,6 +15,7 @@ import java.awt.Container
 import java.time.LocalDateTime
 import java.awt.event.MouseEvent
 import java.nio.file.Files
+import javax.swing.DefaultListModel
 
 /**
  * 「全部会话」列表的交互契约：
@@ -46,7 +47,7 @@ class SessionListInteractionUnitTest {
             onDeleteSession = { deleted += it }
         )
         sessionList.setSize(listWidth, rowHeight * SESSIONS.size)
-        sessionList.updateSessions(sessions(), CURRENT_ID)
+        sessionList.updateSessions(sessions(), CURRENT_ID, listOf(CURRENT_ID))
         layoutTree(sessionList)
     }
 
@@ -113,33 +114,56 @@ class SessionListInteractionUnitTest {
     @Test
     fun 单击即切换会话() {
         val list = jbList()
-        list.setSize(listWidth, rowHeight * 2)
+        list.setSize(listWidth, rowHeight * 4)
         layoutTree(list)
 
-        click(list, PLAIN_X, 10)
+        click(list, PLAIN_X, sessionRowCenterY(list, 0))
 
         assertEquals("单击应触发切换", listOf("ses_1"), clicked)
         assertTrue("单击不应触发删除", deleted.isEmpty())
     }
 
     @Test
-    fun 点击第二行切换对应会话() {
+    fun 点击第二条会话切换对应会话() {
         val list = jbList()
-        list.setSize(listWidth, rowHeight * 2)
+        list.setSize(listWidth, rowHeight * 4)
         layoutTree(list)
 
-        click(list, PLAIN_X, rowHeight + 10)
+        // 分组标题行会占一行，故按「第 2 个会话行的中心」点击而非固定 y
+        click(list, PLAIN_X, sessionRowCenterY(list, sessionIndex = 1))
 
-        assertEquals("应切换到第二行会话", listOf("ses_2"), clicked)
+        assertEquals("应切换到对应会话", listOf("ses_2"), clicked)
+    }
+
+    /** 第 n 条会话行的中心 y（跳过分组标题行） */
+    private fun sessionRowCenterY(list: JBList<*>, sessionIndex: Int): Int {
+        var seen = -1
+        val model = list.model as DefaultListModel<*>
+        for (i in 0 until model.size()) {
+            val row = model.getElementAt(i)
+            val isHeader = row.javaClass.simpleName == "Header"
+            if (!isHeader) {
+                seen++
+                if (seen == sessionIndex) {
+                    return rowBoundsCenterY(list, i)
+                }
+            }
+        }
+        error("未找到第 $sessionIndex 条会话行")
+    }
+
+    private fun rowBoundsCenterY(list: JBList<*>, index: Int): Int {
+        val bounds = list.getCellBounds(index, index) ?: error("行 $index 无 bounds")
+        return bounds.y + bounds.height / 2
     }
 
     @Test
     fun 点击行尾删除槽触发删除且不切换() {
         val list = jbList()
-        list.setSize(listWidth, rowHeight * 2)
+        list.setSize(listWidth, rowHeight * 4)
         layoutTree(list)
 
-        click(list, listWidth - 4, 10)
+        click(list, listWidth - 4, sessionRowCenterY(list, 0))
 
         assertEquals("应删除该行会话", listOf("ses_1"), deleted)
         assertTrue("删除槽命中不应同时触发切换", clicked.isEmpty())
@@ -148,11 +172,11 @@ class SessionListInteractionUnitTest {
     @Test
     fun 删除槽之外的右侧区域仍是切换() {
         val list = jbList()
-        list.setSize(listWidth, rowHeight * 2)
+        list.setSize(listWidth, rowHeight * 4)
         layoutTree(list)
 
         // 距右边 60px：已在删除槽（22px）之外，属普通区域
-        click(list, listWidth - 60, 10)
+        click(list, listWidth - 60, sessionRowCenterY(list, 0))
 
         assertEquals("删除槽外应切换", listOf("ses_1"), clicked)
         assertTrue("不应误删", deleted.isEmpty())
@@ -161,11 +185,11 @@ class SessionListInteractionUnitTest {
     @Test
     fun 悬停后删除槽依然可命中() {
         val list = jbList()
-        list.setSize(listWidth, rowHeight * 2)
+        list.setSize(listWidth, rowHeight * 4)
         layoutTree(list)
 
-        move(list, PLAIN_X, 10)
-        click(list, listWidth - 4, 10)
+        move(list, PLAIN_X, sessionRowCenterY(list, 0))
+        click(list, listWidth - 4, sessionRowCenterY(list, 0))
 
         assertEquals("hover 后删除槽仍应可命中", listOf("ses_1"), deleted)
     }
@@ -173,12 +197,12 @@ class SessionListInteractionUnitTest {
     @Test
     fun 只剩一个会话时仍可删除() {
         // 删除策略统一：允许删到空，由 SessionController.removeTabAndRelocate 自动新建兜底
-        sessionList.updateSessions(sessions().take(1), CURRENT_ID)
+        sessionList.updateSessions(sessions().take(1), CURRENT_ID, listOf(CURRENT_ID))
         val list = jbList()
-        list.setSize(listWidth, rowHeight)
+        list.setSize(listWidth, rowHeight * 2)
         layoutTree(list)
 
-        click(list, listWidth - 4, 10)
+        click(list, listWidth - 4, sessionRowCenterY(list, 0))
 
         assertEquals("最后一个会话也应可删除", listOf("ses_1"), deleted)
     }

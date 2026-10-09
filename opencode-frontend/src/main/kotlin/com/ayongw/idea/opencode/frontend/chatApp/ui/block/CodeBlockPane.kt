@@ -30,17 +30,46 @@ internal class CodeBlockPane(
 ) : JPanel() {
 
     private val codeLines = code.lines()
-    private val collapsible = codeLines.size > ChatUIConstants.LargeContent.CODE_PREVIEW_LINES
+    private val collapsible =
+        codeLines.size > ChatUIConstants.LargeContent.CODE_PREVIEW_LINES &&
+            codeLines.size > ChatUIConstants.LargeContent.INLINE_MAX_LINES
     private val textArea = JBTextArea()
     private val scrollPane = JBScrollPane(textArea)
     private var expanded = false
     private val toggleLabel = JBLabel()
+
+    /** 短输出走内联紧凑渲染（无滚动容器、无头部行、宽度自适应） */
+    private val inline = codeLines.size <= ChatUIConstants.LargeContent.INLINE_MAX_LINES &&
+        code.length <= ChatUIConstants.LargeContent.INLINE_MAX_CHARS
 
     init {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         isOpaque = false
         alignmentX = LEFT_ALIGNMENT
 
+        if (inline) {
+            // 短输出：单行紧凑块。工具输出里大量是 `null` / 单行日志，
+            // 给它们滚动容器 + 头部行纯属浪费（见 INLINE_MAX_LINES 注释）
+            add(inlineLabel())
+            log.debug("codeblock inline lang=$language chars=${code.length} lines=${codeLines.size}")
+        } else {
+            buildBlock()
+        }
+    }
+
+    /** 内联紧凑块：单行、自适应宽度、无滚动容器与头部行 */
+    private fun inlineLabel(): JComponent = JBLabel(codeLines.firstOrNull().orEmpty()).apply {
+        font = Font(Font.MONOSPACED, Font.PLAIN, 12)
+        foreground = ChatAppColors.Text.normal
+        border = EmptyBorder(JBUI.scale(2), JBUI.scale(6), JBUI.scale(2), JBUI.scale(6))
+        background = ChatAppColors.MessageBubble.othersBackground
+        isOpaque = true
+        alignmentX = LEFT_ALIGNMENT
+        toolTipText = code
+    }
+
+    /** 常规滚动代码块（多行内容） */
+    private fun buildBlock() {
         textArea.apply {
             text = previewText()
             font = Font(Font.MONOSPACED, Font.PLAIN, 12)

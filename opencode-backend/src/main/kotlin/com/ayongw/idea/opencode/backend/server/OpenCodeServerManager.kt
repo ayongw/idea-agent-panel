@@ -242,6 +242,13 @@ class OpenCodeServerManager(
     /** 排障兜底：清空共享注册表（不停进程） */
     fun resetRegistry() = deps.registry.clear()
 
+    /**
+     * 解析 CLI 实际可执行路径（设置页只读展示）：与拉起同源，交由 launcher 的定位器处理。
+     *
+     * 阻塞（首次要探一次登录 shell 的 `PATH`），调用方须放在后台线程。
+     */
+    fun resolveCliPath(cliPath: String? = null): String? = deps.launcher.resolveCliPath(cliPath)
+
     override fun dispose() {
         disposed = true
         healthFailureStreak = 0

@@ -3,11 +3,18 @@ package com.ayongw.idea.opencode.frontend.settings
 import com.ayongw.idea.opencode.frontend.CoroutineScopeHolder
 import com.ayongw.idea.opencode.frontend.OpencodeFrontendBundle
 import com.ayongw.idea.opencode.shared.ChatRepositoryRpcApi
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.project.ProjectManager
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.platform.project.projectId
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
+import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
@@ -38,6 +45,25 @@ internal class ConnectionSettingsTab : AbstractSettingsTab() {
     private val reuseExternalCheckBox =
         JCheckBox(OpencodeFrontendBundle.message("settings.opencode.server.reuse.external"))
     private val cliPathField = JBTextField(40)
+
+    /**
+     * 只读展示后端**实际解析到**的 CLI 路径（与拉起同源）。
+     *
+     * 探测结果**不写回** [cliPathField]：该字段是显式覆盖，且设置项非空时定位器不回退 `PATH`
+     * （见 `OpenCodeServerCliLocator`），把自动探测到的路径写死进去，一旦 nvm/opencode 升级
+     * 换了目录就会直接报 CLI_NOT_FOUND。
+     */
+    private val detectedCliPathLabel = JBLabel(" ").apply {
+        font = JBUI.Fonts.smallFont()
+        foreground = UIUtil.getContextHelpForeground()
+    }
+
+    private val browseCliButton = JButton(
+        OpencodeFrontendBundle.message("settings.opencode.server.cli.path.browse")
+    ).apply {
+        margin = JBUI.insets(0, JBUI.scale(8), 0, 0)
+        addActionListener { browseCliPath() }
+    }
 
     override val component: JComponent = buildPanel()
 
@@ -70,8 +96,9 @@ internal class ConnectionSettingsTab : AbstractSettingsTab() {
             .addComponent(buildHint(OpencodeFrontendBundle.message("settings.opencode.server.management")))
             .addComponent(autoStartCheckBox)
             .addComponent(reuseExternalCheckBox)
-            .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.server.cli.path"), cliPathField)
+            .addLabeledComponent(OpencodeFrontendBundle.message("settings.opencode.server.cli.path"), buildCliPathRow())
             .addComponent(buildHint(OpencodeFrontendBundle.message("settings.opencode.server.cli.path.hint")))
+            .addComponent(detectedCliPathLabel)
             .addComponent(managementActions)
             .addComponentFillVertically(JPanel(), 0)
             .panel
@@ -82,6 +109,13 @@ internal class ConnectionSettingsTab : AbstractSettingsTab() {
         }
     }
 
+    /** CLI 路径行：输入框 + 「浏览…」选择可执行文件 */
+    private fun buildCliPathRow(): JComponent = JPanel(BorderLayout()).apply {
+        isOpaque = false
+        add(cliPathField, BorderLayout.CENTER)
+        add(browseCliButton, BorderLayout.EAST)
+    }
+
     override fun reload() {
         val state = OpenCodeSettingsState.getInstance()
         serverUrlField.text = state.serverUrl
@@ -90,6 +124,45 @@ internal class ConnectionSettingsTab : AbstractSettingsTab() {
         autoStartCheckBox.isSelected = state.autoStartServer
         reuseExternalCheckBox.isSelected = state.reuseExternalServer
         cliPathField.text = state.cliPath
+        refreshDetectedCliPath()
+    }
+
+    /**
+     * 只读刷新「实际会用到的 CLI 路径」：按输入框当前值向后端解析（输入为空即从 PATH 解析）。
+     *
+     * 解析要探一次登录 shell 的 `PATH`（首次秒级），走 [runAsync] 在后台执行。
+     */
+    private fun refreshDetectedCliPath() {
+        val project = currentProject()
+        if (project == null) {
+            detectedCliPathLabel.text = " "
+            detectedCliPathLabel.toolTipText = null
+            return
+        }
+        detectedCliPathLabel.text = OpencodeFrontendBundle.message("settings.opencode.server.cli.path.detecting")
+        detectedCliPathLabel.toolTipText = null
+        runAsync({ path: String? ->
+            detectedCliPathLabel.text = if (path.isNullOrBlank()) {
+                OpencodeFrontendBundle.message("settings.opencode.server.cli.path.not.detected")
+            } else {
+                OpencodeFrontendBundle.message("settings.opencode.server.cli.path.detected", path)
+            }
+            detectedCliPathLabel.toolTipText = path
+        }) {
+            ChatRepositoryRpcApi.getInstance().resolveCliPath(project.projectId(), inputCliPath())
+        }
+    }
+
+    /** 浏览选择 CLI 可执行文件（含工作区外路径），选完就地刷新解析结果 */
+    private fun browseCliPath() {
+        val descriptor = FileChooserDescriptorFactory.createSingleFileDescriptor()
+            .withTitle(OpencodeFrontendBundle.message("settings.opencode.server.cli.path"))
+        // 已填路径预选为其所在文件（VirtualFile 才可作初值）
+        val initial = inputCliPath().takeIf { it.isNotEmpty() }
+            ?.let { LocalFileSystem.getInstance().findFileByPath(it) }
+        val chosen = FileChooser.chooseFile(descriptor, currentProject(), initial) ?: return
+        cliPathField.text = chosen.path
+        refreshDetectedCliPath()
     }
 
     override fun isModified(): Boolean {
@@ -130,6 +203,8 @@ internal class ConnectionSettingsTab : AbstractSettingsTab() {
                         reuseExternalCheckBox.isSelected,
                     )
                 }
+                // 「实际会用到的路径」随本次保存变化，回 EDT 重解析（后端配置已下发）
+                ApplicationManager.getApplication().invokeLater { refreshDetectedCliPath() }
             }
         }
     }

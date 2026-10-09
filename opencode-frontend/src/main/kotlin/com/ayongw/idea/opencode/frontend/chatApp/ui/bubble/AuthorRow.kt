@@ -85,58 +85,52 @@ internal class AgentAvatar(private val name: String) : JComponent() {
         g2d.dispose()
     }
 }
-internal class TimeStampLabel(message: ChatMessage) : JPanel() {
+/**
+ * 消息末尾的单行页脚：**时间 + 本次 token 合并到一行**。
+ *
+ * - 用户消息：只有时间，右对齐（页脚在气泡之外，见 [MessageBubble.paintComponent]）
+ * - 助手消息：`token · 时间`，左对齐，与助手消息左对齐的正文风格一致
+ *
+ * token 缺失（用户消息 / 流式尚未产出）时自动隐藏该段，不会留下多余分隔符。
+ */
+class MessageFooter(message: ChatMessage) : JPanel() {
+
+    private val timeLabel = JBLabel(message.formattedTime())
+    private val tokenLabel = JBLabel()
+
     init {
         layout = BoxLayout(this, BoxLayout.X_AXIS)
         isOpaque = false
         alignmentX = LEFT_ALIGNMENT
 
-        val label = JBLabel(message.formattedTime()).apply {
-            font = JBFont.small()
-            foreground = ChatAppColors.Text.timestamp
+        if (message.isMyMessage) {
+            // 用户消息：仅时间，右对齐（与原 TimeStampLabel 行为一致）
+            add(Box.createHorizontalGlue())
+            add(timeLabel)
+        } else {
+            add(tokenLabel)
+            add(Box.createHorizontalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
+            add(timeLabel)
         }
-        add(Box.createHorizontalGlue())
-        add(label)
-    }
-}
 
-/**
- * 助手消息末尾的「本次 token」行：左对齐浅色，样式对齐 [TimeStampLabel]。
- *
- * 展示该条助手消息自身的 `Session.Message.Assistant.tokens` / `cost`（不是会话累计）：
- * 行内用 [ContextUsageFormatter.summary]，悬浮用 [detail] 展开输入/输出/推理/缓存读/缓存写/花费。
- * 文本格式复用底部指示器同一组纯函数，两处口径一致。
- *
- * 仅助手消息渲染（用户消息恒隐藏）；无用量时整体隐藏：BoxLayout 跳过不可见子组件，
- * 故不占高度，也不留空行。
- */
-class TokenUsageRow(message: ChatMessage) : JPanel() {
-
-    private val label = JBLabel().apply {
-        font = JBFont.small()
-        foreground = ChatAppColors.Text.timestamp
-    }
-
-    init {
-        layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        isOpaque = false
-        alignmentX = LEFT_ALIGNMENT
-
-        add(Box.createVerticalStrut(JBUI.scale(ChatUIConstants.Spacing.SMALL)))
-        add(label)
+        listOf(timeLabel, tokenLabel).forEach {
+            it.font = JBFont.small()
+            it.foreground = ChatAppColors.Text.timestamp
+        }
         update(message)
     }
 
-    /** 更新 token 行；用量与花费皆空、或用户消息时隐藏（BoxLayout 跳过不可见组件） */
+    /** 刷新 token 段（用量随终态对账补齐，正文未变时也要更新） */
     fun update(message: ChatMessage) {
+        if (message.isMyMessage) return
         val usage = SessionUsageDto(
             tokens = message.usage ?: TokenUsageDto(),
             cost = message.costUsd
         )
-        val summary = if (message.isMyMessage) "" else ContextUsageFormatter.summary(usage)
-        label.text = summary
-        label.toolTipText = summary.takeIf { it.isNotBlank() }
+        val summary = ContextUsageFormatter.summary(usage)
+        tokenLabel.text = summary
+        tokenLabel.toolTipText = summary.takeIf { it.isNotBlank() }
             ?.let { ContextUsageFormatter.detail(usage) }
-        isVisible = summary.isNotBlank()
+        tokenLabel.isVisible = summary.isNotBlank()
     }
 }

@@ -434,18 +434,23 @@ class ChatListSwingSmokeUnitTest {
             card1Scroll.preferredSize.height, card1Scroll.bounds.height
         )
 
-        // 4) 单行输出（卡2 的 "{"、正文内 JAVA 块的 "}"）保持单行高度，不被放大
-        val card2Scroll = scrollPaneOf(cards[1] as Container)
-        assertTrue(
-            "单行输出应保持紧凑高度（28~60px），实际=${card2Scroll.bounds.height}",
-            card2Scroll.bounds.height in 28..60
-        )
+        // 4) 单行输出（卡2 的 "{"、正文内 JAVA 块的 "}"）走内联紧凑渲染：
+        //    不挂滚动容器（此前单行也要付出 16px 留白 + 8px 容器边框 + 28px 头部行）
+        listOf(
+            cards[1] as Container to "工具卡片单行输出",
+            turn.components[contentIndex] as Container to "正文 JAVA 单行块"
+        ).forEach { (container, label) ->
+            val pane = codeBlockPaneOf(container)
+            assertEquals(
+                "$label 应只含内联标签（无滚动容器、无头部行）",
+                1, pane.componentCount
+            )
+            assertTrue(
+                "$label 内联块应为标签而非滚动容器",
+                pane.components[0] is javax.swing.JLabel
+            )
+        }
         val content = turn.components[contentIndex] as Container
-        val answerScroll = scrollPaneOf(content)
-        assertTrue(
-            "正文 JAVA 单行块应保持紧凑高度，实际=${answerScroll.bounds.height}",
-            answerScroll.bounds.height in 28..60
-        )
 
         // 5) 展开后不再截断行数：539 行全部渲染，块内滚动；收起恢复预览
         val pane = codeBlockPaneOf(cards[0] as Container)

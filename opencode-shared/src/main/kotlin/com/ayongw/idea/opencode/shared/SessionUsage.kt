@@ -68,16 +68,21 @@ object ContextUsageFormatter {
     }
 
     /**
-     * 外层行内摘要（窄）：`↑12.3k ↓0.4k`
+     * 外层行内摘要：`↑12.3k ↓0.4k · 48%`
      *
-     * 缓存 / 上下文占比 / 推理等不进外层（宽度不可退让，窄窗口下会与模型名重叠），
-     * 全部信息由 [detail] 以悬浮明细承载，不丢字段。
+     * 只放**输入 / 输出 + 上下文占比**：占比是用户判断"还能聊多久"的关键信号，必须常驻可见。
+     * 缓存 / 推理 / 花费等宽度敏感或次要的信息不进外层（底部工具条两端不压缩，
+     * 过长会与模型名重叠），全部由 [detail] 以悬浮明细承载，不丢字段。
+     *
+     * 无 token 数据时返回空串（即使有占比也不单独展示，避免"只有占比"的半截信息）。
      */
     fun compact(usage: SessionUsageDto?): String {
         if (usage == null) return ""
         val tokens = usage.tokens
         if (tokens == TokenUsageDto()) return ""
-        return "↑${formatTokens(tokens.input)} ↓${formatTokens(tokens.output)}"
+        val parts = mutableListOf("↑${formatTokens(tokens.input)} ↓${formatTokens(tokens.output)}")
+        percentLabel(usage.lastStepInputTokens, usage.contextWindow)?.let { parts += it }
+        return parts.joinToString(" · ")
     }
 
     /** 行内摘要：`↑12.3k ↓0.4k · 缓存 8.1k · 上下文 48%`；无数据返回空串（由调用方隐藏） */

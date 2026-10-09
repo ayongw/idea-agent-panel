@@ -250,6 +250,18 @@ interface ChatRepositoryRpcApi : RemoteApi<Unit> {
      * 排障兜底：清空共享注册表（不终止任何进程）
      */
     suspend fun resetServerRegistry(projectId: ProjectId)
+
+    /**
+     * 解析 opencode CLI 的实际可执行路径（设置页只读展示「会用到的路径」）
+     *
+     * 与拉起同源：设置项优先（非空但不可执行即视为未找到，**不回退** `PATH`）→
+     * 登录 shell 的 `PATH`（IDE 进程 `PATH` 极窄，见 `LoginShellPath`）。
+     * 阻塞（首次要探一次登录 shell），实现方放后台线程。
+     *
+     * @param cliPath 待解析的设置项值；null/空 = 从 `PATH` 解析
+     * @return 可执行文件绝对路径；未找到返回 null
+     */
+    suspend fun resolveCliPath(projectId: ProjectId, cliPath: String? = null): String?
 }
 
 /**

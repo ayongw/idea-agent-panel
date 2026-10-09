@@ -139,6 +139,25 @@ class ToolbarNarrowLayoutUnitTest {
         assertTrue("外层应显著短于完整摘要", text.length < ContextUsageFormatter.summary(usage).length)
     }
 
+    /**
+     * 三个下拉按钮之间必须有竖线分隔（仅靠间距不够，用户反馈按钮挤在一起分不清组）
+     *
+     * 顺序断言「按钮 / 分隔 / 按钮 / 分隔 / 按钮」，且分隔不参与省略、宽度计入固定预算。
+     */
+    @Test
+    fun 三个下拉按钮之间用竖线分隔() {
+        val bar = inputToolbar("MiMo-V2.6-Flash Free", 600)
+
+        val kinds = bar.components.map { if (it is JButton) "button" else "sep" }
+        org.junit.Assert.assertEquals(
+            "三个下拉按钮之间应各有一条竖线分隔：$kinds",
+            listOf("button", "sep", "button", "sep", "button"),
+            kinds,
+        )
+        val separators = bar.components.filterIsInstance<JLabel>().filter { it.text == "|" }
+        org.junit.Assert.assertEquals("应有 2 条竖线", 2, separators.size)
+    }
+
     // ==================== 模型名响应式省略（真实 InputToolbar） ====================
 
     private fun inputToolbar(modelName: String, width: Int): InputToolbar =
@@ -166,7 +185,8 @@ class ToolbarNarrowLayoutUnitTest {
     @Test
     fun 窄宽度下模型名被省略() {
         val name = "claude-sonnet-4-5-thinking-20250929"
-        val bar = inputToolbar(name, 200)
+        // 用明确窄于「其余按钮合计」的宽度：留出确定余量，避免卡在省略阈值的抖动上
+        val bar = inputToolbar(name, 90)
 
         val text = modelButtonText(bar)
         org.junit.Assert.assertTrue("窄宽度下模型名应出现省略号：$text", text.contains("…"))
@@ -184,7 +204,7 @@ class ToolbarNarrowLayoutUnitTest {
     @Test
     fun 下拉箭头不参与省略() {
         // 窄到只剩省略号时，▾ 仍须保留（否则模型选择器失去下拉 affordance）
-        val bar = inputToolbar("claude-sonnet-4-5-thinking-20250929", 200)
+        val bar = inputToolbar("claude-sonnet-4-5-thinking-20250929", 90)
 
         org.junit.Assert.assertTrue(
             "模型按钮文本应始终以 ▾ 结尾：${modelButtonText(bar)}",
@@ -195,13 +215,20 @@ class ToolbarNarrowLayoutUnitTest {
     @Test
     fun 省略后tooltip仍保留全名() {
         val name = "claude-sonnet-4-5-thinking-20250929"
-        val bar = inputToolbar(name, 200)
+        val bar = inputToolbar(name, 90)
 
         org.junit.Assert.assertEquals(
             "省略不应丢失全名（tooltip 承载）",
             "$name ▾",
             modelButton(bar).toolTipText
         )
+    }
+
+    @Test
+    fun 极窄宽度下退化为省略号而非溢出() {
+        // budget ≤ 0 时不能「视为不限」而保留全名（更挤），应退化成只显示省略号
+        val bar = inputToolbar("claude-sonnet-4-5-thinking-20250929", 40)
+        assertTrue("极窄下应只剩省略号：${modelButtonText(bar)}", modelButtonText(bar).startsWith("…"))
     }
 
     @Test
