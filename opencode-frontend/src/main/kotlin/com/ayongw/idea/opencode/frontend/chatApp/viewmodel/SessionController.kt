@@ -151,12 +151,6 @@ internal class SessionController(
     private suspend fun bootstrapSessions() {
         val sessions = runCatching { repository.loadSessions() }.getOrDefault(emptyList())
         val existingIds = sessions.map { it.sessionId }.toSet()
-        log.info(
-            "bootstrap 会话列表共 ${sessions.size} 条，tab 持久化 ${_openedSessionIds.value.size} 个；" +
-                "被丢弃的 tab=${
-                    _openedSessionIds.value.filterNot { it in existingIds }
-                }（这些会话已不存在或不属于当前工作区）"
-        )
         // 会话已被删除的 tab 不再恢复；只在拉取成功且非空时裁剪，避免服务不可达时清空 tab
         if (existingIds.isNotEmpty()) {
             _openedSessionIds.value = _openedSessionIds.value.filter { it in existingIds }
@@ -200,11 +194,7 @@ internal class SessionController(
             log.info("切换会话跳过（已是当前会话）session=$sessionId")
             return
         }
-        log.info(
-            "请求切换会话 session=$sessionId " +
-                "(controller.current=${_currentSessionId.value} repo.current=${repository.currentSessionId.value} " +
-                "tabs=${_openedSessionIds.value})"
-        )
+        log.info("请求切换会话 session=$sessionId")
         _switching.value = true
         try {
             // 失败时保持原会话：不新开 tab、不联动输入区（否则会出现"高亮切了但消息没换"）
@@ -215,7 +205,6 @@ internal class SessionController(
             }
             openTab(sessionId)
             afterSessionActivated(sessionId)
-            log.info("切换完成 session=$sessionId controller.current=${_currentSessionId.value}")
         } finally {
             _switching.value = false
         }

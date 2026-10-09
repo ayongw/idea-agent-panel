@@ -31,8 +31,6 @@ import javax.swing.Box
  * 要真正做到「紧凑且右对齐」必须让正文盒子本身变窄，需自定义 getPreferredSize 同时
  * 计算换行后高度，风险高于收益，故保持满宽。
  *
- * 未覆盖「长消息气泡更高（换行生效）」：headless 下 JTextArea 高度依赖已分配宽度，
- * 本环境测得长短消息同为 89px，无法区分是真实截断还是无头布局假象。需人工看图确认。
  */
 class UserBubbleAdaptiveWidthUnitTest {
 
@@ -64,6 +62,30 @@ class UserBubbleAdaptiveWidthUnitTest {
         assertTrue(
             "气泡布局宽度应接近面板宽，实际=${bubble.width} 面板=${container.width}",
             bubble.width >= container.width - 40
+        )
+    }
+
+    @Test
+    fun 正文块首选高度按内容实测而非布局垃圾值() {
+        // 回归：TextBlock 未显式给首选尺寸时，JTextArea(lineWrap=true) 的首选高度按
+        // 「当前已分配宽度」算（首次布局宽度为 0），高度与内容完全无关 —— 一行文字也撑出
+        // 三四行。现改为先 setSize(自然宽) 逼其换行再读回高度。
+        //
+        // 断言正文块本身而不是气泡：headless 下气泡高度依赖父级分配（实测为 0），
+        // 而正文块的首选尺寸是确定性的。
+        chatList.setMessages(listOf(user("u1", "当前时间")))
+        val bubble = layoutAndFindUserBubble()
+        val block = firstTextBlock(bubble)
+        val probe = javax.swing.JLabel().apply { font = block.font }
+        val lineHeight = probe.getFontMetrics(probe.font).height
+
+        assertTrue(
+            "单行正文的首选高度应约等于一行行高（≈$lineHeight），实际=${block.preferredSize}",
+            block.preferredSize.height <= lineHeight * 2
+        )
+        assertTrue(
+            "正文块宽度应等于文本自然宽度而非满宽，实际=${block.preferredSize}",
+            block.preferredSize.width < panelWidth / 2
         )
     }
 

@@ -66,33 +66,10 @@ class SessionTabs(
         tabStrip.apply {
             layout = BoxLayout(this, BoxLayout.X_AXIS)
             isOpaque = false
-            installHitDiagnostics(this, "tabStrip")
         }
-        // 外层面板同样挂一份：事件冒泡时若只有外层收到，说明中间有组件吞掉了
-        installHitDiagnostics(this, "SessionTabs")
 
         add(createTabScrollPane(), BorderLayout.CENTER)
         add(createActionBar(), BorderLayout.EAST)
-    }
-
-    /**
-     * 点击命中诊断（临时）：日志打出「指针落在哪个组件上」。
-     *
-     * 用途：`SessionTabComponent.mousePressed` 一直收不到事件，靠它区分两种情况——
-     * ① 本监听也不触发 → 点击根本没进入这个组件树（问题在插件之外）
-     * ② 本监听触发但指针下不是 SessionTabComponent → 有别的组件盖在 tab 上
-     */
-    private fun installHitDiagnostics(target: java.awt.Container, where: String) {
-        target.addMouseListener(object : MouseAdapter() {
-            override fun mousePressed(e: MouseEvent) {
-                val local = target.getComponentAt(e.point)
-                log.info(
-                    "命中诊断[$where] at=${e.point} target=${target.width}x${target.height} " +
-                        "指针下=${local?.javaClass?.name} 是tab=${local is SessionTabComponent} " +
-                        "isShowing=${target.isShowing} tabCount=${tabs.size}"
-                )
-            }
-        })
     }
 
     private fun setupAppearance() {
@@ -185,9 +162,6 @@ class SessionTabs(
 
         // 顺序变了才重挂（组件实例复用，不重建）
         if (mountedOrder != openedIds) {
-            // 重挂会把 tab 组件从容器摘下再挂回：此刻正被按下的 tab 会丢失后续鼠标事件
-            // （点击被吞、无 mousePressed 日志）。留痕以便与「点击被吞」区分。
-            log.info("tab strip 重挂顺序 mounted=$mountedOrder -> target=$openedIds current=$currentSessionId")
             reorder(openedIds)
             mountedOrder = openedIds
         }
@@ -240,9 +214,8 @@ class SessionTabs(
         tabStrip.revalidate()
     }
 
-    /** 新建 tab 组件（留痕：用于确认点击时拿到的是不是刚被换掉的实例） */
+    /** 新建 tab 组件 */
     private fun createTab(sessionId: String, title: String, selected: Boolean): SessionTabComponent {
-        log.info("tab 组件新建 session=$sessionId selected=$selected title=$title")
         return SessionTabComponent(
             sessionId = sessionId,
             title = title,
@@ -285,9 +258,17 @@ class SessionTabComponent(
 
     private val log = Logger.getInstance(SessionTabs::class.java)
 
+    /**
+     * 标题标签。
+     *
+     * 刻意**不设** toolTipText：① 标题已直接显示在 tab 上，tooltip 是冗余信息；
+     * ② 轻量 tooltip 是 layered pane 的子窗口，显示后会吃掉落在它区域内的鼠标事件，
+     * 表现为「hover 有手形光标、关闭按钮能点，但点标题不切换、左右键都无反应」。
+     * 长标题由 [ChatUIConstants.TopBar.TAB_TITLE_MAX_CHARS] 截断，需要看全时用历史弹窗。
+     */
     private val titleLabel = JBLabel(title.take(ChatUIConstants.TopBar.TAB_TITLE_MAX_CHARS)).apply {
         font = JBFont.small()
-        toolTipText = title
+        isOpaque = false
     }
 
     private val closeButton = ButtonUtils.createActionButton(
@@ -311,26 +292,23 @@ class SessionTabComponent(
         add(titleLabel, BorderLayout.CENTER)
         add(closeButton, BorderLayout.EAST)
 
-        addMouseListener(object : MouseAdapter() {
-            override fun mousePressed(e: MouseEvent) {
-                // 事件层埋点：tab 点击无反应时用于区分「事件未到达」与「切换逻辑短路」。
-                // 同时打出「组件是否仍挂在栏内」与鼠标落点 —— 若 showing=false 说明组件已被
-                // strip 重挂摘走（点击落在已失效组件上，是点击被吞的根因）。
-                log.info(
-                    "tab mousePressed session=$sessionId button=${e.button} " +
-                        "isShowing=$isShowing parent=${parent?.javaClass?.simpleName} " +
-                        "at=${e.x},${e.y} size=${width}x$height loc=${location.x},${location.y} " +
-                        "enabled=$isEnabled"
-                )
-                if (e.isPopupTrigger || e.button == MouseEvent.BUTTON3) {
-                    onShowMenu(this@SessionTabComponent, sessionId)
-                } else {
-                    onSelect(sessionId)
-                }
-            }
-        })
+        addMouseListener(tabMouseAdapter())
+        // 标题标签铺满 CENTER 区域，点击几乎必然落在它身上；显式挂一份，
+        // 避免「面板监听收不到、事件被内层组件吃掉」这类只在真机出现的情况
+        titleLabel.addMouseListener(tabMouseAdapter())
 
         applyStyle(title, selected)
+    }
+
+    /** tab 鼠标监听：左键切换、右键菜单；面板与标题标签共用同一份 */
+    private fun tabMouseAdapter() = object : MouseAdapter() {
+        override fun mousePressed(e: MouseEvent) {
+            if (e.isPopupTrigger || e.button == MouseEvent.BUTTON3) {
+                onShowMenu(this@SessionTabComponent, sessionId)
+            } else {
+                onSelect(sessionId)
+            }
+        }
     }
 
     /**

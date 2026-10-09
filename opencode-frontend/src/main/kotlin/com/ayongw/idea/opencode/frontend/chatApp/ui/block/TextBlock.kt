@@ -31,6 +31,24 @@ internal class TextBlock(private val text: String) : JPanel() {
     }
 
     /**
+     * 显式给出首选尺寸：宽度取文本自然宽度，**高度按该宽度换行后实测**。
+     *
+     * 为什么必须显式覆盖：`JTextArea` 在 `lineWrap = true` 时，首选高度是按
+     * **当前已分配宽度**算出来的（`BasicTextAreaUI` 内部走 `getWidth()`）。
+     * 在首次布局时宽度还是 0，算出来的高度与内容完全无关 —— 表现为「一行文字的气泡
+     * 有三四行那么高」。这里先 `setSize(natural, …)` 逼它按自然宽度换行，再读回高度，
+     * 让高度真正跟着内容走。
+     */
+    override fun getPreferredSize(): Dimension {
+        val ta = textArea ?: return super.getPreferredSize()
+        val natural = naturalWidth()
+        ta.setSize(natural, Int.MAX_VALUE / 2)
+        val measured = ta.preferredSize.height
+        val minHeight = getFontMetrics(ta.font).height + ta.insets.top + ta.insets.bottom
+        return Dimension(natural, measured.coerceAtLeast(minHeight))
+    }
+
+    /**
      * 文本的自然宽度（不换行时渲染所需宽度）。
      *
      * 用一个 `lineWrap = false` 的测量副本取 preferred 宽度：开启换行的 JTextArea
@@ -62,6 +80,9 @@ internal class TextBlock(private val text: String) : JPanel() {
             val natural = naturalWidth()
             ta.maximumSize = Dimension(natural, Int.MAX_VALUE)
         }
+        // TextBlock 自身也要封顶：只封内层 textArea 的话，外层面板 maximumSize 仍是 MAX_VALUE，
+        // 会被父级 BoxLayout 拉伸到满宽，正文又变回左对齐
+        maximumSize = Dimension(naturalWidth(), Int.MAX_VALUE)
 
         // Large text protection: if content > 10KB, use pagination
         if (text.length > ChatUIConstants.LargeContent.MAX_TEXT_LENGTH) {
