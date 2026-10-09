@@ -189,6 +189,7 @@ export JAVA_HOME="/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home"
 - [主界面布局设计 (TSD-07)](docs/tsd/TSD-07-%E4%B8%BB%E7%95%8C%E9%9D%A2%E5%B8%83%E5%B1%80%E8%AE%BE%E8%AE%A1.md)
 - [会话面板整体优化方案 (TSD-30)](docs/tsd/TSD-30-%E4%BC%9A%E8%AF%9D%E9%9D%A2%E6%9D%BF%E6%95%B4%E4%BD%93%E4%BC%98%E5%8C%96%E6%96%B9%E6%A1%88.md)
 - [进程与连接管理方案 (TSD-31)](docs/tsd/TSD-31-%E8%BF%9B%E7%A8%8B%E4%B8%8E%E8%BF%9E%E6%8E%A5%E7%AE%A1%E7%90%86%E6%96%B9%E6%A1%88.md)
+- [多 agent 接入与配置演进设计 (TSD-35)](docs/tsd/TSD-35-多agent接入与配置演进设计.md) — 第二个 agent 接入时的路径、配置结构演进与命名约定
 - [已归档：M1–M4 历史任务分解](docs/archived/)
 
 ---
